@@ -220,23 +220,26 @@ def _read_last_events(path: Path, max_events: int = 50) -> list[dict]:
 
 
 def _event_ts(event: dict) -> float:
-    """Parse the 'timestamp' field to epoch seconds. 0.0 on failure."""
+    """Parse the 'timestamp' field to epoch seconds (UTC). 0.0 on failure.
+
+    Format: 2026-05-26T14:48:07.391Z
+    """
+    import calendar
+
     ts = event.get("timestamp")
     if not isinstance(ts, str):
         return 0.0
-    # Format: 2026-05-26T14:48:07.391Z
+    clean = ts.rstrip("Z")
+    frac = 0.0
+    if "." in clean:
+        clean, frac_s = clean.split(".", 1)
+        try:
+            frac = float("0." + frac_s)
+        except ValueError:
+            frac = 0.0
     try:
-        # Strip Z, parse fractional seconds.
-        clean = ts.rstrip("Z")
-        if "." in clean:
-            base, frac = clean.split(".", 1)
-            frac = (frac + "000000")[:6]
-            t = time.strptime(base, "%Y-%m-%dT%H:%M:%S")
-            return time.mktime(time.gmtime(time.mktime(t))) + float("0." + frac) + (
-                time.timezone if time.daylight == 0 else time.altzone
-            ) * -1 * 0  # keep simple; absolute precision unneeded
         t = time.strptime(clean, "%Y-%m-%dT%H:%M:%S")
-        return time.mktime(t) - time.timezone
+        return calendar.timegm(t) + frac
     except (ValueError, TypeError):
         return 0.0
 
@@ -291,13 +294,15 @@ def classify_codex_state(
         # Upstream 'attention' triggers flash+badge, which would be misleading.
         return STATE_IDLE
 
+    # No activity in a while -> idle, regardless of task markers.
+    # (A task_started that never produced a task_complete but went quiet for
+    # > idle_after seconds is almost certainly an orphaned/dead session.)
+    if last_ts and (now - last_ts) > idle_after:
+        return STATE_IDLE
+
     # Active task: started after the last complete.
     if last_task_started_idx > last_task_complete_idx:
         return STATE_RUNNING
-
-    # No active task. If quiet long enough, idle.
-    if last_ts and (now - last_ts) > idle_after:
-        return STATE_IDLE
 
     # Recent activity but no task_started — treat assistant streaming as running.
     if last_payload_type in {"agent_message", "function_call", "reasoning", "tool_search_call"}:

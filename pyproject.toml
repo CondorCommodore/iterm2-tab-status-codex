@@ -1,0 +1,30 @@
+[project]
+name = "claude-code-iterm2-tab-status"
+version = "0.2.0"
+description = "Show iTerm2 tab status (running/idle/attention) for Claude Code sessions"
+license = "MIT"
+authors = [{name = "Jasper Sui"}]
+requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/JasperSui/claude-code-iterm2-tab-status"
+Issues = "https://github.com/JasperSui/claude-code-iterm2-tab-status/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+    "pytest>=9.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.15.4",
+]

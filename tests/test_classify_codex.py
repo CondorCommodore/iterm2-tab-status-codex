@@ -209,11 +209,17 @@ def test_sweep_emits_signal_for_codex_proc(tmp_path, monkeypatch):
     )
     fake_started = time.time() - 30
     fake_ps = (
-        f"  9999 ttys001 {time.strftime('%a %b %d %H:%M:%S %Y', time.localtime(fake_started))} codex\n"
+        f"  9999 {time.strftime('%a %b %d %H:%M:%S %Y', time.localtime(fake_started))} codex\n"
     )
-    monkeypatch.setattr(
-        cs.subprocess, "check_output", lambda *a, **k: fake_ps
-    )
+
+    def fake_check_output(cmd, **kwargs):
+        if cmd == ["ps", "-axo", "pid=,lstart=,command="]:
+            return fake_ps
+        if cmd == ["ps", "-p", "9999", "-o", "tty="]:
+            return "ttys001\n"
+        raise AssertionError(f"unexpected command: {cmd!r}")
+
+    monkeypatch.setattr(cs.subprocess, "check_output", fake_check_output)
     signal_dir = tmp_path / "signals"
     written = cs.sweep_once(str(signal_dir), str(tmp_path / "sessions"))
     assert len(written) == 1

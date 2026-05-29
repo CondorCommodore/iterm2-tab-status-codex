@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.local.codex-tab-status</string>
+
+  <!--
+    Codex tab status signal producer.
+
+    Long-running daemon that writes JSON signal files to
+    ~/.cache/claude-tab-status/codex-<rollout-uuid>.json describing each
+    live codex session's state. The upstream iTerm2 adapter
+    (claude_tab_status.py) consumes these files and renders the same
+    ⚡ / 💤 prefix it already shows for claude tabs.
+
+    KeepAlive=true: the daemon is a long-running poll loop, not an
+    interval-driven one-shot. If it crashes, launchd respawns it.
+    Pattern mirrors com.mikebook.conductor-tick (home-lab launchd/),
+    minus the StartInterval (this is daemonized, not tick-fired).
+
+    Install via launchd/install-codex-tab-status-launchd.sh.
+  -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON3__</string>
+    <string>__REPO_ROOT__/scripts/codex_session.py</string>
+    <string>--daemon</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.cache/codex-tab-status.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.cache/codex-tab-status.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

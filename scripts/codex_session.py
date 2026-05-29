@@ -79,10 +79,11 @@ def _ps_codex_procs(ps_output: Optional[str] = None) -> list[CodexProc]:
     Looks for processes whose command is `codex` or starts with `codex ` (the CLI),
     excluding anything that just *mentions* codex (grep, editors, etc.).
     """
+    lookup_tty_per_pid = ps_output is None
     if ps_output is None:
         try:
             ps_output = subprocess.check_output(
-                ["ps", "-axo", "pid=,tty=,lstart=,command="],
+                ["ps", "-axo", "pid=,lstart=,command="],
                 stderr=subprocess.DEVNULL,
                 text=True,
             )
@@ -94,27 +95,64 @@ def _ps_codex_procs(ps_output: Optional[str] = None) -> list[CodexProc]:
         line = line.strip()
         if not line:
             continue
-        # Format: "<pid> <tty> <lstart...5 fields...> <command...>"
+        # Test fixtures may use the older inline-tty shape:
+        # "<pid> <tty> <lstart...5 fields...> <command...>"
+        # Live discovery deliberately omits tty from the bulk ps scan and
+        # resolves it per PID below, avoiding stale/cached tty reuse.
         parts = line.split(None, 7)
-        if len(parts) < 8:
+        if len(parts) >= 8 and _looks_like_tty_field(parts[1]):
+            pid_s = parts[0]
+            tty_s = parts[1]
+            lstart = " ".join(parts[2:7])
+            command = parts[7]
+        elif len(parts) >= 7:
+            pid_s = parts[0]
+            tty_s = None
+            lstart = " ".join(parts[1:6])
+            command = parts[6]
+        else:
             continue
-        pid_s, tty_s = parts[0], parts[1]
-        # lstart is 5 whitespace-separated fields (Day Mon DD HH:MM:SS YYYY)
-        lstart = " ".join(parts[2:7])
-        command = parts[7]
-        # Skip ttys we can't address
-        if tty_s in ("?", "??", "-"):
-            continue
+
         if not _is_codex_command(command):
             continue
         try:
             pid = int(pid_s)
         except ValueError:
             continue
+        tty_full = _tty_for_pid(pid) if lookup_tty_per_pid else _normalize_tty(tty_s)
+        if not tty_full:
+            continue
         started = _parse_lstart(lstart)
-        tty_full = f"/dev/{tty_s}" if not tty_s.startswith("/dev/") else tty_s
         procs.append(CodexProc(pid=pid, tty=tty_full, started=started))
     return procs
+
+
+def _looks_like_tty_field(value: str) -> bool:
+    return value in ("?", "??", "-") or value.startswith(("tty", "/dev/tty"))
+
+
+def _normalize_tty(tty_s: str | None) -> str | None:
+    if tty_s is None:
+        return None
+    tty_s = tty_s.strip()
+    if tty_s in ("", "?", "??", "-"):
+        return None
+    if any(ch.isspace() for ch in tty_s):
+        return None
+    return tty_s if tty_s.startswith("/dev/") else f"/dev/{tty_s}"
+
+
+def _tty_for_pid(pid: int) -> str | None:
+    try:
+        out = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "tty="],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    first = out.splitlines()[0] if out.splitlines() else ""
+    return _normalize_tty(first)
 
 
 def _is_codex_command(command: str) -> bool:

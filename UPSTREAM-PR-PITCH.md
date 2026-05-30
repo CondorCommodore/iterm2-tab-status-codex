@@ -1,106 +1,151 @@
-# Upstream PR pitch — add codex-session support
+# Upstream PR Pitch: Codex Tab Support
 
-## What this adds
+## Summary
 
-A second runtime — OpenAI's `codex` CLI — gets the same per-tab status
-indicator the plugin already provides for Claude Code. No changes to the
-iTerm2 adapter; one new producer script.
+This branch adds OpenAI Codex CLI tab status support without changing the
+existing Claude Code hook or iTerm2 adapter path.
 
-## Why
+The current plugin already has a clean runtime boundary:
 
-Operators running multiple AI runtimes side-by-side (Claude Code +
-codex) currently see status indicators on half their tabs. Fleet
-conductors fall back to AppleScript polling to figure out codex state,
-which is fragile.
+```text
+producer writes JSON signal file -> iTerm2 adapter renders tab status
+```
 
-Codex tabs are a perfect fit for this plugin's existing protocol —
-their state is just as observable, and the *display* problem is
-identical to claude's.
+Claude Code uses `scripts/hook.sh` as its producer. Codex does not have a hook
+API, so this branch adds `scripts/codex_session.py` as a second producer that
+writes the same signal-file shape the adapter already understands.
 
-## Architecture (deliberately small)
+## Motivation
 
-The plugin's signal-file protocol turns out to be a clean public
-interface. Anything that can write `${STATUS_DIR}/<sid>.json` in the
-documented shape gets a status indicator for free. The PR exploits
-this:
+Users often run Claude Code and Codex side by side in separate iTerm2 tabs. The
+Claude tabs currently get clear `running`, `idle`, and `attention` indicators,
+while Codex tabs have no equivalent status display.
 
-- **No adapter changes.** `claude_tab_status.py` is byte-identical to
-  upstream `0.2.0`.
-- **One new producer: `scripts/codex_session.py`** that:
-  1. Finds live codex CLI processes via `ps -axo pid,tty,lstart,command`.
-  2. Locates each tab's rollout JSONL under `~/.codex/sessions/`.
-  3. Classifies state from `task_started` / `task_complete` /
-     `turn_aborted` / `agent_message` events.
-  4. Writes the same signal-file shape as `hook.sh`, with `pid` set to
-     the stable login-shell PID (so the adapter's stale-PID cleanup
-     works identically).
+That leaves multi-agent operators with mixed visibility: one runtime is visible
+through the plugin, and the other has to be inferred from tab titles,
+AppleScript polling, or manual inspection. Codex sessions expose enough local
+state through their rollout JSONL files to support the same iTerm2 status
+experience.
 
-This means future runtimes (Gemini CLI, Aider, etc.) can be added the
-same way — a small producer per runtime, zero coupling to the adapter.
+## What Changed
 
-## Why not extend hook.sh?
-
-Codex has no hook system equivalent. The only observable surface is
-the rollout JSONL it writes per session. So a polling producer is the
-right shape.
-
-## What changed in this PR
+This branch keeps the adapter untouched and adds Codex support around the
+existing signal protocol.
 
 | File | Change |
 |---|---|
-| `scripts/codex_session.py` | NEW — producer (~280 lines) |
-| `tests/test_classify_codex.py` | NEW — 20 unit tests |
-| `SMOKE.md` | NEW — manual smoke procedure |
-| `.gitignore` | adds `.in_use/`, `.venv/` |
-| `scripts/claude_tab_status.py` | UNCHANGED |
-| `scripts/hook.sh` | UNCHANGED |
+| `scripts/codex_session.py` | New Codex signal producer. Discovers live Codex processes, matches each one to a rollout JSONL under `~/.codex/sessions`, classifies state, and writes adapter-compatible signal files. |
+| `tests/test_classify_codex.py` | Unit coverage for Codex event classification, process parsing, rollout matching, signal shape, and one-shot sweep behavior. |
+| `tests/test_codex_session_tty.py` | Regression coverage for per-process TTY lookup so multiple Codex tabs map to the correct iTerm2 sessions. |
+| `SMOKE.md` | Manual smoke procedure for unit tests, one-shot signal generation, and end-to-end iTerm2 verification. |
+| `launchd/` | Optional macOS LaunchAgent template plus install/uninstall scripts for keeping the Codex producer daemon running. |
+| `UPSTREAM-PR-PITCH.md` | This upstream-facing summary. |
 
-## State mapping
+Relative to the upstream `v0.2.0` snapshot, this branch adds files only. It does
+not modify `scripts/claude_tab_status.py` or `scripts/hook.sh`.
 
-| Codex event sequence | Signal `type` |
+## How Codex State Is Derived
+
+`scripts/codex_session.py` runs either once or as a daemon:
+
+```bash
+python3 scripts/codex_session.py
+python3 scripts/codex_session.py --daemon
+```
+
+Each sweep:
+
+1. Finds live Codex CLI processes with `ps`.
+2. Resolves each process TTY independently so same-window multi-tab sessions do
+   not collide.
+3. Finds the newest matching `rollout-*.jsonl` under `~/.codex/sessions`.
+4. Reads recent rollout events.
+5. Writes `${CLAUDE_ITERM2_TAB_STATUS_DIR:-...}/codex-<uuid>.json`.
+
+State mapping:
+
+| Codex event pattern | Signal `type` |
 |---|---|
-| `task_started` recent, no later `task_complete` | `running` |
-| `task_complete` latest, or quiet > 30s | `idle` |
-| `agent_message` / `function_call` / `reasoning` within 30s | `running` |
-| `turn_aborted` latest | `idle` (deliberately *not* `attention`) |
-| empty / no rollout matched | `idle` |
+| Recent `task_started` with no later `task_complete` | `running` |
+| Recent assistant/tool/reasoning activity | `running` |
+| Latest `task_complete` | `idle` |
+| Quiet longer than `CODEX_IDLE_AFTER` | `idle` |
+| Latest `turn_aborted` | `idle` |
+| No rollout or unreadable rollout | No signal written |
 
-`attention` is reserved for permission-prompts (the upstream meaning).
-Codex doesn't have a 1:1 analogue today, so we don't synthesize one —
-better than misusing the flash/badge channel.
+The producer intentionally does not synthesize `attention`. In the existing
+plugin, `attention` means a permission prompt that should flash and show a
+badge. Codex rollout events do not currently expose an exact equivalent, so the
+Codex producer stays conservative and uses `running`/`idle` only.
 
-## Smoke procedure
+## Backward Compatibility With Claude Code
 
-See `SMOKE.md`. Two steps:
+The Claude path remains unchanged:
 
-1. `pytest tests/test_classify_codex.py` (20 pure-function tests).
-2. Run `codex_session.py --daemon`, open a codex tab, watch the title
-   pick up the prefix.
+```text
+Claude Code hooks -> scripts/hook.sh -> signal JSON -> claude_tab_status.py
+```
 
-## Configuration knobs (env vars)
+Codex adds a parallel path:
 
-- `CODEX_SESSIONS_DIR` — override `~/.codex/sessions`
-- `CODEX_POLL_INTERVAL` — daemon sweep period (default `2.0`)
-- `CODEX_IDLE_AFTER` — seconds of silence before declaring idle (default `30`)
-- `CLAUDE_ITERM2_TAB_STATUS_DIR` — reused from upstream
+```text
+Codex rollout JSONL -> scripts/codex_session.py -> signal JSON -> claude_tab_status.py
+```
 
-## Install / lifecycle
+Compatibility details:
 
-Producer needs to run as a daemon. The PR could optionally:
+- `scripts/claude_tab_status.py` is not modified.
+- `scripts/hook.sh` is not modified.
+- Codex writes the same core signal fields: `session_id`, `type`, `message`,
+  `project`, `cwd`, `tty`, `pid`, and `ts`.
+- Codex session IDs are prefixed with `codex-` to avoid collision with Claude
+  session IDs.
+- Codex uses the same `CLAUDE_ITERM2_TAB_STATUS_DIR` signal directory, so the
+  existing adapter discovers both runtimes without new adapter configuration.
+- Codex sets `pid` to the live Codex process and `tty` to the owning iTerm2 TTY,
+  preserving the adapter's existing matching and stale-signal cleanup behavior.
+- The optional `runtime: "codex"` field is diagnostic only. The adapter already
+  ignores unknown fields.
+- Claude installation, configuration, prefixes, subtitle support, badges,
+  notifications, and permission-prompt behavior are unchanged.
 
-- ship a launchd plist template in `scripts/`
-- extend `bootstrap.sh` to install/load it when codex is detected on PATH
+## Configuration
 
-I'd suggest doing that in a follow-up PR; this PR keeps to the producer
-+ tests + docs.
+The Codex producer has a small set of environment variables:
 
-## Open questions for upstream maintainer
+| Variable | Purpose |
+|---|---|
+| `CLAUDE_ITERM2_TAB_STATUS_DIR` | Reuses the existing plugin signal directory. |
+| `CODEX_SESSIONS_DIR` | Overrides the default `~/.codex/sessions` rollout root. |
+| `CODEX_POLL_INTERVAL` | Daemon sweep interval, default `2.0` seconds. |
+| `CODEX_IDLE_AFTER` | Seconds of silence before a session is considered idle, default `30`. |
 
-1. Naming: I used `codex-<uuid>` for the `session_id` to avoid collision
-   with claude's UUIDs. Acceptable?
-2. Optional `runtime: "codex"` field added to the signal JSON for
-   debuggability. The adapter ignores unknown fields today. Want it
-   documented in the README signal schema?
-3. Open to renaming `codex_session.py` to something more general like
-   `rollout_session_producer.py` if you want to leave room for other
-   JSONL-based runtimes.
+The launchd files are optional convenience wrappers for macOS users who want the
+Codex producer to run continuously.
+
+## Validation
+
+Suggested checks for the upstream PR:
+
+```bash
+python3 -m pytest tests/test_classify_codex.py tests/test_codex_session_tty.py -q
+```
+
+Manual smoke coverage is documented in `SMOKE.md`:
+
+1. Run the Codex unit tests.
+2. Run a one-shot sweep into a temporary signal directory.
+3. Run the daemon and verify a live Codex tab gets a status prefix.
+4. Open a Claude tab in parallel and verify the existing Claude behavior is
+   unchanged.
+
+## Maintainer Notes
+
+- The PR is intentionally producer-only. It treats the signal-file protocol as
+  the stable integration point and avoids adding runtime-specific code to the
+  iTerm2 adapter.
+- The same pattern could support other runtimes later: add a runtime-specific
+  producer that writes the shared signal schema.
+- If upstream prefers not to ship launchd helpers in the first Codex PR, the
+  `launchd/` directory can be split into a follow-up without changing the core
+  producer design.

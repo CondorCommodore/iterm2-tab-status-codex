@@ -50,7 +50,6 @@ class FakeSession:
         self.runtime = runtime
         self.job = job
         self.sent = []
-        self.activated = False
 
     async def async_get_variable(self, name):
         if name == "tty":
@@ -63,10 +62,6 @@ class FakeSession:
 
     async def async_send_text(self, payload):
         self.sent.append(payload)
-
-    async def async_activate(self):
-        self.activated = True
-
 
 class FakeTab:
     def __init__(self, sessions):
@@ -127,7 +122,7 @@ def test_dispatch_rejects_shell_like_target(monkeypatch):
     assert target.sent == []
 
 
-def test_dispatch_sends_to_agent_and_returns_focus(monkeypatch):
+def test_dispatch_sends_to_agent_without_focus_side_effects(monkeypatch):
     target = FakeSession("/dev/ttys003", runtime="codex")
     cos = FakeSession("/dev/ttys001", runtime="codex")
     _install_fake_iterm(monkeypatch, [cos, target])
@@ -138,15 +133,13 @@ def test_dispatch_sends_to_agent_and_returns_focus(monkeypatch):
             dispatch.DispatchRequest(
                 tty="/dev/ttys003",
                 text="/goal do work",
-                return_tty="/dev/ttys001",
             ),
         )
     )
 
     assert result["ok"] is True
     assert target.sent == ["/goal do work\n"]
-    assert cos.activated is True
-    assert result["focus_returned"] is True
+    assert "focus_returned" not in result
 
 
 def test_looks_like_agent_session_uses_job_or_runtime():

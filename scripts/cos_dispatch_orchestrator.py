@@ -63,7 +63,6 @@ def build_dispatch_plan(
     request = cos_tab_dispatch.DispatchRequest(
         tty=assignment.tty,
         text=text,
-        return_tty=cos_tty,
     )
     return DispatchPlan(
         ok=True,
@@ -119,7 +118,6 @@ def main(argv: list[str] | None = None) -> int:
             cos_tab_dispatch.DispatchRequest(
                 tty=plan.tty,
                 text=plan.text,
-                return_tty=args.cos_tty,
             ),
         )
         print(json.dumps({"plan": asdict(plan), "dispatch": result}, indent=2, sort_keys=True))

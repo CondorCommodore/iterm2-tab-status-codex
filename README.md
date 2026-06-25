@@ -26,6 +26,7 @@ Then install the plugin from this marketplace:
 On first session start, the plugin automatically:
 1. Creates an iTerm2 Python runtime (if not already installed)
 2. Deploys the tab-status adapter and COS overlay scripts to iTerm2 AutoLaunch
+3. Deploys COS readback and safe-dispatch scripts to the iTerm2 Scripts menu
 
 After the first session, **restart iTerm2** (or toggle **Scripts** → **AutoLaunch** for `claude_tab_status.py` and `cos_iterm_overlay.py`).
 
@@ -200,7 +201,23 @@ It polls `tab-state-current.json` every `COS_ITERM_OVERLAY_INTERVAL` seconds
 - `user.workerRuntime`
 - `user.workerCwd`
 
-Set `COS_TTYS=/dev/ttys006` to mark the COS tab explicitly.
+Set `COS_TTYS=/dev/ttys006` to mark the COS tab explicitly. COS identity is
+explicit only; tabs are not guessed to be COS from their working directory.
+
+The bootstrap also installs these iTerm2 API scripts into the regular Scripts
+directory:
+
+- `scripts/cos_iterm_readback.py` prints live iTerm2 session variables as JSON.
+  Use it to prove the AutoLaunch overlay is loaded and setting variables.
+- `scripts/cos_tab_dispatch.py` sends one safe line to a target tab by TTY using
+  the iTerm2 API. By default it only accepts `/goal ...`, rejects Ctrl-C/Escape
+  and multi-line payloads, and appends only Enter/newline for submit.
+
+Dry-run a dispatch before sending:
+
+```bash
+python3 scripts/cos_tab_dispatch.py --dry-run --tty /dev/ttys003 --text '/goal inspect current task and report'
+```
 
 Optional helpers:
 

@@ -54,6 +54,8 @@ FAKE_PLUGIN="$DIR2/plugin_root"
 mkdir -p "$FAKE_PLUGIN/scripts"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/claude_tab_status.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_overlay.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_readback.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_tab_dispatch.py"
 mkdir -p "$FAKE_PLUGIN/.claude-plugin"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN/.claude-plugin/plugin.json"
 
@@ -99,6 +101,16 @@ if [[ -f "$AUTOLAUNCH2/cos_iterm_overlay.py" ]]; then
 else
   fail "Overlay copy" "cos_iterm_overlay.py not found in $AUTOLAUNCH2"
 fi
+if [[ -f "$DIR2/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
+  pass "cos_iterm_readback.py present in Scripts"
+else
+  fail "Readback copy" "cos_iterm_readback.py not found in Scripts"
+fi
+if [[ -f "$DIR2/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
+  pass "cos_tab_dispatch.py present in Scripts"
+else
+  fail "Dispatch copy" "cos_tab_dispatch.py not found in Scripts"
+fi
 
 # ---------------------------------------------------------------------------
 # Test 5: Writes marker file
@@ -138,6 +150,16 @@ if [[ -f "$DIR5B/iterm2_support/Scripts/AutoLaunch/cos_iterm_overlay.py" ]]; the
 else
   fail "Version mismatch" "overlay not re-deployed"
 fi
+if [[ -f "$DIR5B/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
+  pass "Readback re-deployed on version mismatch"
+else
+  fail "Version mismatch" "readback not re-deployed"
+fi
+if [[ -f "$DIR5B/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
+  pass "Dispatch re-deployed on version mismatch"
+else
+  fail "Version mismatch" "dispatch not re-deployed"
+fi
 NEW_MARKER="$(cat "$MARKER5B")"
 if [[ "$NEW_MARKER" == "$CURRENT_VERSION" ]]; then
   pass "Marker updated to current version"
@@ -175,6 +197,8 @@ FAKE_PLUGIN7="$DIR7/plugin_root"
 mkdir -p "$FAKE_PLUGIN7/scripts" "$FAKE_PLUGIN7/.claude-plugin"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/claude_tab_status.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_overlay.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_readback.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_tab_dispatch.py"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN7/.claude-plugin/plugin.json"
 
 ITERM2_SUPPORT="$DIR7/iterm2_support" \

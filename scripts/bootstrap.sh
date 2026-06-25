@@ -93,6 +93,14 @@ OVERLAY_SRC="$PLUGIN_ROOT/scripts/cos_iterm_overlay.py"
 if [[ -f "$OVERLAY_SRC" ]]; then
   cp "$OVERLAY_SRC" "$AUTOLAUNCH/cos_iterm_overlay.py"
 fi
+READBACK_SRC="$PLUGIN_ROOT/scripts/cos_iterm_readback.py"
+if [[ -f "$READBACK_SRC" ]]; then
+  cp "$READBACK_SRC" "$ITERM2_SUPPORT/Scripts/cos_iterm_readback.py"
+fi
+DISPATCH_SRC="$PLUGIN_ROOT/scripts/cos_tab_dispatch.py"
+if [[ -f "$DISPATCH_SRC" ]]; then
+  cp "$DISPATCH_SRC" "$ITERM2_SUPPORT/Scripts/cos_tab_dispatch.py"
+fi
 
 # Create signal directory
 mkdir -p /tmp/claude-tab-status

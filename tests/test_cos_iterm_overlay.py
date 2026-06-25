@@ -27,7 +27,7 @@ def test_tab_variables_for_worker_tab():
     assert values["user.workerCwd"] == "/Users/mikebook/code/surface-ui"
 
 
-def test_tab_variables_marks_code_root_as_cos():
+def test_tab_variables_does_not_guess_code_root_is_cos():
     values = overlay.tab_variables(
         {
             "runtime": "codex",
@@ -37,7 +37,7 @@ def test_tab_variables_marks_code_root_as_cos():
         }
     )
 
-    assert values["user.cosRole"] == "cos"
+    assert values["user.cosRole"] == "worker"
     assert values["user.workerState"] == "idle"
 
 

@@ -48,7 +48,7 @@ def tab_variables(tab: dict[str, Any], *, cos_ttys: set[str] | None = None) -> d
     state = str(tab.get("state") or "unknown")
     tty = str(tab.get("tty") or "")
     cos_ttys = set() if cos_ttys is None else cos_ttys
-    role = "cos" if tty in cos_ttys or (project == "code" and cwd.endswith("/code")) else "worker"
+    role = "cos" if tty in cos_ttys else "worker"
     return {
         VARIABLE_MAP["role"]: role,
         VARIABLE_MAP["state"]: state,

@@ -53,6 +53,7 @@ mkdir -p "$DIR2/iterm2_support/iterm2env/versions" "$DIR2/iterm2_support/Scripts
 FAKE_PLUGIN="$DIR2/plugin_root"
 mkdir -p "$FAKE_PLUGIN/scripts"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/claude_tab_status.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_overlay.py"
 mkdir -p "$FAKE_PLUGIN/.claude-plugin"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN/.claude-plugin/plugin.json"
 
@@ -93,6 +94,11 @@ if [[ -f "$AUTOLAUNCH2/claude_tab_status.py" ]]; then
 else
   fail "Adapter copy" "claude_tab_status.py not found in $AUTOLAUNCH2"
 fi
+if [[ -f "$AUTOLAUNCH2/cos_iterm_overlay.py" ]]; then
+  pass "cos_iterm_overlay.py present in AutoLaunch"
+else
+  fail "Overlay copy" "cos_iterm_overlay.py not found in $AUTOLAUNCH2"
+fi
 
 # ---------------------------------------------------------------------------
 # Test 5: Writes marker file
@@ -126,6 +132,11 @@ if [[ -f "$DIR5B/iterm2_support/Scripts/AutoLaunch/claude_tab_status.py" ]]; the
   pass "Adapter re-deployed on version mismatch"
 else
   fail "Version mismatch" "adapter not re-deployed"
+fi
+if [[ -f "$DIR5B/iterm2_support/Scripts/AutoLaunch/cos_iterm_overlay.py" ]]; then
+  pass "Overlay re-deployed on version mismatch"
+else
+  fail "Version mismatch" "overlay not re-deployed"
 fi
 NEW_MARKER="$(cat "$MARKER5B")"
 if [[ "$NEW_MARKER" == "$CURRENT_VERSION" ]]; then
@@ -163,6 +174,7 @@ cp -a "$VENV2" "$DIR7/iterm2_support/iterm2env/versions/$PY_VER"
 FAKE_PLUGIN7="$DIR7/plugin_root"
 mkdir -p "$FAKE_PLUGIN7/scripts" "$FAKE_PLUGIN7/.claude-plugin"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/claude_tab_status.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_overlay.py"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN7/.claude-plugin/plugin.json"
 
 ITERM2_SUPPORT="$DIR7/iterm2_support" \

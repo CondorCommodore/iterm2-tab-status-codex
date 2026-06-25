@@ -84,10 +84,14 @@ if [[ -z "$EXISTING_RUNTIME" ]]; then
   echo "$VENV_PATH" > "$MARKER_DIR/iterm2-tab-status-venv-path"
 fi
 
-# Deploy adapter script to AutoLaunch
+# Deploy iTerm2 API scripts to AutoLaunch
 ADAPTER_SRC="$PLUGIN_ROOT/scripts/claude_tab_status.py"
 if [[ -f "$ADAPTER_SRC" ]]; then
   cp "$ADAPTER_SRC" "$AUTOLAUNCH/claude_tab_status.py"
+fi
+OVERLAY_SRC="$PLUGIN_ROOT/scripts/cos_iterm_overlay.py"
+if [[ -f "$OVERLAY_SRC" ]]; then
+  cp "$OVERLAY_SRC" "$AUTOLAUNCH/cos_iterm_overlay.py"
 fi
 
 # Create signal directory
@@ -96,4 +100,4 @@ mkdir -p /tmp/claude-tab-status
 # Write marker with version
 echo "$PLUGIN_VERSION" > "$BOOTSTRAP_MARKER"
 
-echo "iterm2-tab-status: bootstrap complete. Restart iTerm2 or toggle Scripts → AutoLaunch → claude_tab_status.py (click twice)." >&2
+echo "iterm2-tab-status: bootstrap complete. Restart iTerm2 or toggle Scripts → AutoLaunch for claude_tab_status.py and cos_iterm_overlay.py." >&2

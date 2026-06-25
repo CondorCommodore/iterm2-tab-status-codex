@@ -18,6 +18,7 @@ from typing import Any
 DEFAULT_STATE_PATH = (
     Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-current.json"
 )
+POLL_INTERVAL_SECONDS = float(os.environ.get("COS_ITERM_OVERLAY_INTERVAL", "2.0"))
 
 VARIABLE_MAP = {
     "role": "user.cosRole",
@@ -78,6 +79,15 @@ async def apply_overlay(connection: object, state_path: Path = DEFAULT_STATE_PAT
                     await session.async_set_variable(key, value)
 
 
+async def watch_overlay(connection: object, state_path: Path = DEFAULT_STATE_PATH) -> None:
+    while True:
+        try:
+            await apply_overlay(connection, state_path)
+        except Exception:
+            pass
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
 def main() -> None:
     try:
         import iterm2
@@ -85,7 +95,7 @@ def main() -> None:
         return
 
     state_path = Path(os.environ.get("COS_TAB_STATE_PATH", str(DEFAULT_STATE_PATH)))
-    iterm2.run_until_complete(lambda connection: apply_overlay(connection, state_path))
+    iterm2.run_forever(lambda connection: watch_overlay(connection, state_path))
 
 
 if __name__ == "__main__":

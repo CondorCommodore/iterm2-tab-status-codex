@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -53,3 +54,26 @@ def test_tab_variables_marks_configured_tty_as_cos():
     )
 
     assert values["user.cosRole"] == "cos"
+
+
+def test_watch_overlay_polls_until_cancelled(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_apply(connection, state_path):
+        calls.append((connection, state_path))
+
+    async def fake_sleep(seconds):
+        assert seconds == overlay.POLL_INTERVAL_SECONDS
+        raise StopAsyncIteration
+
+    monkeypatch.setattr(overlay, "apply_overlay", fake_apply)
+    monkeypatch.setattr(overlay.asyncio, "sleep", fake_sleep)
+
+    connection = object()
+    state_path = tmp_path / "tab-state-current.json"
+    try:
+        asyncio.run(overlay.watch_overlay(connection, state_path))
+    except StopAsyncIteration:
+        pass
+
+    assert calls == [(connection, state_path)]

@@ -25,9 +25,9 @@ Then install the plugin from this marketplace:
 
 On first session start, the plugin automatically:
 1. Creates an iTerm2 Python runtime (if not already installed)
-2. Deploys the adapter script to iTerm2 AutoLaunch
+2. Deploys the tab-status adapter and COS overlay scripts to iTerm2 AutoLaunch
 
-After the first session, **restart iTerm2** (or toggle **Scripts** → **AutoLaunch** → **claude_tab_status.py** twice).
+After the first session, **restart iTerm2** (or toggle **Scripts** → **AutoLaunch** for `claude_tab_status.py` and `cos_iterm_overlay.py`).
 
 ![Initial Setup](assets/initial-setup.jpg)
 
@@ -189,11 +189,21 @@ stale Codex rollout files by live TTY/PID, and writes:
 - `~/.claude/plans/fleet-reports/tab-state-current.json`
 - `~/.claude/plans/fleet-reports/tab-state-events.jsonl`
 
+The bootstrap installs `scripts/cos_iterm_overlay.py` into iTerm2 AutoLaunch.
+It polls `tab-state-current.json` every `COS_ITERM_OVERLAY_INTERVAL` seconds
+(default: `2.0`) and mirrors state into iTerm2 user variables:
+
+- `user.cosRole`
+- `user.workerState`
+- `user.workerGoal`
+- `user.lastFleetReport`
+- `user.workerRuntime`
+- `user.workerCwd`
+
+Set `COS_TTYS=/dev/ttys006` to mark the COS tab explicitly.
+
 Optional helpers:
 
-- `scripts/cos_iterm_overlay.py` mirrors the current state into iTerm2 user
-  variables such as `user.workerState` and `user.cosRole`. Set
-  `COS_TTYS=/dev/ttys006` to mark the COS tab explicitly.
 - `scripts/cos_tab_trigger_event.py` is a safe iTerm trigger target. Configure
   triggers to invoke it for lines like `DONE`, `BLOCKED`, `APPROVE`, `REJECT`,
   `Traceback`, `rate limit`, or `merge conflict`. Do not configure triggers to

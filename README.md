@@ -212,11 +212,53 @@ directory:
 - `scripts/cos_tab_dispatch.py` sends one safe line to a target tab by TTY using
   the iTerm2 API. By default it only accepts `/goal ...`, rejects Ctrl-C/Escape
   and multi-line payloads, and appends only Enter/newline for submit.
+- `scripts/cos_dispatch_orchestrator.py` selects an eligible worker from the
+  dashboard state and dispatches a validated `/goal ...` command. Use
+  `--dry-run` outside iTerm2 first.
+
+Install and verify the iTerm API scripts directly:
+
+```bash
+python3 scripts/cos_iterm_api_install.py
+```
 
 Dry-run a dispatch before sending:
 
 ```bash
 python3 scripts/cos_tab_dispatch.py --dry-run --tty /dev/ttys003 --text '/goal inspect current task and report'
+python3 scripts/cos_dispatch_orchestrator.py --dry-run --goal 'inspect current task and report' --cos-tty /dev/ttys006
+```
+
+Build a COS dashboard from current tab signals and fleet reports:
+
+```bash
+python3 scripts/cos_tab_state_monitor.py --print
+python3 scripts/cos_dashboard.py
+```
+
+Watch fleet-report file drops/changes:
+
+```bash
+python3 scripts/cos_report_watcher.py --once --print
+```
+
+Run the fast dry-run harness before touching live tabs:
+
+```bash
+python3 scripts/cos_dry_run_harness.py
+```
+
+Run the non-mutating COS control-plane daemon once:
+
+```bash
+python3 scripts/cos_control_daemon.py --once --print
+```
+
+Optional launchd daemon:
+
+```bash
+bash launchd/install-cos-control-plane-launchd.sh
+bash launchd/uninstall-cos-control-plane-launchd.sh
 ```
 
 Optional helpers:

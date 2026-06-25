@@ -56,6 +56,10 @@ echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/claude_tab_status.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_overlay.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_readback.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_tab_dispatch.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_dispatch_orchestrator.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_assignment_policy.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_dashboard.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_report_parser.py"
 mkdir -p "$FAKE_PLUGIN/.claude-plugin"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN/.claude-plugin/plugin.json"
 
@@ -111,6 +115,18 @@ if [[ -f "$DIR2/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
 else
   fail "Dispatch copy" "cos_tab_dispatch.py not found in Scripts"
 fi
+if [[ -f "$DIR2/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
+  pass "cos_dispatch_orchestrator.py present in Scripts"
+else
+  fail "Orchestrator copy" "cos_dispatch_orchestrator.py not found in Scripts"
+fi
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py; do
+  if [[ -f "$DIR2/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
+    pass "$SUPPORT_NAME present in Scripts"
+  else
+    fail "Support copy" "$SUPPORT_NAME not found in Scripts"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # Test 5: Writes marker file
@@ -160,6 +176,18 @@ if [[ -f "$DIR5B/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
 else
   fail "Version mismatch" "dispatch not re-deployed"
 fi
+if [[ -f "$DIR5B/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
+  pass "Orchestrator re-deployed on version mismatch"
+else
+  fail "Version mismatch" "orchestrator not re-deployed"
+fi
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py; do
+  if [[ -f "$DIR5B/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
+    pass "$SUPPORT_NAME re-deployed on version mismatch"
+  else
+    fail "Version mismatch" "$SUPPORT_NAME not re-deployed"
+  fi
+done
 NEW_MARKER="$(cat "$MARKER5B")"
 if [[ "$NEW_MARKER" == "$CURRENT_VERSION" ]]; then
   pass "Marker updated to current version"
@@ -199,6 +227,10 @@ echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/claude_tab_status.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_overlay.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_readback.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_tab_dispatch.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_dispatch_orchestrator.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_assignment_policy.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_dashboard.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_report_parser.py"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN7/.claude-plugin/plugin.json"
 
 ITERM2_SUPPORT="$DIR7/iterm2_support" \

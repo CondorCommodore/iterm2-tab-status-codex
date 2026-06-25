@@ -23,6 +23,8 @@ class DispatchRequest:
     text: str
     submit: bool = True
     require_goal: bool = True
+    require_agent: bool = True
+    return_tty: str = ""
 
 
 def validate_tty(tty: str) -> str:
@@ -45,6 +47,8 @@ def validate_text(text: str, *, require_goal: bool = True) -> str:
 
 def payload_for_request(request: DispatchRequest) -> str:
     validate_tty(request.tty)
+    if request.return_tty:
+        validate_tty(request.return_tty)
     text = validate_text(request.text, require_goal=request.require_goal)
     return text + ("\n" if request.submit else "")
 
@@ -62,17 +66,65 @@ async def find_session_by_tty(connection: object, tty: str) -> object | None:
     return None
 
 
+async def session_variables(session: object) -> dict[str, str]:
+    names = (
+        "tty",
+        "jobName",
+        "foregroundJobName",
+        "name",
+        "user.workerRuntime",
+        "user.cosRole",
+        "user.workerState",
+    )
+    values: dict[str, str] = {}
+    for name in names:
+        try:
+            value = await session.async_get_variable(name)  # type: ignore[attr-defined]
+        except Exception:
+            value = ""
+        values[name] = "" if value is None else str(value)
+    return values
+
+
+def looks_like_agent_session(values: dict[str, str]) -> bool:
+    haystack = " ".join(values.values()).lower()
+    return "codex" in haystack or "claude" in haystack
+
+
+async def focus_session_by_tty(connection: object, tty: str) -> bool:
+    session = await find_session_by_tty(connection, tty)
+    if session is None:
+        return False
+    try:
+        await session.async_activate()  # type: ignore[attr-defined]
+        return True
+    except Exception:
+        return False
+
+
 async def dispatch(connection: object, request: DispatchRequest) -> dict[str, Any]:
     payload = payload_for_request(request)
     session = await find_session_by_tty(connection, request.tty)
     if session is None:
         return {"ok": False, "tty": request.tty, "error": "target tty not found"}
+    values = await session_variables(session)
+    if request.require_agent and not looks_like_agent_session(values):
+        return {
+            "ok": False,
+            "tty": request.tty,
+            "error": "target session does not look like codex/claude agent",
+            "session": values,
+        }
     await session.async_send_text(payload)
+    focus_returned = None
+    if request.return_tty:
+        focus_returned = await focus_session_by_tty(connection, request.return_tty)
     return {
         "ok": True,
         "tty": request.tty,
         "bytes_sent": len(payload.encode("utf-8")),
         "submitted": request.submit,
+        "focus_returned": focus_returned,
     }
 
 
@@ -91,6 +143,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Allow commands that do not start with '/goal '.",
     )
     parser.add_argument(
+        "--allow-shell-target",
+        action="store_true",
+        help="Do not require the target session to look like Codex or Claude.",
+    )
+    parser.add_argument(
+        "--return-tty",
+        default="",
+        help="Optional TTY to re-focus after dispatch.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate and print the dispatch payload without sending.",
@@ -105,6 +167,8 @@ def main() -> int:
         text=args.text,
         submit=not args.no_submit,
         require_goal=not args.allow_non_goal,
+        require_agent=not args.allow_shell_target,
+        return_tty=args.return_tty,
     )
     payload = payload_for_request(request)
     if args.dry_run:
@@ -115,6 +179,8 @@ def main() -> int:
                     "dry_run": True,
                     "tty": request.tty,
                     "payload_repr": repr(payload),
+                    "require_agent": request.require_agent,
+                    "return_tty": request.return_tty,
                     "submitted": request.submit,
                 },
                 indent=2,

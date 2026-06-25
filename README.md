@@ -170,6 +170,35 @@ export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
 **Wrong tab gets prefix** — The TTY in the signal file doesn't match the iTerm2 session. Restart iTerm2.
 
+## COS integration
+
+The tab-status signal directory is also the safest integration point for a
+chief-of-staff tab. Do not use iTerm coprocesses for normal COS monitoring:
+coprocess stdout is typed back into the terminal session, which is too risky for
+worker orchestration.
+
+Use the read-only monitor instead:
+
+```bash
+python3 scripts/cos_tab_state_monitor.py --print
+```
+
+It reads `${XDG_RUNTIME_DIR:-$HOME/.cache}/claude-tab-status/*.json`, dedupes
+stale Codex rollout files by live TTY/PID, and writes:
+
+- `~/.claude/plans/fleet-reports/tab-state-current.json`
+- `~/.claude/plans/fleet-reports/tab-state-events.jsonl`
+
+Optional helpers:
+
+- `scripts/cos_iterm_overlay.py` mirrors the current state into iTerm2 user
+  variables such as `user.workerState` and `user.cosRole`. Set
+  `COS_TTYS=/dev/ttys006` to mark the COS tab explicitly.
+- `scripts/cos_tab_trigger_event.py` is a safe iTerm trigger target. Configure
+  triggers to invoke it for lines like `DONE`, `BLOCKED`, `APPROVE`, `REJECT`,
+  `Traceback`, `rate limit`, or `merge conflict`. Do not configure triggers to
+  send text, inject data, or cancel commands automatically.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

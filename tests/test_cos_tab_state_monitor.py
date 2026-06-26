@@ -135,6 +135,27 @@ def test_build_current_state_marks_live_only_non_processing_tabs_unknown(tmp_pat
     assert current["summary"]["counts_by_state"]["unknown"] == 1
 
 
+def test_build_current_state_classifies_code_ssh_name_as_ssh_runtime(tmp_path):
+    current = monitor.build_current_state(
+        tmp_path,
+        now_ts=120,
+        pid_alive=lambda pid: False,
+        live_iterm_states={
+            "/dev/ttys006": {
+                "window": 1,
+                "tab": 6,
+                "tty": "/dev/ttys006",
+                "is_processing": True,
+                "name": "code (ssh)",
+            }
+        },
+    )
+
+    tab = current["tabs"][0]
+    assert tab["runtime"] == "ssh"
+    assert tab["state"] == "running"
+
+
 def test_read_live_iterm_states_parses_processing_by_tty():
     def fake_run(*args, **kwargs):
         return CompletedProcess(

@@ -16,7 +16,13 @@ import cos_report_watcher
 
 DEFAULT_SCENARIO = {
     "tabs": [
-        {"tty": "/dev/ttys001", "state": "idle", "runtime": "codex", "role": "cos", "project": "code"},
+        {
+            "tty": "/dev/ttys001",
+            "state": "idle",
+            "runtime": "codex",
+            "role": "cos",
+            "project": "code",
+        },
         {
             "tty": "/dev/ttys003",
             "state": "idle",

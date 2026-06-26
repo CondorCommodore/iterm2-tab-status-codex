@@ -39,16 +39,31 @@ def install_scripts(
         src = scripts_dir / name
         dst = autolaunch_dir / name
         shutil.copy2(src, dst)
-        installed.append({"name": name, "path": str(dst), "matches": filecmp.cmp(src, dst, shallow=False)})
+        installed.append(
+            {
+                "name": name,
+                "path": str(dst),
+                "matches": filecmp.cmp(src, dst, shallow=False),
+            }
+        )
     for name in MENU_SCRIPTS:
         src = scripts_dir / name
         dst = menu_dir / name
         shutil.copy2(src, dst)
-        installed.append({"name": name, "path": str(dst), "matches": filecmp.cmp(src, dst, shallow=False)})
+        installed.append(
+            {
+                "name": name,
+                "path": str(dst),
+                "matches": filecmp.cmp(src, dst, shallow=False),
+            }
+        )
     return {
         "ok": all(item["matches"] for item in installed),
         "installed": installed,
-        "reload_note": "Restart iTerm2 or run the scripts from iTerm2 Scripts menu to load new API code.",
+        "reload_note": (
+            "Restart iTerm2 or run the scripts from iTerm2 Scripts menu to load "
+            "new API code."
+        ),
         "readback_script": str(menu_dir / "cos_iterm_readback.py"),
     }
 

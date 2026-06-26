@@ -100,7 +100,10 @@ def build_dashboard(
     if not state.get("sessions"):
         state = load_tab_state(state_path)
         selected_state_path = state_path
-    reports = [asdict(report) for report in cos_report_parser.recent_reports(report_dir, limit=report_limit)]
+    reports = [
+        asdict(report)
+        for report in cos_report_parser.recent_reports(report_dir, limit=report_limit)
+    ]
     dashboard = {
         "state_path": str(selected_state_path),
         "report_dir": str(report_dir),

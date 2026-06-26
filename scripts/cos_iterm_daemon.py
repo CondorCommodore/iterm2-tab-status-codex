@@ -23,7 +23,9 @@ DEFAULT_REPORT_DIR = Path.home() / ".claude" / "plans" / "fleet-reports"
 DEFAULT_LIVE_STATE_NAME = "iterm-live-state.json"
 DEFAULT_EVENTS_NAME = "iterm-live-events.jsonl"
 DEFAULT_INTERVAL_SECONDS = float(os.environ.get("COS_ITERM_DAEMON_INTERVAL", "1.0"))
-DEFAULT_SCREEN_TAIL_LINES = int(os.environ.get("COS_ITERM_DAEMON_SCREEN_TAIL_LINES", "40"))
+DEFAULT_SCREEN_TAIL_LINES = int(
+    os.environ.get("COS_ITERM_DAEMON_SCREEN_TAIL_LINES", "40")
+)
 TTY_RE = re.compile(r"^/dev/ttys\d+$")
 
 VARIABLE_NAMES = (
@@ -68,7 +70,10 @@ def utc_now() -> float:
 
 
 def iso(ts: float | None = None) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(utc_now() if ts is None else ts))
+    return time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime(utc_now() if ts is None else ts),
+    )
 
 
 def compact_text(text: str, *, limit: int = 160) -> str:
@@ -108,7 +113,9 @@ def classify_readiness(
         return "running"
     if any(pattern.search(text) for pattern in RUNNING_PATTERNS):
         return "running"
-    if is_processing is False and any(pattern.search(text) for pattern in READY_PATTERNS):
+    if is_processing is False and any(
+        pattern.search(text) for pattern in READY_PATTERNS
+    ):
         return "ready"
     if is_processing is False:
         return "idle"
@@ -164,7 +171,10 @@ def screen_to_text(screen: Any, *, tail_lines: int = DEFAULT_SCREEN_TAIL_LINES) 
     raw_lines = getattr(screen, "lines", None)
     if raw_lines is not None:
         try:
-            return "\n".join(str(getattr(line, "string", line)) for line in list(raw_lines)[-tail_lines:])
+            return "\n".join(
+                str(getattr(line, "string", line))
+                for line in list(raw_lines)[-tail_lines:]
+            )
         except Exception:
             pass
     return compact_text(str(screen), limit=4000)
@@ -246,7 +256,9 @@ async def read_session_record(
     reports_by_tty = {} if reports_by_tty is None else reports_by_tty
     cos_ttys = set() if cos_ttys is None else cos_ttys
     tty = await _get_variable(session, "tty")
-    title = await _get_variable(session, "session.title") or await _get_variable(session, "session.name")
+    title = await _get_variable(
+        session, "session.title"
+    ) or await _get_variable(session, "session.name")
     cwd = await _get_variable(session, "path")
     screen_tail = await _get_screen_text(session)
     is_processing = await _get_processing(session)
@@ -281,7 +293,10 @@ def summarize(records: list[SessionRecord]) -> dict[str, Any]:
     }
 
 
-def transition_events(previous: dict[str, Any] | None, current: dict[str, Any]) -> list[dict[str, Any]]:
+def transition_events(
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+) -> list[dict[str, Any]]:
     previous_by_tty = {
         str(item.get("tty")): item
         for item in (previous or {}).get("sessions", [])
@@ -294,9 +309,19 @@ def transition_events(previous: dict[str, Any] | None, current: dict[str, Any]) 
         tty = str(item["tty"])
         prev = previous_by_tty.get(tty)
         if prev is None:
-            events.append({"ts": current["generated_at"], "event": "session_seen", "tty": tty, "readiness": item.get("readiness")})
+            events.append(
+                {
+                    "ts": current["generated_at"],
+                    "event": "session_seen",
+                    "tty": tty,
+                    "readiness": item.get("readiness"),
+                }
+            )
             continue
-        if prev.get("readiness") != item.get("readiness") or prev.get("runtime") != item.get("runtime"):
+        if (
+            prev.get("readiness") != item.get("readiness")
+            or prev.get("runtime") != item.get("runtime")
+        ):
             events.append(
                 {
                     "ts": current["generated_at"],
@@ -349,11 +374,16 @@ def write_state(
         "generated_ts": now,
         "source": "iterm2-python-api",
         "summary": summarize(records),
-        "sessions": [record.to_json() for record in records if TTY_RE.match(record.tty)],
+        "sessions": [
+            record.to_json() for record in records if TTY_RE.match(record.tty)
+        ],
     }
     previous = load_json(state_path) if previous is None else previous
     events = transition_events(previous, current)
-    state_path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    state_path.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     if events:
         with events_path.open("a", encoding="utf-8") as fh:
             for event in events:
@@ -378,7 +408,11 @@ async def set_session_variables(session: Any, record: SessionRecord) -> None:
             continue
 
 
-async def collect_records(connection: Any, *, report_dir: Path = DEFAULT_REPORT_DIR) -> list[SessionRecord]:
+async def collect_records(
+    connection: Any,
+    *,
+    report_dir: Path = DEFAULT_REPORT_DIR,
+) -> list[SessionRecord]:
     import iterm2
 
     app = await iterm2.async_get_app(connection)
@@ -401,7 +435,10 @@ async def collect_records(connection: Any, *, report_dir: Path = DEFAULT_REPORT_
     return records
 
 
-async def observe_layout_events(connection: Any, refresh: Callable[[], Awaitable[None]]) -> None:
+async def observe_layout_events(
+    connection: Any,
+    refresh: Callable[[], Awaitable[None]],
+) -> None:
     """Attach iTerm lifecycle monitors when available.
 
     The daemon still has a timed refresh fallback. Monitors just cut latency
@@ -412,7 +449,11 @@ async def observe_layout_events(connection: Any, refresh: Callable[[], Awaitable
     except ImportError:
         return
     monitors = []
-    for monitor_name in ("LayoutChangeMonitor", "NewSessionMonitor", "SessionTerminationMonitor"):
+    for monitor_name in (
+        "LayoutChangeMonitor",
+        "NewSessionMonitor",
+        "SessionTerminationMonitor",
+    ):
         monitor_type = getattr(iterm2, monitor_name, None)
         if monitor_type is None:
             continue
@@ -425,7 +466,10 @@ async def observe_layout_events(connection: Any, refresh: Callable[[], Awaitable
     while True:
         try:
             tasks = [asyncio.create_task(monitor.async_get()) for monitor in monitors]
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
             for task in pending:
                 task.cancel()
             for task in done:
@@ -458,10 +502,16 @@ async def run_daemon(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the COS iTerm2 Python API daemon.")
+    parser = argparse.ArgumentParser(
+        description="Run the COS iTerm2 Python API daemon."
+    )
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_SECONDS)
-    parser.add_argument("--once", action="store_true", help="collect once; only useful under iTerm2 Python")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="collect once; only useful under iTerm2 Python",
+    )
     return parser
 
 
@@ -474,7 +524,10 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "ok": False,
-                    "error": "iterm2 module unavailable; run inside iTerm2's Python runtime",
+                    "error": (
+                        "iterm2 module unavailable; "
+                        "run inside iTerm2's Python runtime"
+                    ),
                 },
                 sort_keys=True,
             )

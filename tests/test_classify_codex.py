@@ -10,8 +10,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 # Make scripts/ importable.
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -126,8 +124,14 @@ def test_ps_codex_procs_skips_no_tty():
 
 
 def test_match_rollout_picks_newest_after_proc_start(tmp_path):
-    older = tmp_path / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
-    newer = tmp_path / "rollout-2026-05-26T12-00-00-bbbbbbbb-1111-2222-3333-444444444444.jsonl"
+    older = (
+        tmp_path
+        / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    )
+    newer = (
+        tmp_path
+        / "rollout-2026-05-26T12-00-00-bbbbbbbb-1111-2222-3333-444444444444.jsonl"
+    )
     older.write_text("{}\n")
     newer.write_text("{}\n")
     older_mtime = time.time() - 3600
@@ -142,7 +146,10 @@ def test_match_rollout_picks_newest_after_proc_start(tmp_path):
 
 
 def test_match_rollout_none_if_all_older_than_proc(tmp_path):
-    r = tmp_path / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    r = (
+        tmp_path
+        / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    )
     r.write_text("{}\n")
     import os as _os
     _os.utime(r, (time.time() - 3600, time.time() - 3600))
@@ -151,7 +158,10 @@ def test_match_rollout_none_if_all_older_than_proc(tmp_path):
 
 
 def test_match_rollout_falls_back_when_proc_start_unknown(tmp_path):
-    r = tmp_path / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    r = (
+        tmp_path
+        / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    )
     r.write_text("{}\n")
     proc = cs.CodexProc(pid=1, tty="/dev/ttys001", started=0.0)
     assert cs.match_rollout_for_proc(proc, [r]) == r
@@ -162,12 +172,17 @@ def test_match_rollout_falls_back_when_proc_start_unknown(tmp_path):
 
 def test_session_id_from_rollout():
     p = Path("rollout-2026-05-26T10-48-07-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl")
-    assert cs._session_id_from_rollout(p) == "codex-019e64c1-dcf5-7f11-b45c-e2c8ea952035"
+    assert (
+        cs._session_id_from_rollout(p)
+        == "codex-019e64c1-dcf5-7f11-b45c-e2c8ea952035"
+    )
 
 
 def test_build_signal_shape():
     proc = cs.CodexProc(pid=1234, tty="/dev/ttys001", started=time.time())
-    rollout = Path("rollout-2026-05-26T10-48-07-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl")
+    rollout = Path(
+        "rollout-2026-05-26T10-48-07-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl"
+    )
     head = [
         {"type": "session_meta", "payload": {"cwd": "/Users/x/code/foo"}},
     ]
@@ -184,7 +199,9 @@ def test_build_signal_shape():
 
 def test_write_signal_atomic(tmp_path):
     proc = cs.CodexProc(pid=1, tty="/dev/ttys001", started=time.time())
-    rollout = Path("rollout-2026-05-26T10-48-07-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl")
+    rollout = Path(
+        "rollout-2026-05-26T10-48-07-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl"
+    )
     sig = cs.build_signal(proc, rollout, cs.STATE_IDLE)
     out = cs.write_signal(str(tmp_path), sig)
     assert out.exists()
@@ -199,7 +216,10 @@ def test_write_signal_atomic(tmp_path):
 def test_sweep_emits_signal_for_codex_proc(tmp_path, monkeypatch):
     sessions = tmp_path / "sessions" / "2026" / "05" / "28"
     sessions.mkdir(parents=True)
-    rollout = sessions / "rollout-2026-05-28T10-00-00-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl"
+    rollout = (
+        sessions
+        / "rollout-2026-05-28T10-00-00-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl"
+    )
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
     rollout.write_text(
         json.dumps({"timestamp": now_iso, "type": "session_meta",
@@ -208,9 +228,11 @@ def test_sweep_emits_signal_for_codex_proc(tmp_path, monkeypatch):
                       "payload": {"type": "task_started"}}) + "\n"
     )
     fake_started = time.time() - 30
-    fake_ps = (
-        f"  9999 {time.strftime('%a %b %d %H:%M:%S %Y', time.localtime(fake_started))} codex\n"
+    started_text = time.strftime(
+        "%a %b %d %H:%M:%S %Y",
+        time.localtime(fake_started),
     )
+    fake_ps = f"  9999 {started_text} codex\n"
 
     def fake_check_output(cmd, **kwargs):
         if cmd == ["ps", "-axo", "pid=,lstart=,command="]:

@@ -41,7 +41,13 @@ def classify_line(line: str) -> str | None:
     return None
 
 
-def build_event(line: str, *, tty: str = "", cwd: str = "", now_ts: float | None = None) -> dict[str, Any] | None:
+def build_event(
+    line: str,
+    *,
+    tty: str = "",
+    cwd: str = "",
+    now_ts: float | None = None,
+) -> dict[str, Any] | None:
     label = classify_line(line)
     if label is None:
         return None

@@ -28,7 +28,10 @@ def test_payload_can_validate_without_submit():
     assert dispatch.payload_for_request(request) == "/goal work item 59"
 
 
-@pytest.mark.parametrize("text", ["whoami", "", "/goal bad\nnext", "/goal bad\x03", "/goal bad\x1b"])
+@pytest.mark.parametrize(
+    "text",
+    ["whoami", "", "/goal bad\nnext", "/goal bad\x03", "/goal bad\x1b"],
+)
 def test_payload_rejects_unsafe_text(text):
     request = dispatch.DispatchRequest(tty="/dev/ttys003", text=text)
 
@@ -143,6 +146,12 @@ def test_dispatch_sends_to_agent_without_focus_side_effects(monkeypatch):
 
 
 def test_looks_like_agent_session_uses_job_or_runtime():
-    assert dispatch.looks_like_agent_session({"jobName": "codex", "user.workerRuntime": ""})
-    assert dispatch.looks_like_agent_session({"jobName": "zsh", "user.workerRuntime": "claude"})
-    assert not dispatch.looks_like_agent_session({"jobName": "zsh", "user.workerRuntime": ""})
+    assert dispatch.looks_like_agent_session(
+        {"jobName": "codex", "user.workerRuntime": ""}
+    )
+    assert dispatch.looks_like_agent_session(
+        {"jobName": "zsh", "user.workerRuntime": "claude"}
+    )
+    assert not dispatch.looks_like_agent_session(
+        {"jobName": "zsh", "user.workerRuntime": ""}
+    )

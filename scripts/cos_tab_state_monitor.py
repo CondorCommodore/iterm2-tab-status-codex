@@ -28,7 +28,8 @@ tell application "iTerm2"
     set theWin to window w
     repeat with t from 1 to count of tabs of theWin
       set sess to current session of (tab t of theWin)
-      set out to out & w & "|" & t & "|" & (tty of sess) & "|" & (is processing of sess) & "|" & (name of sess) & linefeed
+      set out to out & w & "|" & t & "|" & (tty of sess) & "|" & ¬
+        (is processing of sess) & "|" & (name of sess) & linefeed
     end repeat
   end repeat
   return out
@@ -170,7 +171,10 @@ class SignalRecord:
         }
 
 
-def _apply_live_iterm_state(tab: dict[str, Any], live_state: dict[str, Any] | None) -> dict[str, Any]:
+def _apply_live_iterm_state(
+    tab: dict[str, Any],
+    live_state: dict[str, Any] | None,
+) -> dict[str, Any]:
     if not live_state:
         return tab
     reconciled = dict(tab)
@@ -260,9 +264,12 @@ def build_current_state(
         tab = selected.to_tab(now_ts=now_ts)
         tabs.append(_apply_live_iterm_state(tab, (live_iterm_states or {}).get(tty)))
 
-    counts_by_state: dict[str, int] = {state: 0 for state in sorted(VALID_STATES | {"unknown"})}
+    counts_by_state: dict[str, int] = {
+        state: 0 for state in sorted(VALID_STATES | {"unknown"})
+    }
     for tab in tabs:
-        counts_by_state[str(tab["state"])] = counts_by_state.get(str(tab["state"]), 0) + 1
+        state = str(tab["state"])
+        counts_by_state[state] = counts_by_state.get(state, 0) + 1
 
     return {
         "generated_at": _iso(now_ts),
@@ -288,7 +295,10 @@ def _load_previous(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def transition_events(previous: dict[str, Any] | None, current: dict[str, Any]) -> list[dict[str, Any]]:
+def transition_events(
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+) -> list[dict[str, Any]]:
     prev_tabs = {
         str(tab.get("tty")): tab
         for tab in (previous or {}).get("tabs", [])
@@ -322,7 +332,10 @@ def transition_events(previous: dict[str, Any] | None, current: dict[str, Any]) 
                 }
             )
     for tty, prev in prev_tabs.items():
-        if not any(isinstance(tab, dict) and tab.get("tty") == tty for tab in current.get("tabs", [])):
+        if not any(
+            isinstance(tab, dict) and tab.get("tty") == tty
+            for tab in current.get("tabs", [])
+        ):
             events.append(
                 {
                     "ts": current.get("generated_at"),
@@ -351,7 +364,10 @@ def write_outputs(
     previous = _load_previous(current_path) if previous is None else previous
     events = transition_events(previous, current)
     tmp = current_path.with_suffix(current_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     tmp.replace(current_path)
     if events:
         events_path.parent.mkdir(parents=True, exist_ok=True)

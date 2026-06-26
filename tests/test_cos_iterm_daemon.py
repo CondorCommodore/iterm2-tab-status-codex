@@ -42,9 +42,18 @@ class FakeSession:
 
 
 def test_classify_readiness_prioritizes_input_and_queue():
-    assert daemon.classify_readiness(text="permission required", is_processing=True) == "needs_input"
-    assert daemon.classify_readiness(text="tab to queue", is_processing=True) == "queued"
-    assert daemon.classify_readiness(text="Esc to interrupt", is_processing=None) == "running"
+    assert (
+        daemon.classify_readiness(text="permission required", is_processing=True)
+        == "needs_input"
+    )
+    assert (
+        daemon.classify_readiness(text="tab to queue", is_processing=True)
+        == "queued"
+    )
+    assert (
+        daemon.classify_readiness(text="Esc to interrupt", is_processing=None)
+        == "running"
+    )
     assert daemon.classify_readiness(text="› ", is_processing=False) == "ready"
     assert daemon.classify_readiness(text="no prompt", is_processing=False) == "idle"
 
@@ -141,11 +150,19 @@ def test_write_state_and_transition_events(tmp_path):
         last_fleet_report="",
     )
 
-    daemon.write_state([first], state_path=state_path, events_path=events_path, previous=None)
+    daemon.write_state(
+        [first],
+        state_path=state_path,
+        events_path=events_path,
+        previous=None,
+    )
     daemon.write_state([second], state_path=state_path, events_path=events_path)
 
     current = json.loads(state_path.read_text(encoding="utf-8"))
-    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+    ]
     assert current["summary"]["session_count"] == 1
     assert current["sessions"][0]["readiness"] == "running"
     assert [event["event"] for event in events] == ["session_seen", "session_changed"]

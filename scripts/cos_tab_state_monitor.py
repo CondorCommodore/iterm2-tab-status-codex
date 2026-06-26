@@ -195,7 +195,7 @@ def _apply_live_iterm_state(
 def _runtime_from_live_iterm_state(live_state: dict[str, Any]) -> str:
     name = str(live_state.get("name") or "")
     lowered = name.lower()
-    if "ssh " in lowered or "@" in name:
+    if "ssh " in lowered or "(ssh" in lowered or lowered.endswith("ssh)") or "@" in name:
         return "ssh"
     if "codex" in lowered:
         return "codex"

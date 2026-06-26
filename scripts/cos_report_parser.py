@@ -88,10 +88,7 @@ def parse_report(path: Path) -> FleetReport:
         summary=_first_nonempty_line(text),
         prs=sorted(set(PR_RE.findall(text)), key=int),
         tasks=sorted(
-            set(
-                match.upper().replace("TASK", "TASK ")
-                for match in TASK_RE.findall(text)
-            )
+            set(match.upper().replace("TASK", "TASK ") for match in TASK_RE.findall(text))
         ),
         shas=sorted(set(SHA_RE.findall(text))),
         tty=tty_match.group(0) if tty_match else "",
@@ -127,10 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args(argv)
-    reports = [
-        asdict(report)
-        for report in recent_reports(args.report_dir, limit=args.limit)
-    ]
+    reports = [asdict(report) for report in recent_reports(args.report_dir, limit=args.limit)]
     print(json.dumps({"reports": reports}, indent=2, sort_keys=True))
     return 0
 

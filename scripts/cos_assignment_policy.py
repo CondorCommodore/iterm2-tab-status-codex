@@ -38,10 +38,7 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
 
 
 def _tab_host(tab: dict[str, Any]) -> str:
-    text = " ".join(
-        str(tab.get(key) or "")
-        for key in ("project", "cwd", "message", "tty")
-    ).lower()
+    text = " ".join(str(tab.get(key) or "") for key in ("project", "cwd", "message", "tty")).lower()
     for host in ("forge", "aurora", "macbook"):
         if host in text:
             return host
@@ -106,9 +103,7 @@ def choose_worker(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Choose a worker tab for a COS assignment."
-    )
+    parser = argparse.ArgumentParser(description="Choose a worker tab for a COS assignment.")
     parser.add_argument("--state-path", type=Path, required=True)
     parser.add_argument("--policy-path", type=Path)
     parser.add_argument("--target-host", default="")

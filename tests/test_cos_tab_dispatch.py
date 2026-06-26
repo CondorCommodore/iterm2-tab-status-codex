@@ -66,6 +66,7 @@ class FakeSession:
     async def async_send_text(self, payload):
         self.sent.append(payload)
 
+
 class FakeTab:
     def __init__(self, sessions):
         self.sessions = sessions
@@ -81,11 +82,7 @@ def test_find_session_by_tty_with_mocked_iterm(monkeypatch):
     app = type(
         "App",
         (),
-        {
-            "terminal_windows": [
-                FakeWindow([FakeTab([FakeSession("/dev/ttys003"), wanted])])
-            ]
-        },
+        {"terminal_windows": [FakeWindow([FakeTab([FakeSession("/dev/ttys003"), wanted])])]},
     )()
 
     async def fake_get_app(connection):
@@ -146,12 +143,6 @@ def test_dispatch_sends_to_agent_without_focus_side_effects(monkeypatch):
 
 
 def test_looks_like_agent_session_uses_job_or_runtime():
-    assert dispatch.looks_like_agent_session(
-        {"jobName": "codex", "user.workerRuntime": ""}
-    )
-    assert dispatch.looks_like_agent_session(
-        {"jobName": "zsh", "user.workerRuntime": "claude"}
-    )
-    assert not dispatch.looks_like_agent_session(
-        {"jobName": "zsh", "user.workerRuntime": ""}
-    )
+    assert dispatch.looks_like_agent_session({"jobName": "codex", "user.workerRuntime": ""})
+    assert dispatch.looks_like_agent_session({"jobName": "zsh", "user.workerRuntime": "claude"})
+    assert not dispatch.looks_like_agent_session({"jobName": "zsh", "user.workerRuntime": ""})

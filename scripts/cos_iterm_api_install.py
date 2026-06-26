@@ -61,8 +61,7 @@ def install_scripts(
         "ok": all(item["matches"] for item in installed),
         "installed": installed,
         "reload_note": (
-            "Restart iTerm2 or run the scripts from iTerm2 Scripts menu to load "
-            "new API code."
+            "Restart iTerm2 or run the scripts from iTerm2 Scripts menu to load new API code."
         ),
         "readback_script": str(menu_dir / "cos_iterm_readback.py"),
     }

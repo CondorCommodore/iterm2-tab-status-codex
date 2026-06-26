@@ -70,10 +70,7 @@ def main() -> int:
         print(
             json.dumps(
                 {
-                    "error": (
-                        "iterm2 module unavailable; "
-                        "run inside iTerm2's Python runtime"
-                    ),
+                    "error": ("iterm2 module unavailable; run inside iTerm2's Python runtime"),
                     "session_count": 0,
                     "sessions": [],
                 },

@@ -11,9 +11,7 @@ from typing import Any
 
 import cos_report_parser
 
-DEFAULT_STATE_PATH = (
-    Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-current.json"
-)
+DEFAULT_STATE_PATH = Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-current.json"
 DEFAULT_ITERM_LIVE_STATE_PATH = (
     Path.home() / ".claude" / "plans" / "fleet-reports" / "iterm-live-state.json"
 )
@@ -77,9 +75,7 @@ def recommended_actions(dashboard: dict[str, Any]) -> list[str]:
     if any(tab["state"] == "attention" for tab in tabs):
         actions.append("inspect attention tab")
     idle_workers = [
-        tab
-        for tab in tabs
-        if tab["state"] == "idle" and str(tab.get("role") or "worker") != "cos"
+        tab for tab in tabs if tab["state"] == "idle" and str(tab.get("role") or "worker") != "cos"
     ]
     if idle_workers:
         actions.append(f"dispatch next /goal to {idle_workers[0]['tty']}")
@@ -127,9 +123,7 @@ def render_text(dashboard: dict[str, Any]) -> str:
     lines.append("recent reports:")
     for report in dashboard["reports"][:5]:
         lines.append(
-            "- {status} {name} prs={prs} tasks={tasks} decision={needs_decision}".format(
-                **report
-            )
+            "- {status} {name} prs={prs} tasks={tasks} decision={needs_decision}".format(**report)
         )
     lines.append("recommended actions:")
     for action in dashboard["recommended_actions"]:

@@ -89,11 +89,7 @@ def test_read_live_iterm_states_parses_processing_by_tty():
         return CompletedProcess(
             args=args,
             returncode=0,
-            stdout=(
-                "1|1|/dev/ttys008|true|COS\n"
-                "1|4|/dev/ttys004|false|code (codex)\n"
-                "bad row\n"
-            ),
+            stdout=("1|1|/dev/ttys008|true|COS\n1|4|/dev/ttys004|false|code (codex)\nbad row\n"),
             stderr="",
         )
 

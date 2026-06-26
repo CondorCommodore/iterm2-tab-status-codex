@@ -264,9 +264,7 @@ def build_current_state(
         tab = selected.to_tab(now_ts=now_ts)
         tabs.append(_apply_live_iterm_state(tab, (live_iterm_states or {}).get(tty)))
 
-    counts_by_state: dict[str, int] = {
-        state: 0 for state in sorted(VALID_STATES | {"unknown"})
-    }
+    counts_by_state: dict[str, int] = {state: 0 for state in sorted(VALID_STATES | {"unknown"})}
     for tab in tabs:
         state = str(tab["state"])
         counts_by_state[state] = counts_by_state.get(state, 0) + 1
@@ -333,8 +331,7 @@ def transition_events(
             )
     for tty, prev in prev_tabs.items():
         if not any(
-            isinstance(tab, dict) and tab.get("tty") == tty
-            for tab in current.get("tabs", [])
+            isinstance(tab, dict) and tab.get("tty") == tty for tab in current.get("tabs", [])
         ):
             events.append(
                 {

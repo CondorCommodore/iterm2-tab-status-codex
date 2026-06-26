@@ -17,9 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-DEFAULT_EVENTS_PATH = (
-    Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-events.jsonl"
-)
+DEFAULT_EVENTS_PATH = Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-events.jsonl"
 
 PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("done", re.compile(r"\b(DONE|complete|completed)\b", re.IGNORECASE)),

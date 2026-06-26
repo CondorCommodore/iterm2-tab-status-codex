@@ -23,9 +23,7 @@ DEFAULT_REPORT_DIR = Path.home() / ".claude" / "plans" / "fleet-reports"
 DEFAULT_LIVE_STATE_NAME = "iterm-live-state.json"
 DEFAULT_EVENTS_NAME = "iterm-live-events.jsonl"
 DEFAULT_INTERVAL_SECONDS = float(os.environ.get("COS_ITERM_DAEMON_INTERVAL", "1.0"))
-DEFAULT_SCREEN_TAIL_LINES = int(
-    os.environ.get("COS_ITERM_DAEMON_SCREEN_TAIL_LINES", "40")
-)
+DEFAULT_SCREEN_TAIL_LINES = int(os.environ.get("COS_ITERM_DAEMON_SCREEN_TAIL_LINES", "40"))
 TTY_RE = re.compile(r"^/dev/ttys\d+$")
 
 VARIABLE_NAMES = (
@@ -113,9 +111,7 @@ def classify_readiness(
         return "running"
     if any(pattern.search(text) for pattern in RUNNING_PATTERNS):
         return "running"
-    if is_processing is False and any(
-        pattern.search(text) for pattern in READY_PATTERNS
-    ):
+    if is_processing is False and any(pattern.search(text) for pattern in READY_PATTERNS):
         return "ready"
     if is_processing is False:
         return "idle"
@@ -172,8 +168,7 @@ def screen_to_text(screen: Any, *, tail_lines: int = DEFAULT_SCREEN_TAIL_LINES) 
     if raw_lines is not None:
         try:
             return "\n".join(
-                str(getattr(line, "string", line))
-                for line in list(raw_lines)[-tail_lines:]
+                str(getattr(line, "string", line)) for line in list(raw_lines)[-tail_lines:]
             )
         except Exception:
             pass
@@ -256,9 +251,9 @@ async def read_session_record(
     reports_by_tty = {} if reports_by_tty is None else reports_by_tty
     cos_ttys = set() if cos_ttys is None else cos_ttys
     tty = await _get_variable(session, "tty")
-    title = await _get_variable(
-        session, "session.title"
-    ) or await _get_variable(session, "session.name")
+    title = await _get_variable(session, "session.title") or await _get_variable(
+        session, "session.name"
+    )
     cwd = await _get_variable(session, "path")
     screen_tail = await _get_screen_text(session)
     is_processing = await _get_processing(session)
@@ -318,9 +313,8 @@ def transition_events(
                 }
             )
             continue
-        if (
-            prev.get("readiness") != item.get("readiness")
-            or prev.get("runtime") != item.get("runtime")
+        if prev.get("readiness") != item.get("readiness") or prev.get("runtime") != item.get(
+            "runtime"
         ):
             events.append(
                 {
@@ -374,9 +368,7 @@ def write_state(
         "generated_ts": now,
         "source": "iterm2-python-api",
         "summary": summarize(records),
-        "sessions": [
-            record.to_json() for record in records if TTY_RE.match(record.tty)
-        ],
+        "sessions": [record.to_json() for record in records if TTY_RE.match(record.tty)],
     }
     previous = load_json(state_path) if previous is None else previous
     events = transition_events(previous, current)
@@ -502,9 +494,7 @@ async def run_daemon(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run the COS iTerm2 Python API daemon."
-    )
+    parser = argparse.ArgumentParser(description="Run the COS iTerm2 Python API daemon.")
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_SECONDS)
     parser.add_argument(
@@ -524,10 +514,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "ok": False,
-                    "error": (
-                        "iterm2 module unavailable; "
-                        "run inside iTerm2's Python runtime"
-                    ),
+                    "error": ("iterm2 module unavailable; run inside iTerm2's Python runtime"),
                 },
                 sort_keys=True,
             )

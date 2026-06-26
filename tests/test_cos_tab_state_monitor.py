@@ -84,6 +84,57 @@ def test_build_current_state_fails_closed_when_iterm_processing_disagrees(tmp_pa
     assert current["summary"]["counts_by_state"]["idle"] == 0
 
 
+def test_build_current_state_includes_live_only_processing_ssh_tabs(tmp_path):
+    current = monitor.build_current_state(
+        tmp_path,
+        now_ts=120,
+        pid_alive=lambda pid: False,
+        live_iterm_states={
+            "/dev/ttys006": {
+                "window": 1,
+                "tab": 6,
+                "tty": "/dev/ttys006",
+                "is_processing": True,
+                "name": "ssh forge@100.110.142.92",
+            }
+        },
+    )
+
+    assert current["summary"]["active_tabs"] == 1
+    tab = current["tabs"][0]
+    assert tab["tty"] == "/dev/ttys006"
+    assert tab["state"] == "running"
+    assert tab["state_source"] == "iterm_live"
+    assert tab["runtime"] == "ssh"
+    assert tab["session_id"] == "iterm-/dev/ttys006"
+    assert tab["iterm_is_processing"] is True
+
+
+def test_build_current_state_marks_live_only_non_processing_tabs_unknown(tmp_path):
+    current = monitor.build_current_state(
+        tmp_path,
+        now_ts=120,
+        pid_alive=lambda pid: False,
+        live_iterm_states={
+            "/dev/ttys007": {
+                "window": 1,
+                "tab": 7,
+                "tty": "/dev/ttys007",
+                "is_processing": False,
+                "name": "ssh mikem@100.70.34.55",
+            }
+        },
+    )
+
+    assert current["summary"]["active_tabs"] == 1
+    tab = current["tabs"][0]
+    assert tab["tty"] == "/dev/ttys007"
+    assert tab["state"] == "unknown"
+    assert tab["state_source"] == "iterm_live"
+    assert tab["runtime"] == "ssh"
+    assert current["summary"]["counts_by_state"]["unknown"] == 1
+
+
 def test_read_live_iterm_states_parses_processing_by_tty():
     def fake_run(*args, **kwargs):
         return CompletedProcess(

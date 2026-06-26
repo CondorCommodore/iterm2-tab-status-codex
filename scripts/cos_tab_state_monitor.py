@@ -192,6 +192,46 @@ def _apply_live_iterm_state(
     return reconciled
 
 
+def _runtime_from_live_iterm_state(live_state: dict[str, Any]) -> str:
+    name = str(live_state.get("name") or "")
+    lowered = name.lower()
+    if "ssh " in lowered or "@" in name:
+        return "ssh"
+    if "codex" in lowered:
+        return "codex"
+    if "claude" in lowered:
+        return "claude"
+    return "shell"
+
+
+def _tab_from_live_iterm_state(
+    tty: str,
+    live_state: dict[str, Any],
+    *,
+    now_ts: float,
+) -> dict[str, Any]:
+    is_processing = bool(live_state.get("is_processing"))
+    return {
+        "tty": tty,
+        "pid": 0,
+        "runtime": _runtime_from_live_iterm_state(live_state),
+        "cwd": "",
+        "project": "",
+        "state": "running" if is_processing else "unknown",
+        "age_seconds": None,
+        "session_id": f"iterm-{tty}",
+        "message": "",
+        "signal_path": None,
+        "signal_ts": None,
+        "signal_updated_at": _iso(now_ts),
+        "iterm_is_processing": is_processing,
+        "iterm_window": live_state.get("window"),
+        "iterm_tab": live_state.get("tab"),
+        "iterm_name": live_state.get("name"),
+        "state_source": "iterm_live",
+    }
+
+
 def read_signal_records(
     signal_dir: Path,
     *,
@@ -263,6 +303,11 @@ def build_current_state(
         duplicate_count += max(0, len(tty_records) - 1)
         tab = selected.to_tab(now_ts=now_ts)
         tabs.append(_apply_live_iterm_state(tab, (live_iterm_states or {}).get(tty)))
+
+    for tty, live_state in sorted((live_iterm_states or {}).items()):
+        if tty in live_by_tty:
+            continue
+        tabs.append(_tab_from_live_iterm_state(tty, live_state, now_ts=now_ts))
 
     counts_by_state: dict[str, int] = {state: 0 for state in sorted(VALID_STATES | {"unknown"})}
     for tab in tabs:

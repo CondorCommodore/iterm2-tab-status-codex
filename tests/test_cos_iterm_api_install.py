@@ -22,7 +22,9 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     )
 
     assert result["ok"] is True
-    assert len(result["installed"]) == 7
+    assert len(result["installed"]) == 9
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_overlay.py").exists()
+    assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_daemon.py").exists()
+    assert (tmp_path / "iterm" / "Scripts" / "cos_iterm_daemon.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_tab_dispatch.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_dashboard.py").exists()

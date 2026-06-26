@@ -14,6 +14,9 @@ import cos_report_parser
 DEFAULT_STATE_PATH = (
     Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-current.json"
 )
+DEFAULT_ITERM_LIVE_STATE_PATH = (
+    Path.home() / ".claude" / "plans" / "fleet-reports" / "iterm-live-state.json"
+)
 DEFAULT_REPORT_DIR = Path.home() / ".claude" / "plans" / "fleet-reports"
 
 
@@ -27,6 +30,20 @@ def load_tab_state(path: Path = DEFAULT_STATE_PATH) -> dict[str, Any]:
 
 def summarize_tabs(state: dict[str, Any]) -> dict[str, Any]:
     tabs = [tab for tab in state.get("tabs", []) if isinstance(tab, dict)]
+    if not tabs and isinstance(state.get("sessions"), list):
+        tabs = [
+            {
+                "tty": session.get("tty", ""),
+                "state": session.get("readiness", "unknown"),
+                "runtime": session.get("runtime", "unknown"),
+                "role": session.get("role", "worker"),
+                "project": Path(str(session.get("cwd") or "")).name,
+                "cwd": session.get("cwd", ""),
+                "age_seconds": None,
+            }
+            for session in state.get("sessions", [])
+            if isinstance(session, dict)
+        ]
     by_state: dict[str, int] = {}
     for tab in tabs:
         tab_state = str(tab.get("state") or "unknown")
@@ -74,13 +91,18 @@ def recommended_actions(dashboard: dict[str, Any]) -> list[str]:
 def build_dashboard(
     *,
     state_path: Path = DEFAULT_STATE_PATH,
+    iterm_live_state_path: Path = DEFAULT_ITERM_LIVE_STATE_PATH,
     report_dir: Path = DEFAULT_REPORT_DIR,
     report_limit: int = 10,
 ) -> dict[str, Any]:
-    state = load_tab_state(state_path)
+    state = load_tab_state(iterm_live_state_path)
+    selected_state_path = iterm_live_state_path
+    if not state.get("sessions"):
+        state = load_tab_state(state_path)
+        selected_state_path = state_path
     reports = [asdict(report) for report in cos_report_parser.recent_reports(report_dir, limit=report_limit)]
     dashboard = {
-        "state_path": str(state_path),
+        "state_path": str(selected_state_path),
         "report_dir": str(report_dir),
         "generated_at": state.get("generated_at"),
         "tabs": summarize_tabs(state),
@@ -115,6 +137,7 @@ def render_text(dashboard: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print a COS tab/report dashboard.")
     parser.add_argument("--state-path", type=Path, default=DEFAULT_STATE_PATH)
+    parser.add_argument("--iterm-live-state-path", type=Path, default=DEFAULT_ITERM_LIVE_STATE_PATH)
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--report-limit", type=int, default=10)
     parser.add_argument("--json", action="store_true")
@@ -122,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dashboard = build_dashboard(
         state_path=args.state_path,
+        iterm_live_state_path=args.iterm_live_state_path,
         report_dir=args.report_dir,
         report_limit=args.report_limit,
     )

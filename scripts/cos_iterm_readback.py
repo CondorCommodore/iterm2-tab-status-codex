@@ -16,6 +16,7 @@ VARIABLES = (
     "tty",
     "user.cosRole",
     "user.workerState",
+    "user.workerReadiness",
     "user.workerGoal",
     "user.lastFleetReport",
     "user.workerRuntime",

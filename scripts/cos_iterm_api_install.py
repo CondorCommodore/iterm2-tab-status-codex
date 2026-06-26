@@ -12,9 +12,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ITERM_SUPPORT = Path.home() / "Library" / "Application Support" / "iTerm2"
 
-AUTOLAUNCH_SCRIPTS = ("cos_iterm_overlay.py",)
+AUTOLAUNCH_SCRIPTS = ("cos_iterm_overlay.py", "cos_iterm_daemon.py")
 MENU_SCRIPTS = (
     "cos_iterm_readback.py",
+    "cos_iterm_daemon.py",
     "cos_tab_dispatch.py",
     "cos_dispatch_orchestrator.py",
     "cos_assignment_policy.py",

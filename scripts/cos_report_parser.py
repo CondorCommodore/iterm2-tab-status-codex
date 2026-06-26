@@ -87,19 +87,35 @@ def parse_report(path: Path) -> FleetReport:
         status=classify_status(text),
         summary=_first_nonempty_line(text),
         prs=sorted(set(PR_RE.findall(text)), key=int),
-        tasks=sorted(set(match.upper().replace("TASK", "TASK ") for match in TASK_RE.findall(text))),
+        tasks=sorted(
+            set(match.upper().replace("TASK", "TASK ") for match in TASK_RE.findall(text))
+        ),
         shas=sorted(set(SHA_RE.findall(text))),
         tty=tty_match.group(0) if tty_match else "",
-        needs_decision=bool(re.search(r"\b(needs? decision|operator decision|question|approve\?)\b", text, re.I)),
+        needs_decision=bool(
+            re.search(
+                r"\b(needs? decision|operator decision|question|approve\?)\b",
+                text,
+                re.I,
+            )
+        ),
         blocker=blocker,
         next_step=next_step,
     )
 
 
-def recent_reports(report_dir: Path = DEFAULT_REPORT_DIR, *, limit: int = 20) -> list[FleetReport]:
+def recent_reports(
+    report_dir: Path = DEFAULT_REPORT_DIR,
+    *,
+    limit: int = 20,
+) -> list[FleetReport]:
     if not report_dir.is_dir():
         return []
-    paths = sorted(report_dir.glob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
+    paths = sorted(
+        report_dir.glob("*.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
     return [parse_report(path) for path in paths[:limit]]
 
 

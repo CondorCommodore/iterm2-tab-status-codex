@@ -16,9 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-DEFAULT_STATE_PATH = (
-    Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-current.json"
-)
+DEFAULT_STATE_PATH = Path.home() / ".claude" / "plans" / "fleet-reports" / "tab-state-current.json"
 DEFAULT_REPORT_DIR = Path.home() / ".claude" / "plans" / "fleet-reports"
 POLL_INTERVAL_SECONDS = float(os.environ.get("COS_ITERM_OVERLAY_INTERVAL", "2.0"))
 TTY_NAME_RE = re.compile(r"ttys[0-9]+")

@@ -12,9 +12,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ITERM_SUPPORT = Path.home() / "Library" / "Application Support" / "iTerm2"
 
-AUTOLAUNCH_SCRIPTS = ("cos_iterm_overlay.py",)
+AUTOLAUNCH_SCRIPTS = ("cos_iterm_overlay.py", "cos_iterm_daemon.py")
 MENU_SCRIPTS = (
     "cos_iterm_readback.py",
+    "cos_iterm_daemon.py",
     "cos_tab_dispatch.py",
     "cos_dispatch_orchestrator.py",
     "cos_assignment_policy.py",
@@ -38,16 +39,30 @@ def install_scripts(
         src = scripts_dir / name
         dst = autolaunch_dir / name
         shutil.copy2(src, dst)
-        installed.append({"name": name, "path": str(dst), "matches": filecmp.cmp(src, dst, shallow=False)})
+        installed.append(
+            {
+                "name": name,
+                "path": str(dst),
+                "matches": filecmp.cmp(src, dst, shallow=False),
+            }
+        )
     for name in MENU_SCRIPTS:
         src = scripts_dir / name
         dst = menu_dir / name
         shutil.copy2(src, dst)
-        installed.append({"name": name, "path": str(dst), "matches": filecmp.cmp(src, dst, shallow=False)})
+        installed.append(
+            {
+                "name": name,
+                "path": str(dst),
+                "matches": filecmp.cmp(src, dst, shallow=False),
+            }
+        )
     return {
         "ok": all(item["matches"] for item in installed),
         "installed": installed,
-        "reload_note": "Restart iTerm2 or run the scripts from iTerm2 Scripts menu to load new API code.",
+        "reload_note": (
+            "Restart iTerm2 or run the scripts from iTerm2 Scripts menu to load new API code."
+        ),
         "readback_script": str(menu_dir / "cos_iterm_readback.py"),
     }
 

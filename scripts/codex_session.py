@@ -200,9 +200,7 @@ def find_rollouts(sessions_dir: str) -> list[Path]:
     return [p for _, p in out]
 
 
-def match_rollout_for_proc(
-    proc: CodexProc, rollouts: Iterable[Path]
-) -> Optional[Path]:
+def match_rollout_for_proc(proc: CodexProc, rollouts: Iterable[Path]) -> Optional[Path]:
     """Pick the rollout that most likely belongs to this codex process.
 
     Strategy: newest rollout whose mtime >= proc.started (with a small grace).

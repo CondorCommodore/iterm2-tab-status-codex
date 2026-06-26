@@ -36,7 +36,9 @@ def tick(*, signal_dir: Path, report_dir: Path) -> dict[str, object]:
     )
     dashboard = cos_dashboard.build_dashboard(state_path=current_path, report_dir=report_dir)
     dashboard_path = report_dir / "cos-dashboard-current.json"
-    dashboard_path.write_text(json.dumps(dashboard, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    dashboard_path.write_text(
+        json.dumps(dashboard, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return {
         "tab_events": len(tab_events),
         "report_events": len(report_events),
@@ -46,7 +48,9 @@ def tick(*, signal_dir: Path, report_dir: Path) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the COS control-plane file daemon.")
-    parser.add_argument("--signal-dir", type=Path, default=cos_tab_state_monitor.default_signal_dir())
+    parser.add_argument(
+        "--signal-dir", type=Path, default=cos_tab_state_monitor.default_signal_dir()
+    )
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--once", action="store_true")

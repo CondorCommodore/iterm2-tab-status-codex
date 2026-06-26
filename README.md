@@ -196,6 +196,7 @@ It polls `tab-state-current.json` every `COS_ITERM_OVERLAY_INTERVAL` seconds
 
 - `user.cosRole`
 - `user.workerState`
+- `user.workerReadiness`
 - `user.workerGoal`
 - `user.lastFleetReport`
 - `user.workerRuntime`
@@ -207,8 +208,13 @@ explicit only; tabs are not guessed to be COS from their working directory.
 The bootstrap also installs these iTerm2 API scripts into the regular Scripts
 directory:
 
+- `scripts/cos_iterm_daemon.py` is the preferred COS iTerm2 daemon. It runs
+  inside iTerm2's Python API runtime, observes sessions without focusing tabs or
+  sending input, writes `~/.claude/plans/fleet-reports/iterm-live-state.json`,
+  appends `iterm-live-events.jsonl`, classifies readiness from prompt/screen
+  state, and sets the `user.*` variables above for status bars/subtitles.
 - `scripts/cos_iterm_readback.py` prints live iTerm2 session variables as JSON.
-  Use it to prove the AutoLaunch overlay is loaded and setting variables.
+  Use it to prove the AutoLaunch daemon/overlay is loaded and setting variables.
 - `scripts/cos_tab_dispatch.py` sends one safe line to a target tab by TTY using
   the iTerm2 API. By default it only accepts `/goal ...`, rejects Ctrl-C/Escape
   and multi-line payloads, and appends only Enter/newline for submit.
@@ -235,6 +241,11 @@ Build a COS dashboard from current tab signals and fleet reports:
 python3 scripts/cos_tab_state_monitor.py --print
 python3 scripts/cos_dashboard.py
 ```
+
+When `iterm-live-state.json` exists, `cos_dashboard.py` prefers it over the
+older signal-file snapshot so COS sees API-derived readiness (`ready`,
+`running`, `queued`, `needs_input`, `idle`, `unknown`) without screen-scraping
+from the conductor tab.
 
 Watch fleet-report file drops/changes:
 

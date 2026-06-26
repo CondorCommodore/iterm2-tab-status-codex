@@ -27,7 +27,10 @@ def test_watch_once_emits_created_event(tmp_path):
     assert events[0]["event"] == "report_created"
     assert events[0]["report"]["prs"] == ["7"]
     assert event_log.exists()
-    assert json.loads(event_log.read_text(encoding="utf-8").splitlines()[0])["event"] == "report_created"
+    assert (
+        json.loads(event_log.read_text(encoding="utf-8").splitlines()[0])["event"]
+        == "report_created"
+    )
 
 
 def test_watch_once_can_seed_without_initial_flood(tmp_path):

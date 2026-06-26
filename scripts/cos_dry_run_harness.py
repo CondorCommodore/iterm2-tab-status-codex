@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: I001
 """Fast local dry-run harness for COS tab/report/dispatch logic."""
 
 from __future__ import annotations
@@ -16,7 +17,13 @@ import cos_report_watcher
 
 DEFAULT_SCENARIO = {
     "tabs": [
-        {"tty": "/dev/ttys001", "state": "idle", "runtime": "codex", "role": "cos", "project": "code"},
+        {
+            "tty": "/dev/ttys001",
+            "state": "idle",
+            "runtime": "codex",
+            "role": "cos",
+            "project": "code",
+        },
         {
             "tty": "/dev/ttys003",
             "state": "idle",

@@ -49,7 +49,12 @@ def _is_worker(tab: dict[str, Any]) -> bool:
     return str(tab.get("role") or tab.get("user.cosRole") or "worker") != "cos"
 
 
-def rank_tab(tab: dict[str, Any], policy: dict[str, Any], *, target_host: str = "") -> tuple[int, int, str]:
+def rank_tab(
+    tab: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    target_host: str = "",
+) -> tuple[int, int, str]:
     state = str(tab.get("state") or "unknown")
     prefer_states = list(policy.get("prefer_states") or [])
     avoid_states = set(policy.get("avoid_states") or [])
@@ -82,10 +87,17 @@ def choose_worker(
     ]
     if not candidates:
         return None
-    selected = sorted(candidates, key=lambda tab: rank_tab(tab, policy, target_host=target_host))[0]
+    selected = sorted(
+        candidates,
+        key=lambda tab: rank_tab(tab, policy, target_host=target_host),
+    )[0]
     return Assignment(
         tty=str(selected["tty"]),
-        reason=f"selected state={selected.get('state')} host={_tab_host(selected)} target_host={target_host or '*'}",
+        reason=(
+            f"selected state={selected.get('state')} "
+            f"host={_tab_host(selected)} "
+            f"target_host={target_host or '*'}"
+        ),
         tab=selected,
     )
 
@@ -102,7 +114,13 @@ def main(argv: list[str] | None = None) -> int:
         policy=load_policy(args.policy_path),
         target_host=args.target_host,
     )
-    print(json.dumps(None if assignment is None else assignment.__dict__, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            None if assignment is None else assignment.__dict__,
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

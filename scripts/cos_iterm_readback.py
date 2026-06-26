@@ -8,7 +8,6 @@ Python API when run from iTerm2's script runtime and prints JSON for COS.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 from typing import Any
 
@@ -16,6 +15,7 @@ VARIABLES = (
     "tty",
     "user.cosRole",
     "user.workerState",
+    "user.workerReadiness",
     "user.workerGoal",
     "user.lastFleetReport",
     "user.workerRuntime",
@@ -23,7 +23,10 @@ VARIABLES = (
 )
 
 
-async def session_snapshot(session: object, variables: tuple[str, ...] = VARIABLES) -> dict[str, str]:
+async def session_snapshot(
+    session: object,
+    variables: tuple[str, ...] = VARIABLES,
+) -> dict[str, str]:
     snapshot: dict[str, str] = {}
     for name in variables:
         try:
@@ -67,7 +70,7 @@ def main() -> int:
         print(
             json.dumps(
                 {
-                    "error": "iterm2 module unavailable; run inside iTerm2's Python runtime",
+                    "error": ("iterm2 module unavailable; run inside iTerm2's Python runtime"),
                     "session_count": 0,
                     "sessions": [],
                 },

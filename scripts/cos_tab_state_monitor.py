@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,21 @@ from typing import Any, Callable
 VALID_STATES = {"running", "idle", "attention"}
 DEFAULT_CURRENT_NAME = "tab-state-current.json"
 DEFAULT_EVENTS_NAME = "tab-state-events.jsonl"
+
+ITERM_TAB_STATE_SCRIPT = """\
+tell application "iTerm2"
+  set out to ""
+  repeat with w from 1 to count of windows
+    set theWin to window w
+    repeat with t from 1 to count of tabs of theWin
+      set sess to current session of (tab t of theWin)
+      set out to out & w & "|" & t & "|" & (tty of sess) & "|" & ¬
+        (is processing of sess) & "|" & (name of sess) & linefeed
+    end repeat
+  end repeat
+  return out
+end tell
+"""
 
 
 def default_signal_dir() -> Path:
@@ -62,6 +78,63 @@ def _normalize_state(value: object) -> str:
     return state if state in VALID_STATES else "unknown"
 
 
+def _parse_bool(value: object) -> bool | None:
+    text = str(value or "").strip().lower()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    return None
+
+
+def read_live_iterm_states(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, dict[str, Any]]:
+    """Return live iTerm processing state by TTY.
+
+    Signal files are hook-derived and can lag after tab/session churn. iTerm's
+    `is processing` is the authoritative busy bit for dispatch safety, so this
+    source only ever tightens the monitor state.
+    """
+    try:
+        result = run(
+            ["osascript", "-e", ITERM_TAB_STATE_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode != 0:
+        return {}
+
+    states: dict[str, dict[str, Any]] = {}
+    for raw_line in result.stdout.splitlines():
+        parts = raw_line.split("|", 4)
+        if len(parts) != 5:
+            continue
+        raw_window, raw_tab, tty, raw_processing, name = parts
+        tty = tty.strip()
+        processing = _parse_bool(raw_processing)
+        if not tty or processing is None:
+            continue
+        try:
+            window = int(raw_window)
+            tab = int(raw_tab)
+        except ValueError:
+            window = None
+            tab = None
+        states[tty] = {
+            "window": window,
+            "tab": tab,
+            "tty": tty,
+            "is_processing": processing,
+            "name": name,
+        }
+    return states
+
+
 @dataclass(frozen=True)
 class SignalRecord:
     path: Path
@@ -96,6 +169,27 @@ class SignalRecord:
             "signal_ts": self.ts,
             "signal_updated_at": _iso(self.mtime),
         }
+
+
+def _apply_live_iterm_state(
+    tab: dict[str, Any],
+    live_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not live_state:
+        return tab
+    reconciled = dict(tab)
+    is_processing = bool(live_state.get("is_processing"))
+    reconciled["iterm_is_processing"] = is_processing
+    reconciled["iterm_window"] = live_state.get("window")
+    reconciled["iterm_tab"] = live_state.get("tab")
+    reconciled["iterm_name"] = live_state.get("name")
+    if is_processing and reconciled.get("state") != "running":
+        reconciled["signal_state"] = reconciled.get("state")
+        reconciled["state"] = "running"
+        reconciled["state_source"] = "iterm_processing"
+    else:
+        reconciled["state_source"] = "signal"
+    return reconciled
 
 
 def read_signal_records(
@@ -146,6 +240,7 @@ def build_current_state(
     *,
     now_ts: float | None = None,
     pid_alive: Callable[[int], bool] = _pid_alive,
+    live_iterm_states: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     now_ts = _now() if now_ts is None else now_ts
     records = read_signal_records(signal_dir, now_ts=now_ts, pid_alive=pid_alive)
@@ -166,11 +261,13 @@ def build_current_state(
         tty_records.sort(key=lambda rec: rec.sort_key, reverse=True)
         selected = tty_records[0]
         duplicate_count += max(0, len(tty_records) - 1)
-        tabs.append(selected.to_tab(now_ts=now_ts))
+        tab = selected.to_tab(now_ts=now_ts)
+        tabs.append(_apply_live_iterm_state(tab, (live_iterm_states or {}).get(tty)))
 
     counts_by_state: dict[str, int] = {state: 0 for state in sorted(VALID_STATES | {"unknown"})}
     for tab in tabs:
-        counts_by_state[str(tab["state"])] = counts_by_state.get(str(tab["state"]), 0) + 1
+        state = str(tab["state"])
+        counts_by_state[state] = counts_by_state.get(state, 0) + 1
 
     return {
         "generated_at": _iso(now_ts),
@@ -196,7 +293,10 @@ def _load_previous(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def transition_events(previous: dict[str, Any] | None, current: dict[str, Any]) -> list[dict[str, Any]]:
+def transition_events(
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+) -> list[dict[str, Any]]:
     prev_tabs = {
         str(tab.get("tty")): tab
         for tab in (previous or {}).get("tabs", [])
@@ -230,7 +330,9 @@ def transition_events(previous: dict[str, Any] | None, current: dict[str, Any]) 
                 }
             )
     for tty, prev in prev_tabs.items():
-        if not any(isinstance(tab, dict) and tab.get("tty") == tty for tab in current.get("tabs", [])):
+        if not any(
+            isinstance(tab, dict) and tab.get("tty") == tty for tab in current.get("tabs", [])
+        ):
             events.append(
                 {
                     "ts": current.get("generated_at"),
@@ -259,7 +361,10 @@ def write_outputs(
     previous = _load_previous(current_path) if previous is None else previous
     events = transition_events(previous, current)
     tmp = current_path.with_suffix(current_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     tmp.replace(current_path)
     if events:
         events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -277,9 +382,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--events-name", default=DEFAULT_EVENTS_NAME)
     parser.add_argument("--print", action="store_true", dest="print_json")
     parser.add_argument("--no-write", action="store_true")
+    parser.add_argument(
+        "--no-iterm-live",
+        action="store_true",
+        help="Do not reconcile signal files with live iTerm `is processing` state.",
+    )
     args = parser.parse_args(argv)
 
-    current = build_current_state(args.signal_dir)
+    live_iterm_states = {} if args.no_iterm_live else read_live_iterm_states()
+    current = build_current_state(args.signal_dir, live_iterm_states=live_iterm_states)
     events: list[dict[str, Any]] = []
     if not args.no_write:
         events = write_outputs(

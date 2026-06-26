@@ -82,9 +82,11 @@ def watch_once(
         except (json.JSONDecodeError, OSError, TypeError, ValueError):
             previous = {}
     current = snapshot_reports(report_dir)
-    events = [] if seed_if_missing and not state_existed else [
-        enrich_event(event) for event in diff_snapshots(previous, current)
-    ]
+    events = (
+        []
+        if seed_if_missing and not state_existed
+        else [enrich_event(event) for event in diff_snapshots(previous, current)]
+    )
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     append_events(events, event_log=event_log)

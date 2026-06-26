@@ -28,7 +28,10 @@ def test_payload_can_validate_without_submit():
     assert dispatch.payload_for_request(request) == "/goal work item 59"
 
 
-@pytest.mark.parametrize("text", ["whoami", "", "/goal bad\nnext", "/goal bad\x03", "/goal bad\x1b"])
+@pytest.mark.parametrize(
+    "text",
+    ["whoami", "", "/goal bad\nnext", "/goal bad\x03", "/goal bad\x1b"],
+)
 def test_payload_rejects_unsafe_text(text):
     request = dispatch.DispatchRequest(tty="/dev/ttys003", text=text)
 
@@ -63,6 +66,7 @@ class FakeSession:
     async def async_send_text(self, payload):
         self.sent.append(payload)
 
+
 class FakeTab:
     def __init__(self, sessions):
         self.sessions = sessions
@@ -78,11 +82,7 @@ def test_find_session_by_tty_with_mocked_iterm(monkeypatch):
     app = type(
         "App",
         (),
-        {
-            "terminal_windows": [
-                FakeWindow([FakeTab([FakeSession("/dev/ttys003"), wanted])])
-            ]
-        },
+        {"terminal_windows": [FakeWindow([FakeTab([FakeSession("/dev/ttys003"), wanted])])]},
     )()
 
     async def fake_get_app(connection):

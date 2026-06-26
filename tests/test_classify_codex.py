@@ -3,14 +3,14 @@
 Pure functions only — no iTerm2 or subprocess.
 """
 
+# ruff: noqa: I001
+
 from __future__ import annotations
 
 import json
 import sys
 import time
 from pathlib import Path
-
-import pytest
 
 # Make scripts/ importable.
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
@@ -115,8 +115,7 @@ def test_ps_codex_procs_node_wrapping_codex():
 
 def test_ps_codex_procs_skips_no_tty():
     ps_out = (
-        "  300 ?? Mon May 28 19:20:01 2026 codex\n"
-        "  301 ttys005 Mon May 28 19:20:01 2026 codex\n"
+        "  300 ?? Mon May 28 19:20:01 2026 codex\n  301 ttys005 Mon May 28 19:20:01 2026 codex\n"
     )
     procs = cs._ps_codex_procs(ps_out)
     assert [p.pid for p in procs] == [301]
@@ -133,6 +132,7 @@ def test_match_rollout_picks_newest_after_proc_start(tmp_path):
     older_mtime = time.time() - 3600
     newer_mtime = time.time() - 60
     import os as _os
+
     _os.utime(older, (older_mtime, older_mtime))
     _os.utime(newer, (newer_mtime, newer_mtime))
 
@@ -145,6 +145,7 @@ def test_match_rollout_none_if_all_older_than_proc(tmp_path):
     r = tmp_path / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
     r.write_text("{}\n")
     import os as _os
+
     _os.utime(r, (time.time() - 3600, time.time() - 3600))
     proc = cs.CodexProc(pid=1, tty="/dev/ttys001", started=time.time() - 60)
     assert cs.match_rollout_for_proc(proc, [r]) is None
@@ -202,15 +203,21 @@ def test_sweep_emits_signal_for_codex_proc(tmp_path, monkeypatch):
     rollout = sessions / "rollout-2026-05-28T10-00-00-019e64c1-dcf5-7f11-b45c-e2c8ea952035.jsonl"
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
     rollout.write_text(
-        json.dumps({"timestamp": now_iso, "type": "session_meta",
-                    "payload": {"cwd": "/Users/x/code/foo"}}) + "\n"
-        + json.dumps({"timestamp": now_iso, "type": "event_msg",
-                      "payload": {"type": "task_started"}}) + "\n"
+        json.dumps(
+            {"timestamp": now_iso, "type": "session_meta", "payload": {"cwd": "/Users/x/code/foo"}}
+        )
+        + "\n"
+        + json.dumps(
+            {"timestamp": now_iso, "type": "event_msg", "payload": {"type": "task_started"}}
+        )
+        + "\n"
     )
     fake_started = time.time() - 30
-    fake_ps = (
-        f"  9999 {time.strftime('%a %b %d %H:%M:%S %Y', time.localtime(fake_started))} codex\n"
+    started_text = time.strftime(
+        "%a %b %d %H:%M:%S %Y",
+        time.localtime(fake_started),
     )
+    fake_ps = f"  9999 {started_text} codex\n"
 
     def fake_check_output(cmd, **kwargs):
         if cmd == ["ps", "-axo", "pid=,lstart=,command="]:

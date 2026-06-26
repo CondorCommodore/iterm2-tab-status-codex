@@ -3,6 +3,8 @@
 Pure functions only — no iTerm2 or subprocess.
 """
 
+# ruff: noqa: I001
+
 from __future__ import annotations
 
 import json

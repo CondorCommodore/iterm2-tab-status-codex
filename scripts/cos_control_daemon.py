@@ -34,7 +34,11 @@ def tick(*, signal_dir: Path, report_dir: Path) -> dict[str, object]:
         event_log=report_dir / "cos-report-events.jsonl",
         seed_if_missing=True,
     )
-    dashboard = cos_dashboard.build_dashboard(state_path=current_path, report_dir=report_dir)
+    dashboard = cos_dashboard.build_dashboard(
+        state_path=current_path,
+        iterm_live_state_path=current_path,
+        report_dir=report_dir,
+    )
     dashboard_path = report_dir / "cos-dashboard-current.json"
     dashboard_path.write_text(
         json.dumps(dashboard, indent=2, sort_keys=True) + "\n", encoding="utf-8"

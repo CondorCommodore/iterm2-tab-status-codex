@@ -38,7 +38,11 @@ def build_dispatch_plan(
     target_host: str = "",
     cos_tty: str = "",
 ) -> DispatchPlan:
-    dashboard = cos_dashboard.build_dashboard(state_path=state_path, report_dir=report_dir)
+    dashboard = cos_dashboard.build_dashboard(
+        state_path=state_path,
+        iterm_live_state_path=state_path,
+        report_dir=report_dir,
+    )
     tabs = []
     for tab in dashboard["tabs"]["tabs"]:
         next_tab = dict(tab)

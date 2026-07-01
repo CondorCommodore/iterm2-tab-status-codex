@@ -71,7 +71,11 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
             state_path=tmp / "watcher-state.json",
             event_log=tmp / "events.jsonl",
         )
-        dashboard = cos_dashboard.build_dashboard(state_path=state_path, report_dir=report_dir)
+        dashboard = cos_dashboard.build_dashboard(
+            state_path=state_path,
+            iterm_live_state_path=state_path,
+            report_dir=report_dir,
+        )
         plan = cos_dispatch_orchestrator.build_dispatch_plan(
             goal=str(scenario.get("goal") or DEFAULT_SCENARIO["goal"]),
             state_path=state_path,

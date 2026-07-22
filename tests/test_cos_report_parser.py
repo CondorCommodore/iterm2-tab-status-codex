@@ -35,6 +35,26 @@ Deploy on MacBook.
     assert parsed.next_step == "Deploy on MacBook."
 
 
+def test_parse_report_extracts_rolled_over_letter_block_task_id(tmp_path):
+    # Width-cap rollover (coord-api ADR 2026-07-22): after T-9999 the display_id
+    # rolls to A-0001. The parser must recognize letter-block ids, and still
+    # match the legacy T- form.
+    report = tmp_path / "worker-ttys004-20260722.md"
+    report.write_text(
+        """# Task Done
+
+Task A-0001 complete; also touched T-9092 and B-0007.
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parser.parse_report(report)
+
+    assert "A-0001" in parsed.tasks
+    assert "T-9092" in parsed.tasks
+    assert "B-0007" in parsed.tasks
+
+
 def test_parse_report_detects_decision_and_blocked(tmp_path):
     report = tmp_path / "decision.md"
     report.write_text("BLOCKED: needs operator decision on PR #9", encoding="utf-8")

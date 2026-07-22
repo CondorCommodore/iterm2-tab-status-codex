@@ -14,7 +14,10 @@ DEFAULT_REPORT_DIR = Path.home() / ".claude" / "plans" / "fleet-reports"
 
 PR_RE = re.compile(r"(?:PR|pull request)\s*#?(\d+)", re.IGNORECASE)
 SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
-TASK_RE = re.compile(r"\bT-\d+\b|\bTASK\s*#?\d+\b", re.IGNORECASE)
+# Task display_id width-cap rollover (coord-api ADR 2026-07-22): match the
+# legacy T-#### form and rolled-over letter blocks (A-0001, B-0001, ...),
+# alongside the "TASK #<n>" form. Backward-compatible with T-.
+TASK_RE = re.compile(r"\b[A-Z]-\d{1,4}\b|\bTASK\s*#?\d+\b", re.IGNORECASE)
 TTY_RE = re.compile(r"\bttys\d+\b")
 
 

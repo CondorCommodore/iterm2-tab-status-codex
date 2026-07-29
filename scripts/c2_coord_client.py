@@ -296,7 +296,9 @@ class CoordClient:
             raise LeaseLost(
                 f"lease {resource!r} epoch mismatch: expected={expected_epoch} observed={epoch}"
             )
-        if expiry is not None and expiry <= datetime.now(timezone.utc):
+        if expiry is None:
+            raise LeaseLost(f"lease {resource!r} has missing or invalid expiry")
+        if expiry <= datetime.now(timezone.utc):
             raise LeaseLost(f"lease {resource!r} expired at {expiry.isoformat()}")
         return lease
 

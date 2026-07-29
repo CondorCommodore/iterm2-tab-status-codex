@@ -123,6 +123,14 @@ def test_verify_epoch_rejects_wrong_holder_epoch_and_expiry():
         client.verify_live_epoch("resource", 7)
 
 
+@pytest.mark.parametrize("expires_at", [None, "", "not-a-date"])
+def test_verify_epoch_rejects_missing_or_malformed_expiry(expires_at):
+    payload = {"holder": "mikebook_codex", "epoch": 7, "expires_at": expires_at}
+    client = coord.CoordClient(config(), request=lambda *_args: (200, payload))
+    with pytest.raises(coord.LeaseLost, match="invalid expiry"):
+        client.verify_live_epoch("resource", 7)
+
+
 def test_post_receipt_uses_coord_supported_activity_message_type():
     calls = []
 

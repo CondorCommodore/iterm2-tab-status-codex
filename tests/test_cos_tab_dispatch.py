@@ -4,6 +4,7 @@ import asyncio
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -523,7 +524,8 @@ def test_tab_dispatch_fences_worker_reservation_before_each_injection(monkeypatc
 
 def test_headless_dispatch_fences_worker_reservation(tmp_path):
     verified = []
-    reservation = {"resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 23}
+    reservation = {"resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 23,
+                   "expires_at": "2099-01-01T00:00:00Z"}
     result = dispatch.dispatch_registered_headless(
         manifest=_manifest(), envelope=_envelope(),
         verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
@@ -532,6 +534,25 @@ def test_headless_dispatch_fences_worker_reservation(tmp_path):
     )
     assert result["ok"] is True
     assert verified == [("workspace:mikebook:c2-supervisor", 7), (reservation["resource"], 23)]
+
+
+def test_headless_timeout_is_bounded_by_worker_reservation(tmp_path):
+    observed = {}
+    reservation = {
+        "resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 23,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=40)).isoformat(),
+    }
+
+    def run(command, **kwargs):
+        observed["timeout"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(command, 0, "done", "")
+
+    result = dispatch.dispatch_registered_headless(
+        manifest=_manifest(), envelope=_envelope(), verify_epoch=lambda *_args: None,
+        receipts=ReceiptStore(tmp_path / "receipts.jsonl"), reservation=reservation, run=run,
+    )
+    assert result["ok"] is True
+    assert 30 <= observed["timeout"] < 40
 
 
 def test_queued_prompt_gets_one_refenced_recovery_submit(monkeypatch, tmp_path):

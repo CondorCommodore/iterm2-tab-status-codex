@@ -15,6 +15,7 @@ import shlex
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -640,6 +641,17 @@ def dispatch_registered_headless(
     verify_epoch(SUPERVISOR_RESOURCE, envelope.controller_epoch)
     if reservation is not None:
         verify_epoch(str(reservation["resource"]), int(reservation["epoch"]))
+        raw_expiry = reservation.get("expires_at")
+        try:
+            expiry = datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            raise ContractError("worker reservation has missing or invalid expiry") from exc
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        remaining = (expiry.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 5:
+            raise ContractError("worker reservation expires before headless dispatch can start")
+        timeout_seconds = min(timeout_seconds, remaining - 5)
     started = time.monotonic()
     try:
         result = run(

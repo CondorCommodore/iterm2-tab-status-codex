@@ -184,5 +184,21 @@ def test_arm_clears_stale_heartbeat_decision_and_watchdog_state(tmp_path):
     for name in ("supervisor-heartbeat.json", "decision-current.json", "watchdog-state.json"):
         (tmp_path / name).write_text('{"stale":true}\n', encoding="utf-8")
     supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
-    for name in ("supervisor-heartbeat.json", "decision-current.json", "watchdog-state.json"):
+    for name in ("supervisor-heartbeat.json", "decision-current.json"):
         assert not (tmp_path / name).exists()
+    watchdog = json.loads((tmp_path / "watchdog-state.json").read_text())
+    assert watchdog["pending_since"] is None
+    assert watchdog["edge_health_failures"] == 0
+
+
+def test_arm_preserves_and_derives_recovery_receipt_sequences(tmp_path):
+    (tmp_path / "watchdog-state.json").write_text(
+        json.dumps({"recovery_sequence": 3, "edge_restart_sequence": 2}), encoding="utf-8")
+    (tmp_path / "recovery-receipts.jsonl").write_text(
+        json.dumps({"idempotency_key": "c2-recovery:4:headless"}) + "\n", encoding="utf-8")
+    (tmp_path / "edge-recovery-receipts.jsonl").write_text(
+        json.dumps({"idempotency_key": "edge-recovery:6"}) + "\n", encoding="utf-8")
+    supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
+    watchdog = json.loads((tmp_path / "watchdog-state.json").read_text())
+    assert watchdog["recovery_sequence"] == 5
+    assert watchdog["edge_restart_sequence"] == 7

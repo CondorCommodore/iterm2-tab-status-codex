@@ -59,6 +59,23 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _next_receipt_sequence(path: Path, prefix: str) -> int:
+    highest = -1
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError):
+        return 0
+    for line in lines:
+        try:
+            value = json.loads(line)
+            key = str(value.get("idempotency_key") or "") if isinstance(value, dict) else ""
+            if key.startswith(prefix):
+                highest = max(highest, int(key[len(prefix):].split(":", 1)[0]))
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return highest + 1
+
+
 def state_paths(state_dir: Path) -> dict[str, Path]:
     return {
         "armed": state_dir / "ARMED",
@@ -337,12 +354,34 @@ def arm(
             )
     paths = state_paths(state_dir)
     paths["armed"].parent.mkdir(parents=True, exist_ok=True)
-    for stale_path in (
-        paths["heartbeat"],
-        paths["decision"],
-        state_dir / "watchdog-state.json",
-    ):
+    watchdog_path = state_dir / "watchdog-state.json"
+    prior_watchdog = _load_json(watchdog_path)
+    for stale_path in (paths["heartbeat"], paths["decision"]):
         stale_path.unlink(missing_ok=True)
+    recovery_sequence = max(
+        int(prior_watchdog.get("recovery_sequence") or 0),
+        _next_receipt_sequence(state_dir / "recovery-receipts.jsonl", "c2-recovery:"),
+    )
+    edge_restart_sequence = max(
+        int(prior_watchdog.get("edge_restart_sequence") or 0),
+        _next_receipt_sequence(state_dir / "edge-recovery-receipts.jsonl", "edge-recovery:"),
+    )
+    _atomic_json(
+        watchdog_path,
+        {
+            "recovery_sequence": recovery_sequence,
+            "edge_restart_sequence": edge_restart_sequence,
+            "tab_pokes": 0,
+            "provider_failures": 0,
+            "edge_health_failures": 0,
+            "edge_restart_attempts": 0,
+            "pending_since": None,
+            "pending_key": None,
+            "pending_transport": None,
+            "backoff_until": None,
+            "edge_restart_backoff_until": None,
+        },
+    )
     paths["armed"].write_text(f"manifest_id={manifest.manifest_id}\n", encoding="utf-8")
     os.chmod(paths["armed"], 0o600)
     state = {

@@ -366,7 +366,8 @@ closes only when the delivery hub validates a substantive numbered reply with:
 - `reply_to` equal to the original message ID;
 - matching `correlation_id` (or a server-derived one);
 - an authorized sender equal to the recipient obligation;
-- `created_at` equal to or later than the original message creation time;
+- `created_at` no earlier than the original message and no later than the
+  projection's immutable server clock/cursor;
 - an authenticated producing coord session enrolled to the recipient for
   agent-scoped traffic;
 - for exact-session traffic, an authenticated producing coord session equal to
@@ -447,8 +448,11 @@ existing message, binding, controller epoch, and dispatch attempt/idempotency
 coordinates; it is not a new semantic task or message identity. A lost
 presentation ACK can therefore be reconciled from post-state without injecting
 the body twice. Every field that affects reconstruction, including the
-server-owned recorded timestamp, is covered by the immutable event digest. The
-same idempotency key with a changed timestamp is a collision, not a replay.
+server-owned recorded timestamp, is covered by the immutable event digest.
+Events are grouped by idempotency key before ordering or lifecycle mutation; if
+one key has multiple immutable digests, every variant at that coordinate is
+dropped and the collision remains visible. A changed timestamp is therefore a
+collision, not a replay, and cannot win by sorting earlier.
 Retries use bounded exponential backoff with jitter, urgency
 deadlines, and fresh fencing/identity/state checks. They never repeat Escape or
 Enter blindly.
@@ -724,10 +728,10 @@ before/after, language results, and pass/fail assertions.
 reducer is implemented in `scripts/cos_message_delivery_policy.py`; its canonical
 24-message fixture is `tests/fixtures/message_delivery_shadow_v1.json`, pinned as
 `639d66f9363e1211d876ab4862e104c06692309cceaed3985573aef5f7097a6f`.
-The focused suite contains 66 passing cases, including an exhaustive 216-case
+The focused suite contains 68 passing cases, including an exhaustive 216-case
 three-event lifecycle check, deterministic control/treatment divergence
 evidence, and cancellation-after-presentation acknowledgement semantics. The
-full repository suite passes 385 tests. An AST/import guard proves the reducer
+full repository suite passes 387 tests. An AST/import guard proves the reducer
 has no coord client, edge, terminal, process, socket, SQL, or HTTP dependency.
 The compatibility matrix in Section 11.1 records which current coord-api fields
 can be reused and which proposed meanings require new durable state. The

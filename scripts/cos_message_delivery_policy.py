@@ -189,7 +189,9 @@ def _policy_map(
         allowed_dispositions = raw.get("allowed_response_dispositions", [])
         if (
             not isinstance(allowed_dispositions, list)
-            or any(not isinstance(value, str) or not value.strip() for value in allowed_dispositions)
+            or any(
+                not isinstance(value, str) or not value.strip() for value in allowed_dispositions
+            )
             or len(set(allowed_dispositions)) != len(allowed_dispositions)
         ):
             raise DeliveryPolicyError(
@@ -208,9 +210,7 @@ def _policy_map(
             )
         requires_response = bool(raw.get("requires_response", False))
         if (allowed_dispositions or required_references) and not requires_response:
-            raise DeliveryPolicyError(
-                "response constraints require requires_response=true"
-            )
+            raise DeliveryPolicyError("response constraints require requires_response=true")
         result[message_id] = {
             "message_id": message_id,
             "urgency": urgency,
@@ -253,6 +253,36 @@ def _event_sort_key(event: dict[str, Any]) -> tuple[float, str]:
         _timestamp(event.get("recorded_at"), "event.recorded_at"),
         str(event.get("idempotency_key") or ""),
     )
+
+
+def _resolve_event_idempotency(
+    events: Iterable[dict[str, Any]], violations: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Drop conflicting coordinates and collapse exact replays before mutation."""
+
+    ordered_events = sorted(events, key=_event_sort_key)
+    digests_by_key: dict[str, set[str]] = {}
+    for event in ordered_events:
+        key = str(event.get("idempotency_key") or "")
+        if key:
+            digests_by_key.setdefault(key, set()).add(content_digest(event))
+    conflicting_keys = {
+        key for key, event_digests in digests_by_key.items() if len(event_digests) > 1
+    }
+    violations.extend(
+        {"kind": "receipt_idempotency_collision", "key": key} for key in sorted(conflicting_keys)
+    )
+
+    seen: set[str] = set()
+    resolved: list[dict[str, Any]] = []
+    for event in ordered_events:
+        key = str(event.get("idempotency_key") or "")
+        if key and (key in conflicting_keys or key in seen):
+            continue
+        if key:
+            seen.add(key)
+        resolved.append(event)
+    return resolved
 
 
 def _initial_state(message: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
@@ -308,8 +338,7 @@ def _validate_supersession(
         already_presented = any(
             event.get("message_id") == old_id
             and event.get("event_type") in {"presented", "received"}
-            and _timestamp(event.get("recorded_at"), "event.recorded_at")
-            <= replacement_at
+            and _timestamp(event.get("recorded_at"), "event.recorded_at") <= replacement_at
             for event in events
         )
         if already_presented:
@@ -331,14 +360,14 @@ def _valid_response(
     policy: dict[str, Any],
     recipient_agent: str,
     verified_actor_sessions: Mapping[str, set[str]],
+    now: float,
 ) -> bool:
     exact_session = str(original.get("to_session_id") or "")
     producing_session = str(response.get("from_session_id") or "")
     response_references = response.get("response_references")
     required_references = policy["required_response_references"]
     references_match = isinstance(response_references, Mapping) and all(
-        response_references.get(name) == expected
-        for name, expected in required_references.items()
+        response_references.get(name) == expected for name, expected in required_references.items()
     )
     if not required_references:
         references_match = True
@@ -349,13 +378,13 @@ def _valid_response(
         and response.get("correlation_id") == original.get("correlation_id")
         and response.get("from_agent") == recipient_agent
         and str(response.get("content") or "").strip()
-        and _timestamp(response.get("created_at"), "message.created_at")
-        >= _timestamp(original.get("created_at"), "message.created_at")
+        and _timestamp(original.get("created_at"), "message.created_at")
+        <= _timestamp(response.get("created_at"), "message.created_at")
+        <= now
         and producing_session in verified_actor_sessions.get(recipient_agent, set())
         and (not exact_session or producing_session == exact_session)
         and (
-            not allowed_dispositions
-            or response.get("response_disposition") in allowed_dispositions
+            not allowed_dispositions or response.get("response_disposition") in allowed_dispositions
         )
         and references_match
     )
@@ -365,6 +394,7 @@ def _apply_responses(
     states: dict[int, dict[str, Any]],
     recipient_agent: str,
     verified_actor_sessions: Mapping[str, set[str]],
+    now: float,
 ) -> None:
     responses = [state["message"] for state in states.values() if state["message"].get("reply_to")]
     responses.sort(
@@ -383,6 +413,7 @@ def _apply_responses(
                 state["policy"],
                 recipient_agent,
                 verified_actor_sessions,
+                now,
             ):
                 state["response_message_id"] = response["id"]
                 state["response_at"] = _timestamp(response["created_at"], "message.created_at")
@@ -402,17 +433,11 @@ def _apply_events(
     verified_actor_sessions: Mapping[str, set[str]],
     violations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    seen: dict[str, str] = {}
     accepted_receipts: list[dict[str, Any]] = []
-    for event in sorted(events, key=_event_sort_key):
+    for event in events:
         key = str(event.get("idempotency_key") or "")
         if not key:
             violations.append({"kind": "receipt_missing_idempotency_key"})
-            continue
-        event_digest = content_digest(event)
-        if key in seen:
-            if seen[key] != event_digest:
-                violations.append({"kind": "receipt_idempotency_collision", "key": key})
             continue
         if event.get("display_id") or event.get("id"):
             violations.append({"kind": "receipt_has_semantic_message_identity", "key": key})
@@ -481,9 +506,7 @@ def _apply_events(
             )
             continue
         if event_type in FENCED_EVENTS:
-            expected_session = str(
-                state["message"].get("to_session_id") or recipient_session_id
-            )
+            expected_session = str(state["message"].get("to_session_id") or recipient_session_id)
             if str(event.get("session_id") or "") != expected_session:
                 violations.append(
                     {
@@ -540,7 +563,6 @@ def _apply_events(
             state["status"] = "delivery_failed"
             state["failure_reason"] = str(event.get("reason") or "unspecified")
             state["terminal_at"] = recorded_at
-        seen[key] = event_digest
         accepted_receipts.append(dict(event))
     return accepted_receipts
 
@@ -641,11 +663,13 @@ def project_delivery(
         for message_id, message in message_rows.items()
     }
     violations: list[dict[str, Any]] = []
-    _validate_supersession(states, event_rows, violations)
-    _apply_responses(states, recipient_agent, verified_actor_session_sets)
+    resolved_event_rows = _resolve_event_idempotency(event_rows, violations)
+    now_ts = _timestamp(now, "now")
+    _validate_supersession(states, resolved_event_rows, violations)
+    _apply_responses(states, recipient_agent, verified_actor_session_sets, now_ts)
     accepted_receipts = _apply_events(
         states,
-        event_rows,
+        resolved_event_rows,
         recipient_agent=recipient_agent,
         recipient_session_id=recipient_session_id,
         live_controller_epoch=live_controller_epoch,
@@ -655,7 +679,6 @@ def project_delivery(
         verified_actor_sessions=verified_actor_session_sets,
         violations=violations,
     )
-    now_ts = _timestamp(now, "now")
     _expire(states, now_ts)
 
     matching = [
@@ -743,8 +766,7 @@ def project_delivery(
     leaked = [
         state["message"]["id"]
         for state in matching
-        if state["message"].get("content")
-        and str(state["message"]["content"]) in serialized_digest
+        if state["message"].get("content") and str(state["message"]["content"]) in serialized_digest
     ]
     if leaked:
         violations.append({"kind": "digest_body_leak", "message_ids": leaked})

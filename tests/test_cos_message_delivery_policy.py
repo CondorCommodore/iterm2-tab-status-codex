@@ -12,9 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 FIXTURE_PATH = ROOT / "tests" / "fixtures" / "message_delivery_shadow_v1.json"
-LANGUAGE_FIXTURE_PATH = (
-    ROOT / "tests" / "fixtures" / "message_delivery_language_comparison_v1.json"
-)
+LANGUAGE_FIXTURE_PATH = ROOT / "tests" / "fixtures" / "message_delivery_language_comparison_v1.json"
 sys.path.insert(0, str(SCRIPTS))
 
 import cos_message_delivery_policy as policy  # noqa: E402
@@ -198,9 +196,9 @@ def test_bounded_worker_state_and_urgency_partition(worker_state, urgency, expec
         recipient_agent="worker",
         recipient_session_id="session-current",
         worker_state=worker_state,
-            now="2026-07-29T12:01:00Z",
-            live_controller_epoch=7,
-            verified_actor_sessions={"worker": ["session-current"]},
+        now="2026-07-29T12:01:00Z",
+        live_controller_epoch=7,
+        verified_actor_sessions={"worker": ["session-current"]},
     )
 
     assert result["proposed_action"]["action"] == expected
@@ -302,10 +300,7 @@ def test_allowed_actor_with_unverified_producing_session_cannot_mutate_state():
     ]
 
     result = project(value)
-    assert any(
-        row["kind"] == "receipt_actor_session_mismatch"
-        for row in result["violations"]
-    )
+    assert any(row["kind"] == "receipt_actor_session_mismatch" for row in result["violations"])
     assert result["state"]["16"]["received"] is False
 
 
@@ -328,17 +323,18 @@ def test_received_does_not_fabricate_terminal_presentation_evidence():
     assert result["state"]["16"]["presented"] is False
 
 
-def test_invalid_receipt_cannot_poison_later_valid_same_key():
+@pytest.mark.parametrize("reverse_input", [False, True])
+def test_conflicting_receipt_key_drops_all_variants_before_mutation(reverse_input):
     value = fixture()
     key = "receipt:16:received:poison-attempt"
-    value["events"] = [
+    variants = [
         {
             "event_type": "received",
             "message_id": 16,
             "actor_id": "worker",
-            "session_id": "session-old",
+            "session_id": "session-current",
             "controller_epoch": 7,
-            "recorded_at": "2026-07-29T12:04:00Z",
+            "recorded_at": "2026-07-29T12:03:59Z",
             "idempotency_key": key,
         },
         {
@@ -351,10 +347,12 @@ def test_invalid_receipt_cannot_poison_later_valid_same_key():
             "idempotency_key": key,
         },
     ]
+    value["events"] = list(reversed(variants)) if reverse_input else variants
 
     result = project(value)
-    assert result["state"]["16"]["received"] is True
-    assert len(result["receipt_projection"]) == 1
+    assert result["state"]["16"]["received"] is False
+    assert result["receipt_projection"] == []
+    assert result["violations"] == [{"kind": "receipt_idempotency_collision", "key": key}]
 
 
 def test_same_idempotency_key_with_different_payload_is_rejected():
@@ -364,9 +362,7 @@ def test_same_idempotency_key_with_different_payload_is_rejected():
     value["events"].append(duplicate)
 
     result = project(value)
-    assert any(
-        row["kind"] == "receipt_idempotency_collision" for row in result["violations"]
-    )
+    assert any(row["kind"] == "receipt_idempotency_collision" for row in result["violations"])
 
 
 def test_same_idempotency_key_with_changed_time_conflicts_without_poisoning_replay():
@@ -379,11 +375,9 @@ def test_same_idempotency_key_with_changed_time_conflicts_without_poisoning_repl
 
     result = project(value)
 
-    assert result["receipt_projection"] == [original]
-    assert result["state"]["4"]["presented"] is True
-    assert [row["kind"] for row in result["violations"]] == [
-        "receipt_idempotency_collision"
-    ]
+    assert result["receipt_projection"] == []
+    assert result["state"]["4"]["presented"] is False
+    assert [row["kind"] for row in result["violations"]] == ["receipt_idempotency_collision"]
 
 
 @pytest.mark.parametrize(
@@ -409,6 +403,18 @@ def test_response_created_before_original_does_not_discharge_obligation():
     value = fixture()
     response = next(row for row in value["messages"] if row["id"] == 24)
     response["created_at"] = "2026-07-29T12:00:02Z"
+
+    result = project(value)
+    obligation = next(row for row in result["response_due"] if row["message_id"] == 3)
+
+    assert obligation["response_due"] is True
+    assert obligation["response_message_id"] is None
+
+
+def test_response_created_after_projection_now_does_not_discharge_obligation():
+    value = fixture()
+    response = next(row for row in value["messages"] if row["id"] == 24)
+    response["created_at"] = "2026-07-29T12:10:01Z"
 
     result = project(value)
     obligation = next(row for row in result["response_due"] if row["message_id"] == 3)
@@ -566,9 +572,7 @@ def test_digest_limit_is_exact_and_does_not_change_queue_state(limit):
     value = fixture()
     result = project(value, digest_limit=limit)
 
-    assert len(result["digest"]["headers"]) == min(
-        limit, result["digest"]["queued_count"]
-    )
+    assert len(result["digest"]["headers"]) == min(limit, result["digest"]["queued_count"])
     assert result["digest"]["queued_count"] > 5
 
 
@@ -700,9 +704,7 @@ def test_bounded_three_event_lifecycle_matches_independent_oracle():
     for sequence in itertools.product(event_names, repeat=3):
         value = fixture()
         value["messages"] = [copy.deepcopy(value["messages"][15])]
-        value["policies"] = [
-            {"message_id": 16, "urgency": "Critical", "requires_response": False}
-        ]
+        value["policies"] = [{"message_id": 16, "urgency": "Critical", "requires_response": False}]
         value["events"] = []
         status = "queued"
         presented = False
@@ -916,9 +918,7 @@ def test_language_comparison_exposes_confusion_and_incomplete_trials():
     )
 
     assert score["complete"] is False
-    candidate_b = next(
-        row for row in score["candidate_scores"] if row["candidate_id"] == "B"
-    )
+    candidate_b = next(row for row in score["candidate_scores"] if row["candidate_id"] == "B")
     assert candidate_b["accuracy"] == 0.0
     assert candidate_b["confusions"] == [
         {

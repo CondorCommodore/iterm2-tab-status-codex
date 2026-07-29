@@ -67,3 +67,15 @@ def test_unix_socket_edge_protocol_round_trip(tmp_path):
     socket_path.unlink(missing_ok=True)
 
     assert result == {"ok": True, "op": "poke"}
+
+
+def test_dispatch_client_timeout_covers_bounded_headless_turn(monkeypatch):
+    seen = {}
+
+    def fake_request(_payload, **kwargs):
+        seen.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(edge, "request_edge", fake_request)
+    edge.dispatch_envelope({"assignment_id": "a-1"})
+    assert seen["timeout_seconds"] > 1800

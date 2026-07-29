@@ -78,8 +78,9 @@ def dispatch_envelope(
     envelope: dict[str, Any],
     *,
     socket_path: Path = DEFAULT_SOCKET_PATH,
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float = 1810.0,
 ) -> dict[str, Any]:
+    """Allow the daemon's 1800-second bounded headless turn plus framing slack."""
     return request_edge(
         {"protocol": "cos-c2-iterm-edge-v1", "op": "dispatch", "envelope": envelope},
         socket_path=socket_path,

@@ -293,7 +293,9 @@ def test_visual_decision_requires_controller_and_worker_epochs(monkeypatch, tmp_
         )
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["action_applied"] is True
+    assert result["verification_state"] == "pending"
     assert verified == [
         ("workspace:mikebook:c2-supervisor", 7),
         ("workspace:mikebook:c2-worker:worker", 13),

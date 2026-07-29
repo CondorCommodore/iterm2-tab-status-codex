@@ -596,12 +596,22 @@ async def execute_visual_decision(
         "submit_method": "iterm2-python-api-visual-action",
         "observed_ack": observed_ack,
         "post_visual_verification_required": True,
+        "verification_state": "pending" if observed_ack else "not-started",
     }
     receipts.append(receipt)
     return {
-        "ok": observed_ack,
+        # Transport acknowledgment proves only that the keystroke reached iTerm.
+        # A fresh screenshot and LLM decision must confirm the UI transition
+        # before the action is reported as complete.
+        "ok": False,
+        "action_applied": observed_ack,
+        "verification_state": receipt["verification_state"],
         "receipt": receipt,
-        **({} if observed_ack else {"error": "visual action was not acknowledged"}),
+        "error": (
+            "post-action visual verification required"
+            if observed_ack
+            else "visual action was not acknowledged"
+        ),
     }
 
 

@@ -412,11 +412,58 @@ def test_headless_trial_waits_for_epoch_expiry_then_resumes_same_uuid(tmp_path):
     )
 
     assert result["action"] == "headless-resume"
-    assert result["receipt"]["success"] is True
+    assert result["receipt"]["success"] is False
+    assert result["receipt"]["headless_turn_success"] is True
+    assert result["receipt"]["recovery_state"] == "awaiting-visible-reattach"
     assert commands[0][:4] == ["codex", "exec", "resume", "cli-cos"]
     assert result["receipt"]["visible_reattach_required"] is True
     assert result["receipt"]["authority_acquired"] is True
     assert result["receipt"]["controller_epoch"] == 8
+
+
+def test_headless_recovery_requires_new_visible_heartbeat(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest, recovery="headless")
+    arm_stale(tmp_path)
+
+    def resume(command, **kwargs):
+        write_headless_authority(tmp_path)
+        return subprocess.CompletedProcess(command, 0, "done", "")
+
+    watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=500,
+        run=resume,
+    )
+    pending = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=502,
+    )
+    assert pending["action"] == "awaiting-visible-reattach"
+    assert pending["ok"] is False
+
+    (tmp_path / "supervisor-heartbeat.json").write_text(
+        json.dumps(
+            {
+                "recorded_ts": 503,
+                "ownership": "visible",
+                "controller_epoch": 9,
+            }
+        ),
+        encoding="utf-8",
+    )
+    recovered = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client({"holder": "mikebook_codex", "epoch": 9}),
+        now_ts=504,
+    )
+    assert recovered["action"] == "recovered"
+    assert recovered["receipt"]["success"] is True
 
 
 def test_headless_trial_never_starts_while_visible_epoch_is_live(tmp_path):

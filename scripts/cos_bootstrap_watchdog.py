@@ -249,13 +249,22 @@ def run_once(
                 }
 
     pending_since = watchdog.get("pending_since")
+    pending_transport = watchdog.get("pending_transport")
+    pending_headless_without_visible_reattach = (
+        pending_transport == "headless" and heartbeat.get("ownership") != "visible"
+    )
     if (
         isinstance(pending_since, (int, float))
         and isinstance(heartbeat.get("recorded_ts"), (int, float))
         and heartbeat["recorded_ts"] > pending_since
+        and not pending_headless_without_visible_reattach
     ):
         receipt = {
-            "idempotency_key": str(watchdog.get("pending_key") or f"recovery:{pending_since}"),
+            "idempotency_key": (
+                f"{watchdog.get('pending_key')}:visible-reattach"
+                if pending_transport == "headless"
+                else str(watchdog.get("pending_key") or f"recovery:{pending_since}")
+            ),
             "recorded_at": _iso(now_ts),
             "transport": watchdog.get("pending_transport"),
             "success": True,
@@ -275,6 +284,14 @@ def run_once(
         }
         _atomic_json(watchdog_path, watchdog)
         return {"ok": True, "armed": True, "action": "recovered", "receipt": receipt}
+
+    if pending_headless_without_visible_reattach:
+        return {
+            "ok": False,
+            "armed": True,
+            "action": "awaiting-visible-reattach",
+            "headless_authority_active": heartbeat.get("ownership") == "headless",
+        }
 
     if age is not None and age < HEARTBEAT_STALE_SECONDS:
         return {"ok": True, "armed": True, "action": "healthy", "heartbeat_age": age}
@@ -360,18 +377,23 @@ def run_once(
         result = run(command, capture_output=True, text=True, timeout=1800)
         duration_ms = int((time.monotonic() - started) * 1000)
         authority = _headless_authority(paths["heartbeat"], attempted_at=now_ts)
-        success = result.returncode == 0 and authority is not None
+        headless_turn_success = result.returncode == 0 and authority is not None
+        success = False
         receipt = {
             "idempotency_key": key,
             "recorded_at": _iso(now_ts),
             "transport": "headless",
             "primary_transport": primary,
             "success": success,
+            "headless_turn_success": headless_turn_success,
             "duration_ms": duration_ms,
             "exit_code": result.returncode,
             "authority_acquired": authority is not None,
             "controller_epoch": (authority.get("controller_epoch") if authority else None),
             "visible_reattach_required": True,
+            "recovery_state": (
+                "awaiting-visible-reattach" if headless_turn_success else "headless-failed"
+            ),
             "stdout_tail": result.stdout[-500:],
             "stderr_tail": result.stderr[-500:],
         }
@@ -394,17 +416,20 @@ def run_once(
         }
         _record_outcome(outcomes_path, receipt)
 
-    failures = 0 if success else int(watchdog.get("provider_failures") or 0) + 1
-    backoff = 0 if success else min(MAX_BACKOFF_SECONDS, 60 * (2 ** min(failures - 1, 4)))
+    provider_succeeded = bool(receipt.get("headless_turn_success"))
+    failures = 0 if provider_succeeded else int(watchdog.get("provider_failures") or 0) + 1
+    backoff = (
+        0 if provider_succeeded else min(MAX_BACKOFF_SECONDS, 60 * (2 ** min(failures - 1, 4)))
+    )
     watchdog.update(
         {
             "recovery_sequence": sequence + 1,
             "tab_pokes": 0,
             "provider_failures": failures,
             "backoff_until": now_ts + backoff,
-            "pending_since": None,
-            "pending_key": None,
-            "pending_transport": None,
+            "pending_since": now_ts if provider_succeeded else None,
+            "pending_key": key if provider_succeeded else None,
+            "pending_transport": "headless" if provider_succeeded else None,
             "last_attempt_at": _iso(now_ts),
         }
     )

@@ -306,8 +306,35 @@ The supervisor lease and per-worker reservation still fence every input action.
 `arm` is a deliberate unattended-work boundary; installation alone does not
 arm anything. The bootstrap lease is
 `workspace:mikebook:c2-supervisor` (180-second TTL, 60-second renewal), and a
-30-second tick wakes the registered COS session only for a refill, exception,
-recovery, or transition decision.
+30-second tick reconciles the registered fleet and writes a deterministic
+decision. The launchd watchdog is the sole automatic wake actuator, preventing
+the supervisor and watchdog from racing to inject the same decision.
+
+The model publishes `<state-dir>/current-actions.txt` as a machine-local
+recovery checkpoint. It is UTF-8 Markdown with a versioned JSON header binding
+the manifest, exact controller sessions, epoch, generation, decision digest,
+previous action digest, status, durable references, and next-check deadline.
+It contains bounded intent and coord-api identifiers, never a second task
+database or raw untrusted message bodies. Publish a staged update with:
+
+```bash
+scripts/cosctl checkpoint --from-file /path/to/staged-current-actions.txt
+```
+
+On wake, the edge injects only a fixed `/goal C2_CONTINUE` line naming the
+absolute path and SHA-256. The model's first action is an exact progress ACK:
+
+```bash
+scripts/cosctl ack --digest <sha256> --generation <n> --epoch <n> \
+  --ownership visible
+```
+
+The default next check is five minutes and every checkpoint must choose 60 to
+1800 seconds. A changed deterministic decision wakes immediately even when the
+declared deadline is later. Rewrite and checkpoint after every material worker,
+message, PR, evidence, or blocker transition. Malformed or future-dated files
+fail closed; `complete` additionally requires durable completion references and
+a current deterministic decision with no pending wake.
 
 The run manifest supports `tab`, `headless`, and `ab` for dispatch and recovery.
 `tab` uses the iTerm2 Python API edge. `headless` resumes the same Codex/Claude
@@ -318,14 +345,27 @@ and visible-reattachment metrics; neither transport is presumed superior.
 The launchd watchdog is a 60-second health/recovery tick. Its installed plist
 pins the selected manifest and state directory in `ProgramArguments` and writes
 both output streams to `<state-dir>/watchdog.log`. It remains inert without the
-state-local `ARMED` file. A fresh heartbeat is healthy without requiring model
-or coord-provider access. On a stale heartbeat it permits at most two
-epoch-fenced tab pokes, waits for the visible supervisor lease to expire before
-any headless trial, and accepts a headless zero exit only when a newer durable
-heartbeat proves `authority=true`, `ownership=headless`, and a controller
-epoch. Provider failures use bounded backoff, while every tick still performs
-local heartbeat evaluation and every stale/backoff tick still checks the live
-lease.
+state-local `ARMED` file. A fresh process heartbeat is not sufficient health
+when the current action generation is due or unacknowledged. The watchdog
+distinguishes terminal injection, model acknowledgment, and a rewritten
+checkpoint. It waits 90 seconds for the exact digest/generation/epoch ACK and
+retries at most once. Even `observed_ack=false` enters this wait when terminal
+bytes were attempted, so a false edge signal cannot cause an immediate
+duplicate prompt.
+
+After two expired ACK windows the watchdog writes a recovery hold. The visible
+supervisor releases its epoch and cannot reacquire while held. Only after
+coord-api proves that epoch absent may the watchdog run a bounded headless
+resume of the same CLI UUID. A successful turn must acquire the successor
+epoch, publish a new headless checkpoint with a fresh exact-digest receipt,
+obtain and verify coord-api readback for that receipt, release it with
+`scripts/cosctl finish-turn --digest <sha256> --ownership headless`, and exit.
+Automatic epoch rebind is transport bookkeeping and never counts as model
+progress. Repeated delivery of the same ACK also cannot refresh progress time.
+Later deadlines may launch further bounded turns without waiting for the stale
+visible TUI to mirror them. Explicit visible recovery uses
+`scripts/cosctl reattach --digest <sha256>` after the headless epoch is absent.
+Provider failures retain bounded backoff while lease and health checks continue.
 
 While armed, the same tick also probes the edge socket with a two-second bound.
 Health includes the SHA-256 of the exact manifest bytes loaded by the edge; the

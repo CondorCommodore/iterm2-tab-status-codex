@@ -324,6 +324,31 @@ class CoordClient:
         _status, payload = self.call("GET", f"/tasks/{urllib.parse.quote(task_id, safe='')}")
         return payload if isinstance(payload, dict) else {}
 
+    def message(self, message_id: int) -> dict[str, Any]:
+        if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:
+            raise CoordError("coord message id must be a positive integer")
+        _status, payload = self.call("GET", f"/messages/{message_id}")
+        return payload if isinstance(payload, dict) else {}
+
+    def verify_receipt_readback(self, receipt: dict[str, Any], message_id: int) -> dict[str, Any]:
+        expected_content = json.dumps(
+            {"c2_dispatch_receipt": receipt}, sort_keys=True, separators=(",", ":")
+        )
+        message = self.message(message_id)
+        expected = {
+            "id": message_id,
+            "from_agent": self.config.principal_id,
+            "to_agent": self.config.principal_id,
+            "msg_type": "activity",
+            "content": expected_content,
+        }
+        for field, value in expected.items():
+            if message.get(field) != value:
+                raise CoordError(f"coord receipt readback mismatch: {field}")
+        if message.get("accepted") is not True or message.get("acknowledged_by") != "coord-api":
+            raise CoordError("coord receipt readback lacks server acceptance")
+        return message
+
     def post_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
         content = json.dumps(
             {"c2_dispatch_receipt": receipt}, sort_keys=True, separators=(",", ":")
@@ -342,7 +367,11 @@ class CoordClient:
             idempotency_key=str(receipt.get("idempotency_key") or ""),
             allowed=(200, 201),
         )
-        return payload if isinstance(payload, dict) else {}
+        response = payload if isinstance(payload, dict) else {}
+        message_id = response.get("id")
+        if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:
+            raise CoordError("coord receipt POST returned no durable message id")
+        return self.verify_receipt_readback(receipt, message_id)
 
     def _handle(self, resource: str, raw: object) -> LeaseHandle:
         lease = raw if isinstance(raw, dict) else {}

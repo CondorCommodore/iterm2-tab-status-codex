@@ -22,12 +22,15 @@ from cos_bootstrap_supervisor import (
     _load_json,
     state_paths,
 )
+from cos_current_actions import action_wake_due, parse_actions, record_coord_acceptance
 from cos_iterm_edge_client import poke_controller, request_edge
 
 HEARTBEAT_STALE_SECONDS = 180
 MAX_TAB_POKES = 2
 MAX_BACKOFF_SECONDS = 900
 MAX_EDGE_HEALTH_FAILURES = 2
+ACTION_ACK_SECONDS = 90
+MAX_ACTION_WAKE_ATTEMPTS = 2
 EDGE_LAUNCHD_LABEL = "com.local.cos-iterm-edge"
 
 
@@ -76,7 +79,13 @@ def heartbeat_age(heartbeat: dict[str, Any], *, now_ts: float | None = None) -> 
 
 
 def headless_resume_command(
-    *, manifest_path: Path, state_dir: Path, runtime: str, session_id: str
+    *,
+    manifest_path: Path,
+    state_dir: Path,
+    runtime: str,
+    session_id: str,
+    actions_path: Path | None = None,
+    action_digest: str | None = None,
 ) -> list[str]:
     supervisor = Path(__file__).resolve().with_name("cos_bootstrap_supervisor.py")
     bootstrap = (
@@ -84,7 +93,20 @@ def headless_resume_command(
         f"--manifest {manifest_path} --state-dir {state_dir}. Continue only if it reports "
         "authority=true. Then read every plan path in the run manifest and the actionable coord "
         "feed, resolve the current C2 decision, and record durable results through coord-api. "
-        "Do not dispatch if the supervisor epoch cannot be verified."
+        + (
+            f"Then read {actions_path}; it was resumed from digest {action_digest}. A new epoch "
+            "will rebind it to a new digest. Read the rebound header, then run "
+            f"python3 {supervisor} ack --manifest {manifest_path} --state-dir {state_dir} "
+            "--digest <rebound-sha256> --generation <rebound-generation> "
+            "--epoch <live-epoch> --ownership headless. After acting, stage a chained next "
+            f"generation and run python3 {supervisor} checkpoint --manifest {manifest_path} "
+            f"--state-dir {state_dir} --from-file <staged-path>. Finally run python3 "
+            f"{supervisor} finish-turn --manifest {manifest_path} --state-dir {state_dir} "
+            "--digest <published-sha256> --ownership headless. "
+            if actions_path is not None and action_digest
+            else ""
+        )
+        + "Do not dispatch if the supervisor epoch cannot be verified."
     )
     if runtime == "codex":
         return ["codex", "exec", "resume", session_id, bootstrap]
@@ -109,6 +131,96 @@ def _headless_authority(heartbeat_path: Path, *, attempted_at: float) -> dict[st
     ):
         return heartbeat
     return None
+
+
+def _action_ack_matches(
+    progress: dict[str, Any],
+    *,
+    digest: str,
+    generation: int,
+    epoch: int,
+    after_ts: float,
+    client: CoordClient,
+    receipts_path: Path,
+) -> bool:
+    local_match = bool(
+        progress.get("kind") == "action-ack"
+        and progress.get("action_digest") == digest
+        and progress.get("generation") == generation
+        and progress.get("controller_epoch") == epoch
+        and isinstance(progress.get("coord_accepted_ts"), (int, float))
+        and float(progress["coord_accepted_ts"]) > after_ts
+    )
+    if not local_match:
+        return False
+    ack_key = f"c2-action-ack:{epoch}:{generation}:{digest}"
+    ack_receipt = next(
+        (
+            receipt
+            for receipt in ReceiptStore(receipts_path).records()
+            if receipt.get("kind") == "action-ack" and receipt.get("idempotency_key") == ack_key
+        ),
+        None,
+    )
+    if ack_receipt is None:
+        return False
+    try:
+        client.verify_receipt_readback(ack_receipt, int(progress.get("coord_message_id") or 0))
+    except (CoordError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _checkpoint_has_durable_readback(
+    actions: Any,
+    *,
+    client: CoordClient,
+    receipts_path: Path,
+) -> bool:
+    records = ReceiptStore(receipts_path).records()
+    checkpoint = next(
+        (
+            receipt
+            for receipt in records
+            if receipt.get("kind") == "action-checkpoint"
+            and receipt.get("action_digest") == actions.digest
+            and receipt.get("generation") == actions.generation
+            and receipt.get("controller_epoch") == actions.controller_epoch
+        ),
+        None,
+    )
+    if checkpoint is None:
+        return False
+    acceptance = next(
+        (
+            receipt
+            for receipt in records
+            if receipt.get("kind") == "action-checkpoint-coord-accepted"
+            and receipt.get("source_idempotency_key") == checkpoint.get("idempotency_key")
+        ),
+        None,
+    )
+    if acceptance is None:
+        return False
+    try:
+        client.verify_receipt_readback(
+            checkpoint,
+            int(acceptance.get("coord_message_id") or 0),
+        )
+    except (CoordError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _action_prompt(
+    *, path: Path, digest: str, generation: int, decision_digest: str, epoch: int
+) -> str:
+    return (
+        f"/goal C2_CONTINUE actions={path} sha256={digest} generation={generation} "
+        f"decision={decision_digest} epoch={epoch}. First run cosctl ack for this exact "
+        "digest/generation/epoch, then read the file, execute its bounded next actions, and "
+        "publish a new checkpoint before ending the turn."
+    )
 
 
 def run_once(
@@ -144,6 +256,7 @@ def run_once(
             "edge_health_failures": 0,
         },
     )
+    recovery_hold = _load_json(paths["recovery_hold"])
     edge_available = True
 
     if edge_health_fn is not None:
@@ -248,6 +361,313 @@ def run_once(
                     "receipt": receipt,
                 }
 
+    decision = _load_json(paths["decision"])
+    decision_digest = str(decision.get("decision_digest") or "")
+    actions = None
+    action_error = None
+    try:
+        actions = parse_actions(paths["actions"], manifest=manifest)
+    except Exception as exc:
+        action_error = str(exc)
+
+    action_pending_since = watchdog.get("action_pending_since")
+    action_pending_digest = str(watchdog.get("action_pending_digest") or "")
+    action_pending_generation = watchdog.get("action_pending_generation")
+    action_pending_epoch = watchdog.get("action_pending_epoch")
+    action_attempts = int(watchdog.get("action_wake_attempts") or 0)
+    if isinstance(action_pending_since, (int, float)) and action_pending_digest:
+        if client is None:
+            if client_factory is None:
+                raise CoordError("coord client is required while awaiting action acknowledgment")
+            client = client_factory()
+        pending_lease = client.get_resource(SUPERVISOR_RESOURCE)
+        pending_live_epoch = pending_lease.get("epoch") if isinstance(pending_lease, dict) else None
+        pending_holder = (
+            str(pending_lease.get("actual_holder") or pending_lease.get("holder") or "")
+            if isinstance(pending_lease, dict)
+            else ""
+        )
+        if (
+            pending_live_epoch != action_pending_epoch
+            or pending_holder != client.config.principal_id
+        ):
+            watchdog.update(
+                {
+                    "action_pending_since": None,
+                    "action_pending_digest": None,
+                    "action_pending_generation": None,
+                    "action_pending_epoch": None,
+                    "action_wake_attempts": 0,
+                    "last_action_error": "live epoch lost while awaiting model acknowledgment",
+                }
+            )
+            _atomic_json(watchdog_path, watchdog)
+            return {
+                "ok": False,
+                "armed": True,
+                "action": "action-ack-epoch-lost",
+                "expected_epoch": action_pending_epoch,
+                "live_epoch": pending_live_epoch,
+            }
+        progress = _load_json(paths["action_progress"])
+        if _action_ack_matches(
+            progress,
+            digest=action_pending_digest,
+            generation=int(action_pending_generation or 0),
+            epoch=int(action_pending_epoch or 0),
+            after_ts=float(action_pending_since),
+            client=client,
+            receipts_path=paths["action_receipts"],
+        ):
+            watchdog.update(
+                {
+                    "action_pending_since": None,
+                    "action_pending_digest": None,
+                    "action_pending_generation": None,
+                    "action_pending_epoch": None,
+                    "action_wake_attempts": 0,
+                    "last_action_ack_at": _iso(now_ts),
+                }
+            )
+            _atomic_json(watchdog_path, watchdog)
+            return {
+                "ok": True,
+                "armed": True,
+                "action": "action-acknowledged",
+                "action_digest": action_pending_digest,
+            }
+        pending_age = now_ts - float(action_pending_since)
+        if pending_age < ACTION_ACK_SECONDS:
+            return {
+                "ok": True,
+                "armed": True,
+                "action": "awaiting-action-ack",
+                "ack_wait_seconds": int(ACTION_ACK_SECONDS - pending_age),
+                "action_digest": action_pending_digest,
+            }
+        if action_attempts >= MAX_ACTION_WAKE_ATTEMPTS:
+            if client is None and client_factory is not None:
+                client = client_factory()
+            hold = {
+                "recorded_at": _iso(now_ts),
+                "recorded_ts": now_ts,
+                "reason": "two exact action wake acknowledgments expired",
+                "controller_epoch": action_pending_epoch,
+                "action_digest": action_pending_digest,
+                "generation": action_pending_generation,
+            }
+            _atomic_json(paths["recovery_hold"], hold)
+            hold_receipt = {
+                **hold,
+                "idempotency_key": (
+                    f"c2-action-yield:{action_pending_epoch}:"
+                    f"{action_pending_generation}:{action_pending_digest}"
+                ),
+                "kind": "action-yield",
+            }
+            store = ReceiptStore(paths["action_receipts"])
+            if not store.has_idempotency_key(hold_receipt["idempotency_key"]):
+                store.append(hold_receipt)
+            if client is not None:
+                try:
+                    client.post_receipt(hold_receipt)
+                except Exception as exc:
+                    hold["coord_audit_error"] = str(exc)
+            watchdog.update(
+                {
+                    "action_pending_since": None,
+                    "action_pending_digest": None,
+                    "action_pending_generation": None,
+                    "action_pending_epoch": None,
+                    "last_yield_requested_at": _iso(now_ts),
+                }
+            )
+            _atomic_json(watchdog_path, watchdog)
+            return {"ok": True, "armed": True, "action": "yield-requested", "hold": hold}
+
+    action_due = False
+    action_reason = ""
+    if actions is not None and decision_digest:
+        action_due, action_reason = action_wake_due(
+            actions, decision_digest=decision_digest, now_ts=now_ts
+        )
+        progress = _load_json(paths["action_progress"])
+        checkpoint_published = False
+        action_receipts = ReceiptStore(paths["action_receipts"])
+        receipt_records = action_receipts.records()
+        local_checkpoint = next(
+            (
+                receipt
+                for receipt in receipt_records
+                if receipt.get("kind") == "action-checkpoint"
+                and receipt.get("action_digest") == actions.digest
+                and receipt.get("generation") == actions.generation
+                and receipt.get("controller_epoch") == actions.controller_epoch
+            ),
+            None,
+        )
+        acceptance_present = any(
+            receipt.get("kind") == "action-checkpoint-coord-accepted"
+            and receipt.get("action_digest") == actions.digest
+            and receipt.get("generation") == actions.generation
+            and receipt.get("controller_epoch") == actions.controller_epoch
+            for receipt in receipt_records
+        )
+        if local_checkpoint is not None:
+            if client is None:
+                if client_factory is None:
+                    raise CoordError("coord client is required to verify checkpoint durability")
+                client = client_factory()
+            if not acceptance_present:
+                try:
+                    client.verify_live_epoch(SUPERVISOR_RESOURCE, actions.controller_epoch)
+                    coord_response = client.post_receipt(local_checkpoint)
+                    record_coord_acceptance(
+                        checkpoint_receipt=local_checkpoint,
+                        coord_response=coord_response,
+                        receipts_path=paths["action_receipts"],
+                    )
+                except CoordError:
+                    pass
+            checkpoint_published = _checkpoint_has_durable_readback(
+                actions,
+                client=client,
+                receipts_path=paths["action_receipts"],
+            )
+        never_acknowledged = not (
+            progress.get("action_digest") == actions.digest
+            and progress.get("generation") == actions.generation
+            and progress.get("controller_epoch") == actions.controller_epoch
+        )
+        if (
+            not action_due
+            and never_acknowledged
+            and decision.get("wake_required") is True
+            and not checkpoint_published
+            and not (
+                recovery_hold and watchdog.get("last_headless_checkpoint_digest") == actions.digest
+            )
+        ):
+            action_due = True
+            action_reason = "current action generation has not been acknowledged"
+
+    if (
+        recovery_hold
+        and actions is not None
+        and not action_due
+        and watchdog.get("last_headless_checkpoint_digest") == actions.digest
+    ):
+        if client is None:
+            if client_factory is None:
+                raise CoordError("coord client is required during headless recovery hold")
+            client = client_factory()
+        live_lease = client.get_resource(SUPERVISOR_RESOURCE)
+        if live_lease is not None:
+            return {
+                "ok": False,
+                "armed": True,
+                "action": "headless-waiting-live-lease-present",
+                "live_epoch": live_lease.get("epoch") if isinstance(live_lease, dict) else None,
+            }
+        return {
+            "ok": True,
+            "armed": True,
+            "action": "headless-waiting",
+            "action_digest": actions.digest,
+            "next_check_ts": actions.next_check_ts,
+        }
+
+    if (action_due or isinstance(action_pending_since, (int, float))) and not recovery_hold:
+        if actions is None:
+            return {
+                "ok": False,
+                "armed": True,
+                "action": "invalid-action-checkpoint",
+                "error": action_error,
+            }
+        if client is None:
+            if client_factory is None:
+                raise CoordError("coord client is required for an action wake")
+            client = client_factory()
+        lease = client.get_resource(SUPERVISOR_RESOURCE)
+        epoch = lease.get("epoch") if isinstance(lease, dict) else None
+        holder = (
+            str(lease.get("actual_holder") or lease.get("holder") or "")
+            if isinstance(lease, dict)
+            else ""
+        )
+        if epoch != actions.controller_epoch or holder != client.config.principal_id:
+            return {
+                "ok": True,
+                "armed": True,
+                "action": "awaiting-live-epoch-for-action-wake",
+                "checkpoint_epoch": actions.controller_epoch,
+                "live_epoch": epoch,
+            }
+        attempt = action_attempts + 1
+        if isinstance(action_pending_since, (int, float)):
+            latest_progress = _load_json(paths["action_progress"])
+            if _action_ack_matches(
+                latest_progress,
+                digest=actions.digest,
+                generation=actions.generation,
+                epoch=actions.controller_epoch,
+                after_ts=float(action_pending_since),
+                client=client,
+                receipts_path=paths["action_receipts"],
+            ):
+                watchdog.update(
+                    {
+                        "action_pending_since": None,
+                        "action_pending_digest": None,
+                        "action_pending_generation": None,
+                        "action_pending_epoch": None,
+                        "action_wake_attempts": 0,
+                        "last_action_ack_at": _iso(now_ts),
+                    }
+                )
+                _atomic_json(watchdog_path, watchdog)
+                return {
+                    "ok": True,
+                    "armed": True,
+                    "action": "action-acknowledged-before-retry",
+                    "action_digest": actions.digest,
+                }
+        key = f"c2-action-wake:{epoch}:{actions.generation}:{actions.digest}:{attempt}"
+        result = poke_fn(
+            text=_action_prompt(
+                path=paths["actions"],
+                digest=actions.digest,
+                generation=actions.generation,
+                decision_digest=decision_digest,
+                epoch=epoch,
+            ),
+            controller_epoch=epoch,
+            idempotency_key=key,
+        )
+        attempted = bool(result.get("injection_attempted") or result.get("ok"))
+        if attempted:
+            watchdog.update(
+                {
+                    "action_pending_since": now_ts,
+                    "action_pending_digest": actions.digest,
+                    "action_pending_generation": actions.generation,
+                    "action_pending_epoch": epoch,
+                    "action_wake_attempts": attempt,
+                    "last_action_wake_at": _iso(now_ts),
+                    "last_action_wake_reason": action_reason,
+                }
+            )
+            _atomic_json(watchdog_path, watchdog)
+        return {
+            **result,
+            "ok": attempted,
+            "armed": True,
+            "action": "action-wake",
+            "wake_reason": action_reason,
+            "awaiting_model_ack": attempted,
+        }
+
     pending_since = watchdog.get("pending_since")
     pending_transport = watchdog.get("pending_transport")
     pending_headless_without_visible_reattach = (
@@ -293,11 +713,11 @@ def run_once(
             "headless_authority_active": heartbeat.get("ownership") == "headless",
         }
 
-    if age is not None and age < HEARTBEAT_STALE_SECONDS:
+    if age is not None and age < HEARTBEAT_STALE_SECONDS and not recovery_hold:
         return {"ok": True, "armed": True, "action": "healthy", "heartbeat_age": age}
 
     sequence = int(watchdog.get("recovery_sequence") or 0)
-    primary = manifest.recovery_for(sequence)
+    primary = "headless" if recovery_hold else manifest.recovery_for(sequence)
     tab_pokes = int(watchdog.get("tab_pokes") or 0)
     if client is None:
         if client_factory is None:
@@ -371,14 +791,75 @@ def run_once(
         state_dir=state_dir,
         runtime=manifest.controller_runtime,
         session_id=manifest.controller_cli_session_id,
+        actions_path=(paths["actions"] if actions is not None else None),
+        action_digest=(actions.digest if actions is not None else None),
     )
     started = time.monotonic()
+    before_action_digest = actions.digest if actions is not None else None
     try:
         result = run(command, capture_output=True, text=True, timeout=1800)
         duration_ms = int((time.monotonic() - started) * 1000)
         authority = _headless_authority(paths["heartbeat"], attempted_at=now_ts)
-        headless_turn_success = result.returncode == 0 and authority is not None
-        success = False
+        after_actions = None
+        try:
+            after_actions = parse_actions(paths["actions"], manifest=manifest)
+        except Exception:
+            pass
+        checkpoint_advanced = bool(
+            after_actions is not None
+            and (before_action_digest is None or after_actions.digest != before_action_digest)
+            and after_actions.header.get("ownership") == "headless"
+        )
+        checkpoint_receipt = next(
+            (
+                receipt
+                for receipt in reversed(ReceiptStore(paths["action_receipts"]).records())
+                if receipt.get("kind") == "action-checkpoint"
+                and after_actions is not None
+                and receipt.get("action_digest") == after_actions.digest
+                and receipt.get("generation") == after_actions.generation
+                and receipt.get("controller_epoch") == after_actions.controller_epoch
+                and float(receipt.get("recorded_ts") or 0) > now_ts
+            ),
+            None,
+        )
+        coord_acceptance = next(
+            (
+                receipt
+                for receipt in reversed(ReceiptStore(paths["action_receipts"]).records())
+                if receipt.get("kind") == "action-checkpoint-coord-accepted"
+                and checkpoint_receipt is not None
+                and receipt.get("source_idempotency_key")
+                == checkpoint_receipt.get("idempotency_key")
+                and receipt.get("action_digest") == after_actions.digest
+                and receipt.get("controller_epoch") == after_actions.controller_epoch
+                and float(receipt.get("recorded_ts") or 0) > now_ts
+            ),
+            None,
+        )
+        model_checkpoint_published = checkpoint_receipt is not None
+        coord_readback_error = None
+        model_checkpoint_durable = False
+        if checkpoint_receipt is not None and coord_acceptance is not None and client is not None:
+            try:
+                client.verify_receipt_readback(
+                    checkpoint_receipt,
+                    int(coord_acceptance.get("coord_message_id") or 0),
+                )
+                model_checkpoint_durable = True
+            except (CoordError, TypeError, ValueError) as exc:
+                coord_readback_error = str(exc)
+        lease_after = client.get_resource(SUPERVISOR_RESOURCE) if client is not None else None
+        epoch_released = lease_after is None
+        headless_turn_success = bool(
+            result.returncode == 0
+            and authority is not None
+            and checkpoint_advanced
+            and model_checkpoint_published
+            and model_checkpoint_durable
+            and epoch_released
+        )
+        success = headless_turn_success
         receipt = {
             "idempotency_key": key,
             "recorded_at": _iso(now_ts),
@@ -389,10 +870,16 @@ def run_once(
             "duration_ms": duration_ms,
             "exit_code": result.returncode,
             "authority_acquired": authority is not None,
+            "checkpoint_advanced": checkpoint_advanced,
+            "model_checkpoint_published": model_checkpoint_published,
+            "model_checkpoint_durable": model_checkpoint_durable,
+            "coord_readback_error": coord_readback_error,
+            "checkpoint_digest": after_actions.digest if after_actions is not None else None,
+            "epoch_released": epoch_released,
             "controller_epoch": (authority.get("controller_epoch") if authority else None),
-            "visible_reattach_required": True,
+            "visible_reattach_required": False,
             "recovery_state": (
-                "awaiting-visible-reattach" if headless_turn_success else "headless-failed"
+                "bounded-turn-complete" if headless_turn_success else "headless-failed"
             ),
             "stdout_tail": result.stdout[-500:],
             "stderr_tail": result.stderr[-500:],
@@ -410,7 +897,7 @@ def run_once(
             "duration_ms": duration_ms,
             "timed_out": isinstance(exc, subprocess.TimeoutExpired),
             "provider_error": type(exc).__name__,
-            "visible_reattach_required": True,
+            "visible_reattach_required": False,
             "stdout_tail": str(getattr(exc, "stdout", "") or "")[-500:],
             "stderr_tail": str(getattr(exc, "stderr", "") or "")[-500:],
         }
@@ -427,10 +914,13 @@ def run_once(
             "tab_pokes": 0,
             "provider_failures": failures,
             "backoff_until": now_ts + backoff,
-            "pending_since": now_ts if provider_succeeded else None,
-            "pending_key": key if provider_succeeded else None,
-            "pending_transport": "headless" if provider_succeeded else None,
+            "pending_since": None,
+            "pending_key": None,
+            "pending_transport": None,
             "last_attempt_at": _iso(now_ts),
+            "last_headless_checkpoint_digest": (
+                receipt.get("checkpoint_digest") if provider_succeeded else None
+            ),
         }
     )
     _atomic_json(watchdog_path, watchdog)

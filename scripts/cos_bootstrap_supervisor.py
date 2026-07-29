@@ -254,6 +254,9 @@ def run_tick(
     )
     if not paths["armed"].exists():
         return {"ok": True, "armed": False, "action": "inert"}
+    armed_marker = paths["armed"].read_text(encoding="utf-8").strip()
+    if armed_marker != f"manifest_id={manifest.manifest_id}":
+        raise ContractError("armed marker does not match loaded manifest; explicit re-arm required")
     mode = str(state.get("mode") or "bootstrap-authoritative")
     if mode not in CONTROLLER_MODES:
         raise ContractError(f"invalid controller mode: {mode}")

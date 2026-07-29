@@ -4,11 +4,13 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import cos_bootstrap_supervisor as supervisor  # noqa: E402
-from c2_contract import RunManifest  # noqa: E402
+from c2_contract import ContractError, RunManifest  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
@@ -139,3 +141,14 @@ def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     assert tick["authority"] is True and tick["controller_epoch"] == 7
     assert standby["mode"] == "bootstrap-standby" and standby["released"] is True
     assert stopped["armed"] is False
+
+
+def test_run_tick_rejects_manifest_changed_after_arm(tmp_path):
+    original = manifest()
+    supervisor.arm(manifest=original, state_dir=tmp_path, validate_plan_paths=False)
+    changed = type(original)(**{**original.__dict__, "manifest_id": "changed"})
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    with pytest.raises(ContractError, match="explicit re-arm"):
+        supervisor.run_tick(manifest=changed, client=FakeClient(), state_dir=tmp_path,
+                            live_state_path=live, ownership="visible", wake=False)

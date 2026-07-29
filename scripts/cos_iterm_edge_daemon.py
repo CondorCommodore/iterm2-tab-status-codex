@@ -288,7 +288,7 @@ class EdgeDaemon:
                     idempotency_key=key,
                     verify_epoch=self.client.verify_live_epoch,
                 )
-                if result.get("ok"):
+                if result.get("injection_attempted"):
                     receipt = {**result, "receipt_version": 1}
                     self.poke_receipts.append(receipt)
                     try:

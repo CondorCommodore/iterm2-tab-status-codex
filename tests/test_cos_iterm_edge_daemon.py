@@ -422,3 +422,21 @@ def test_concurrent_duplicate_poke_only_injects_once(monkeypatch, tmp_path):
     assert duplicate["ok"] is False
     assert duplicate["in_flight"] is True
     assert calls == 1
+
+
+def test_unacknowledged_injected_poke_is_persisted_for_idempotency(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+
+    async def fake_poke(_connection, **kwargs):
+        return {"ok": False, "injection_attempted": True, "observed_ack": False,
+                "idempotency_key": kwargs["idempotency_key"], "error": "not acknowledged"}
+
+    monkeypatch.setattr(edge_daemon, "send_controller_poke", fake_poke)
+    request = {"protocol": "cos-c2-iterm-edge-v1", "op": "poke",
+               "controller_epoch": 7, "idempotency_key": "poke-failed", "text": "/goal continue"}
+    first = asyncio.run(daemon.handle(request))
+    duplicate = asyncio.run(daemon.handle(request))
+    assert first["ok"] is False
+    assert duplicate["ok"] is False
+    assert "duplicate poke" in duplicate["error"]
+    assert len(daemon.poke_receipts.records()) == 1

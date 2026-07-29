@@ -65,6 +65,12 @@ def test_visual_observation_requires_worker_fencing_epoch():
         observation(worker_epoch=0)
 
 
+@pytest.mark.parametrize("captured_ts", [float("nan"), float("inf"), float("-inf")])
+def test_visual_observation_rejects_non_finite_timestamp(captured_ts):
+    with pytest.raises(ContractError, match="finite"):
+        observation(captured_ts=captured_ts)
+
+
 def test_visual_decision_rejects_unbound_or_non_llm_action():
     seen = observation()
     with pytest.raises(ContractError, match="does not bind"):

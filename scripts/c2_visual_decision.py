@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -41,8 +42,8 @@ class VisualObservation:
         captured = value.get("captured_ts")
         epoch = value.get("controller_epoch")
         worker_epoch = value.get("worker_epoch")
-        if not isinstance(captured, (int, float)):
-            raise ContractError("captured_ts must be numeric")
+        if not isinstance(captured, (int, float)) or not math.isfinite(float(captured)):
+            raise ContractError("captured_ts must be a finite number")
         if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
             raise ContractError("controller_epoch must be a positive integer")
         if (

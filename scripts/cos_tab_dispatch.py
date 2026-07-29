@@ -486,6 +486,7 @@ async def send_controller_poke(
     )
     return {
         "ok": observed_ack,
+        "injection_attempted": True,
         "target_iterm_session_id": manifest.controller_iterm_session_id,
         "target_tty": manifest.controller_tty,
         "controller_epoch": controller_epoch,

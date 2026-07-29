@@ -309,9 +309,9 @@ def run_once(
         watchdog.update(
             {
                 "tab_pokes": tab_pokes + 1,
-                "pending_since": now_ts,
-                "pending_key": key,
-                "pending_transport": "tab",
+                "pending_since": now_ts if result.get("ok") else None,
+                "pending_key": key if result.get("ok") else None,
+                "pending_transport": "tab" if result.get("ok") else None,
                 "last_attempt_at": _iso(now_ts),
             }
         )

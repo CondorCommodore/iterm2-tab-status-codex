@@ -352,6 +352,24 @@ def test_tab_recovery_uses_iterm_api_edge_poke(tmp_path):
     assert seen[0]["controller_epoch"] == 7
 
 
+def test_failed_tab_poke_does_not_create_pending_recovery(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest, recovery="tab")
+    arm_stale(tmp_path)
+    result = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client({"holder": "mikebook_codex", "epoch": 7}),
+        now_ts=500,
+        poke_fn=lambda **_kwargs: {"ok": False, "error": "no acknowledgment"},
+    )
+    state = json.loads((tmp_path / "watchdog-state.json").read_text())
+    assert result["ok"] is False
+    assert state["pending_since"] is None
+    assert state["pending_key"] is None
+    assert state["pending_transport"] is None
+
+
 def test_headless_trial_waits_for_epoch_expiry_then_resumes_same_uuid(tmp_path):
     manifest = tmp_path / "manifest.json"
     write_manifest(manifest, recovery="headless")

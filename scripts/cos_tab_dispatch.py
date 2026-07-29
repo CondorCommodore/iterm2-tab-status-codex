@@ -524,7 +524,11 @@ def dispatch_registered_applescript(
         observed_ack=False,
     )
     receipts.append(receipt)
-    return {"ok": True, "receipt": receipt}
+    return {
+        "ok": False,
+        "error": "AppleScript injection has no target acknowledgment",
+        "receipt": receipt,
+    }
 
 
 async def execute_visual_decision(

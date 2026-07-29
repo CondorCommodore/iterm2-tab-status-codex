@@ -765,6 +765,18 @@ def test_headless_commands_resume_same_uuid_for_codex_and_claude():
     ]
 
 
+def test_applescript_write_without_ack_fails_closed(tmp_path):
+    result = dispatch.dispatch_registered_applescript(
+        manifest=_manifest(), envelope=_envelope(),
+        verify_epoch=lambda *_args: None,
+        receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+        run=lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "sent", ""),
+    )
+    assert result["ok"] is False
+    assert result["receipt"]["observed_ack"] is False
+    assert "no target acknowledgment" in result["error"]
+
+
 def test_policy_routes_tab_through_iterm_api_edge(tmp_path):
     seen = []
 

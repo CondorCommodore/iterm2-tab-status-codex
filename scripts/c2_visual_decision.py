@@ -99,6 +99,8 @@ class VisualDecision:
         text = str(value.get("text") or "")
         if action == "send_text" and not text:
             raise ContractError("send_text action requires text")
+        if action == "send_text" and any(ord(char) < 32 or ord(char) == 127 for char in text):
+            raise ContractError("send_text action cannot include terminal control characters")
         if action != "send_text" and text:
             raise ContractError(f"{action} action cannot include text")
         return cls(

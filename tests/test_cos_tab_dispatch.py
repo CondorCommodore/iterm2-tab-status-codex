@@ -469,6 +469,8 @@ def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
         )
     )
 
+    assert result["ok"] is False
+    assert result["error"] == "registered target did not acknowledge dispatch"
     assert result["receipt"]["observed_ack"] is False
     assert result["receipt"]["metrics"] == {"recovery_submitted": True}
     assert target.sent == [target.sent[0], "\r", "\n", "\r"]

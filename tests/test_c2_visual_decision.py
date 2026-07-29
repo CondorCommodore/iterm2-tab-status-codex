@@ -79,3 +79,10 @@ def test_visual_action_surface_is_bounded():
         decision(seen, action="run_shell")
     with pytest.raises(ContractError, match="cannot include text"):
         decision(seen, text="unexpected")
+
+
+@pytest.mark.parametrize("text", ["one\ntwo", "one\rtwo", "\x03", "\x1b", "\x7f"])
+def test_visual_send_text_rejects_terminal_control_characters(text):
+    seen = observation()
+    with pytest.raises(ContractError, match="control characters"):
+        decision(seen, action="send_text", text=text)

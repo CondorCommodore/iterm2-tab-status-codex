@@ -356,3 +356,38 @@ def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):
 
     assert result["ok"] is True
     assert daemon.client.events[-1] == ("post", result["receipt"])
+
+
+def test_concurrent_duplicate_visual_action_only_injects_once(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def fake_execute(_connection, **kwargs):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return {"ok": True, "receipt": {"idempotency_key": kwargs["decision"].idempotency_key}}
+
+    monkeypatch.setattr(edge_daemon, "execute_visual_decision", fake_execute)
+    request = {
+        "protocol": "cos-c2-iterm-edge-v1",
+        "op": "visual_action",
+        "observation": visual_observation(),
+        "decision": visual_decision(),
+    }
+
+    async def exercise():
+        first = asyncio.create_task(daemon.handle(request))
+        await started.wait()
+        duplicate = await daemon.handle(request)
+        release.set()
+        return await first, duplicate
+
+    first, duplicate = asyncio.run(exercise())
+    assert first["ok"] is True
+    assert duplicate["ok"] is False
+    assert duplicate["in_flight"] is True
+    assert calls == 1

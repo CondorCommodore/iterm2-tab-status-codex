@@ -300,17 +300,29 @@ class EdgeDaemon:
                 return {"ok": False, "error": "visual decision must be an object"}
             observation = VisualObservation.from_dict(raw_observation)
             decision = VisualDecision.from_dict(raw_decision)
-            result = await execute_visual_decision(
-                self.connection,
-                manifest=self.manifest,
-                observation=observation,
-                decision=decision,
-                verify_epoch=self.client.verify_live_epoch,
-                receipts=self.dispatch_receipts,
-            )
-            if isinstance(result.get("receipt"), dict):
-                await self.audit_receipt(result, result["receipt"])
-            return result
+            async with self.dispatch_guard:
+                if decision.idempotency_key in self.dispatch_inflight:
+                    return {
+                        "ok": False,
+                        "error": f"visual action already in flight: {decision.idempotency_key}",
+                        "in_flight": True,
+                    }
+                self.dispatch_inflight.add(decision.idempotency_key)
+            try:
+                result = await execute_visual_decision(
+                    self.connection,
+                    manifest=self.manifest,
+                    observation=observation,
+                    decision=decision,
+                    verify_epoch=self.client.verify_live_epoch,
+                    receipts=self.dispatch_receipts,
+                )
+                if isinstance(result.get("receipt"), dict):
+                    await self.audit_receipt(result, result["receipt"])
+                return result
+            finally:
+                async with self.dispatch_guard:
+                    self.dispatch_inflight.discard(decision.idempotency_key)
         if operation == "health":
             manifest_current = disk_manifest_sha256 == self.manifest_sha256
             return {

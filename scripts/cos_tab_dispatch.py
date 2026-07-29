@@ -432,6 +432,12 @@ async def dispatch_registered(
         metrics={"recovery_submitted": recovery_submitted},
     )
     receipts.append(receipt)
+    if not observed_ack:
+        return {
+            "ok": False,
+            "error": "registered target did not acknowledge dispatch",
+            "receipt": receipt,
+        }
     return {"ok": True, "receipt": receipt}
 
 

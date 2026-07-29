@@ -13,7 +13,6 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -28,15 +27,19 @@ from c2_contract import (
     load_manifest,
     normalize_worker_state,
 )
-from c2_coord_client import CoordClient, CoordConfig, CoordError, LeaseBlocked, LeaseHandle, LeaseLost
+from c2_coord_client import (
+    CoordClient,
+    CoordConfig,
+    CoordError,
+    LeaseBlocked,
+    LeaseHandle,
+    LeaseLost,
+)
 from cos_iterm_edge_client import poke_controller
-
 
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"
-DEFAULT_LIVE_STATE = (
-    Path.home() / ".claude" / "plans" / "fleet-reports" / "iterm-live-state.json"
-)
+DEFAULT_LIVE_STATE = Path.home() / ".claude" / "plans" / "fleet-reports" / "iterm-live-state.json"
 
 
 def _iso(ts: float | None = None) -> str:
@@ -70,7 +73,7 @@ def _next_receipt_sequence(path: Path, prefix: str) -> int:
             value = json.loads(line)
             key = str(value.get("idempotency_key") or "") if isinstance(value, dict) else ""
             if key.startswith(prefix):
-                highest = max(highest, int(key[len(prefix):].split(":", 1)[0]))
+                highest = max(highest, int(key[len(prefix) :].split(":", 1)[0]))
         except (json.JSONDecodeError, ValueError):
             continue
     return highest + 1
@@ -133,9 +136,7 @@ def ensure_authority(
     ownership: str,
 ) -> tuple[dict[str, Any], LeaseHandle]:
     if client.config.principal_id != manifest.controller_coord_agent_id:
-        raise ContractError(
-            "coord principal does not match the registered controller identity"
-        )
+        raise ContractError("coord principal does not match the registered controller identity")
     handle = _handle_from_state(state)
     if handle is not None:
         last_renewed_ts = state.get("last_renewed_ts")
@@ -296,9 +297,7 @@ def run_tick(
     )
     actionable = client.actionable(manifest.controller_coord_agent_id)
     live_state = _load_json(live_state_path)
-    decision = reconcile(
-        manifest=manifest, actionable=actionable, live_state=live_state
-    )
+    decision = reconcile(manifest=manifest, actionable=actionable, live_state=live_state)
     digest = decision_digest(decision)
     previous = _load_json(paths["decision"])
     decision["decision_digest"] = digest
@@ -308,8 +307,7 @@ def run_tick(
     poked = False
     poke_result: dict[str, Any] | None = None
     already_delivered = (
-        previous.get("decision_digest") == digest
-        and previous.get("wake_delivered") is True
+        previous.get("decision_digest") == digest and previous.get("wake_delivered") is True
     )
     if wake and decision["wake_required"] and not already_delivered:
         prompt = (
@@ -349,9 +347,7 @@ def arm(
     if validate_plan_paths:
         missing = [path for path in manifest.plan_paths if not Path(path).is_file()]
         if missing:
-            raise ContractError(
-                "authoritative plan paths are missing: " + ", ".join(missing)
-            )
+            raise ContractError("authoritative plan paths are missing: " + ", ".join(missing))
     paths = state_paths(state_dir)
     paths["armed"].parent.mkdir(parents=True, exist_ok=True)
     watchdog_path = state_dir / "watchdog-state.json"
@@ -459,9 +455,7 @@ def status(*, client: CoordClient | None, state_dir: Path) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bootstrap COS C2 lifecycle")
-    parser.add_argument(
-        "command", choices=("arm", "status", "run", "poke", "standby", "stop")
-    )
+    parser.add_argument("command", choices=("arm", "status", "run", "poke", "standby", "stop"))
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--live-state", type=Path, default=DEFAULT_LIVE_STATE)
@@ -475,14 +469,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     manifest = load_manifest(args.manifest)
     if args.command == "arm":
-        print(json.dumps(arm(manifest=manifest, state_dir=args.state_dir), indent=2, sort_keys=True))
+        print(
+            json.dumps(arm(manifest=manifest, state_dir=args.state_dir), indent=2, sort_keys=True)
+        )
         return 0
     client: CoordClient | None = None
     try:
         client = CoordClient(
-            CoordConfig.load(
-                expected_principal_id=manifest.controller_coord_agent_id
-            )
+            CoordConfig.load(expected_principal_id=manifest.controller_coord_agent_id)
         )
     except CoordError:
         if args.command != "status":

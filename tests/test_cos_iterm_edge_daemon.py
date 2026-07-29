@@ -139,9 +139,7 @@ def make_daemon(tmp_path) -> edge_daemon.EdgeDaemon:
 def test_health_reports_loaded_manifest_digest_and_process_identity(tmp_path):
     daemon = make_daemon(tmp_path)
 
-    result = asyncio.run(
-        daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": "health"})
-    )
+    result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": "health"}))
 
     assert result["ok"] is True
     assert result["manifest_id"] == "edge-test-v1"
@@ -157,14 +155,10 @@ def test_manifest_drift_fails_closed_before_any_terminal_operation(tmp_path):
     daemon.manifest_path = manifest_path
 
     for operation in ("dispatch", "poke", "visual_action"):
-        result = asyncio.run(
-            daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation})
-        )
+        result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation}))
         assert result["ok"] is False
         assert "reload required" in result["error"]
-    health = asyncio.run(
-        daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": "health"})
-    )
+    health = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": "health"}))
     assert health["ok"] is False
     assert health["disk_manifest_sha256"] != health["manifest_sha256"]
 
@@ -306,9 +300,7 @@ def test_concurrent_duplicate_does_not_poison_winning_receipt(monkeypatch, tmp_p
         kwargs["receipts"].append(receipt)
         return {"ok": True, "receipt": receipt}
 
-    monkeypatch.setattr(
-        edge_daemon, "dispatch_registered_headless", blocked_dispatch
-    )
+    monkeypatch.setattr(edge_daemon, "dispatch_registered_headless", blocked_dispatch)
 
     async def scenario():
         request = {
@@ -360,8 +352,12 @@ def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):
 
     duplicate = asyncio.run(
         daemon.handle(
-            {"protocol": "cos-c2-iterm-edge-v1", "op": "visual_action",
-             "observation": visual_observation(), "decision": visual_decision()}
+            {
+                "protocol": "cos-c2-iterm-edge-v1",
+                "op": "visual_action",
+                "observation": visual_observation(),
+                "decision": visual_decision(),
+            }
         )
     )
     assert duplicate["ok"] is False
@@ -417,8 +413,13 @@ def test_concurrent_duplicate_poke_only_injects_once(monkeypatch, tmp_path):
         return {"ok": True, "idempotency_key": kwargs["idempotency_key"]}
 
     monkeypatch.setattr(edge_daemon, "send_controller_poke", fake_poke)
-    request = {"protocol": "cos-c2-iterm-edge-v1", "op": "poke",
-               "controller_epoch": 7, "idempotency_key": "poke-once", "text": "/goal continue"}
+    request = {
+        "protocol": "cos-c2-iterm-edge-v1",
+        "op": "poke",
+        "controller_epoch": 7,
+        "idempotency_key": "poke-once",
+        "text": "/goal continue",
+    }
 
     async def exercise():
         first = asyncio.create_task(daemon.handle(request))
@@ -438,12 +439,22 @@ def test_unacknowledged_injected_poke_is_persisted_for_idempotency(monkeypatch, 
     daemon = make_daemon(tmp_path)
 
     async def fake_poke(_connection, **kwargs):
-        return {"ok": False, "injection_attempted": True, "observed_ack": False,
-                "idempotency_key": kwargs["idempotency_key"], "error": "not acknowledged"}
+        return {
+            "ok": False,
+            "injection_attempted": True,
+            "observed_ack": False,
+            "idempotency_key": kwargs["idempotency_key"],
+            "error": "not acknowledged",
+        }
 
     monkeypatch.setattr(edge_daemon, "send_controller_poke", fake_poke)
-    request = {"protocol": "cos-c2-iterm-edge-v1", "op": "poke",
-               "controller_epoch": 7, "idempotency_key": "poke-failed", "text": "/goal continue"}
+    request = {
+        "protocol": "cos-c2-iterm-edge-v1",
+        "op": "poke",
+        "controller_epoch": 7,
+        "idempotency_key": "poke-failed",
+        "text": "/goal continue",
+    }
     first = asyncio.run(daemon.handle(request))
     duplicate = asyncio.run(daemon.handle(request))
     assert first["ok"] is False

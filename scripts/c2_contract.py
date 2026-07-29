@@ -17,7 +17,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-
 SUPERVISOR_RESOURCE = "workspace:mikebook:c2-supervisor"
 SUPERVISOR_TTL_SECONDS = 180
 SUPERVISOR_RENEW_SECONDS = 60
@@ -93,14 +92,10 @@ class WorkerRegistration:
             worker_id=_required(value.get("worker_id"), "worker.worker_id"),
             host=_required(value.get("host"), "worker.host"),
             runtime=runtime,
-            iterm_session_id=_required(
-                value.get("iterm_session_id"), "worker.iterm_session_id"
-            ),
+            iterm_session_id=_required(value.get("iterm_session_id"), "worker.iterm_session_id"),
             tty=tty,
             cli_session_id=_required(value.get("cli_session_id"), "worker.cli_session_id"),
-            coord_session_id=_required(
-                value.get("coord_session_id"), "worker.coord_session_id"
-            ),
+            coord_session_id=_required(value.get("coord_session_id"), "worker.coord_session_id"),
             coord_agent_id=_required(value.get("coord_agent_id"), "worker.coord_agent_id"),
             capabilities=tuple(str(item) for item in value.get("capabilities", []) if str(item)),
             repositories=tuple(str(item) for item in value.get("repositories", []) if str(item)),
@@ -157,14 +152,10 @@ class RunManifest:
             raise ContractError("controller session must not also be registered as a worker")
         dispatch_transport = str(value.get("dispatch_transport") or "ab").strip().lower()
         if dispatch_transport not in DISPATCH_TRANSPORTS:
-            raise ContractError(
-                f"unsupported dispatch_transport: {dispatch_transport}"
-            )
+            raise ContractError(f"unsupported dispatch_transport: {dispatch_transport}")
         recovery_transport = str(value.get("recovery_transport") or "ab").strip().lower()
         if recovery_transport not in DISPATCH_TRANSPORTS:
-            raise ContractError(
-                f"unsupported recovery_transport: {recovery_transport}"
-            )
+            raise ContractError(f"unsupported recovery_transport: {recovery_transport}")
         return cls(
             manifest_id=_required(value.get("manifest_id"), "manifest_id"),
             controller_id=_required(controller.get("controller_id"), "controller.controller_id"),
@@ -197,9 +188,7 @@ class RunManifest:
     def transport_for(self, assignment_id: str) -> str:
         if self.dispatch_transport != "ab":
             return self.dispatch_transport
-        digest = hashlib.sha256(
-            f"{self.manifest_id}:{assignment_id}".encode("utf-8")
-        ).digest()
+        digest = hashlib.sha256(f"{self.manifest_id}:{assignment_id}".encode("utf-8")).digest()
         return "tab" if digest[0] % 2 == 0 else "headless"
 
     def recovery_for(self, sequence: int) -> str:

@@ -12,7 +12,6 @@ from typing import Any
 
 from c2_contract import ContractError, RunManifest
 
-
 ALLOWED_VISUAL_ACTIONS = {"send_text", "press_enter", "press_escape"}
 MAX_OBSERVATION_AGE_SECONDS = 120
 
@@ -46,11 +45,7 @@ class VisualObservation:
             raise ContractError("captured_ts must be a finite number")
         if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
             raise ContractError("controller_epoch must be a positive integer")
-        if (
-            isinstance(worker_epoch, bool)
-            or not isinstance(worker_epoch, int)
-            or worker_epoch < 1
-        ):
+        if isinstance(worker_epoch, bool) or not isinstance(worker_epoch, int) or worker_epoch < 1:
             raise ContractError("worker_epoch must be a positive integer")
         return cls(
             worker_id=_required(value.get("worker_id"), "worker_id"),
@@ -67,9 +62,7 @@ class VisualObservation:
             json.dumps(self.__dict__, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
 
-    def validate_for(
-        self, manifest: RunManifest, *, now_ts: float | None = None
-    ) -> None:
+    def validate_for(self, manifest: RunManifest, *, now_ts: float | None = None) -> None:
         worker = manifest.worker(self.worker_id)
         if worker.iterm_session_id != self.iterm_session_id:
             raise ContractError("visual observation targets stale iTerm identity")
@@ -105,9 +98,7 @@ class VisualDecision:
         if action != "send_text" and text:
             raise ContractError(f"{action} action cannot include text")
         return cls(
-            observation_digest=_required(
-                value.get("observation_digest"), "observation_digest"
-            ),
+            observation_digest=_required(value.get("observation_digest"), "observation_digest"),
             action=action,
             text=text,
             rationale=_required(value.get("rationale"), "rationale"),

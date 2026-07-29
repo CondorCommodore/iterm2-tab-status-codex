@@ -55,9 +55,7 @@ def test_visual_observation_rejects_stale_or_wrong_target():
     with pytest.raises(ContractError, match="stale"):
         observation().validate_for(manifest, now_ts=1201.0)
     with pytest.raises(ContractError, match="stale iTerm identity"):
-        observation(iterm_session_id="reused-session").validate_for(
-            manifest, now_ts=1050.0
-        )
+        observation(iterm_session_id="reused-session").validate_for(manifest, now_ts=1050.0)
 
 
 def test_visual_observation_requires_worker_fencing_epoch():

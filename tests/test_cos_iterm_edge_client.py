@@ -47,9 +47,7 @@ def test_unix_socket_edge_protocol_round_trip(tmp_path):
         ready.set()
         conn, _ = sock.accept()
         request = json.loads(conn.recv(65536).decode("utf-8"))
-        conn.sendall(
-            json.dumps({"ok": True, "op": request["op"]}).encode("utf-8") + b"\n"
-        )
+        conn.sendall(json.dumps({"ok": True, "op": request["op"]}).encode("utf-8") + b"\n")
         conn.close()
         sock.close()
 

@@ -20,11 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from c2_contract import (
+    SUPERVISOR_RESOURCE,
     ContractError,
     DispatchEnvelope,
     ReceiptStore,
     RunManifest,
-    SUPERVISOR_RESOURCE,
     WorkerRegistration,
     load_envelope,
     load_manifest,
@@ -128,10 +128,8 @@ def looks_like_agent_session(values: dict[str, str]) -> bool:
 
 def foreground_matches_runtime(values: dict[str, str], runtime: str) -> bool:
     job = (
-        values.get("foregroundJobName")
-        or values.get("jobName")
-        or ""
-    ).rsplit("/", 1)[-1].lower()
+        (values.get("foregroundJobName") or values.get("jobName") or "").rsplit("/", 1)[-1].lower()
+    )
     if runtime == "codex":
         return "codex" in job
     if runtime == "claude":
@@ -149,7 +147,9 @@ def _command_is_runtime(command: str, runtime: str) -> bool:
     executable = Path(argv[0]).name.lower()
     if executable == runtime:
         return True
-    return executable in {"node", "nodejs"} and len(argv) > 1 and Path(argv[1]).name.lower() == runtime
+    return (
+        executable in {"node", "nodejs"} and len(argv) > 1 and Path(argv[1]).name.lower() == runtime
+    )
 
 
 def foreground_group_output_matches_runtime(output: str, runtime: str) -> bool:
@@ -229,9 +229,7 @@ def _escape_applescript(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def build_applescript(
-    worker: WorkerRegistration, text: str, *, require_goal: bool = True
-) -> str:
+def build_applescript(worker: WorkerRegistration, text: str, *, require_goal: bool = True) -> str:
     """Build the proven no-focus CR/LF submit path for a registered session."""
     validate_tty(worker.tty)
     validate_text(text, require_goal=require_goal)
@@ -269,9 +267,7 @@ def _validate_authoritative_target(
     if worker.tty == manifest.controller_tty:
         raise ContractError("self-dispatch tty is forbidden")
     if receipts.has_idempotency_key(envelope.idempotency_key):
-        raise ContractError(
-            f"duplicate dispatch idempotency key: {envelope.idempotency_key}"
-        )
+        raise ContractError(f"duplicate dispatch idempotency key: {envelope.idempotency_key}")
     return worker
 
 
@@ -309,9 +305,7 @@ def _ack_transitioned(before: dict[str, str], after: dict[str, str]) -> bool:
     before_state = (
         before.get("user.workerReadiness") or before.get("user.workerState") or ""
     ).lower()
-    after_state = (
-        after.get("user.workerReadiness") or after.get("user.workerState") or ""
-    ).lower()
+    after_state = (after.get("user.workerReadiness") or after.get("user.workerState") or "").lower()
     before_processing = before.get("session.isProcessing", "").lower()
     after_processing = after.get("session.isProcessing", "").lower()
     before_command = before.get("session.currentCommand", "")
@@ -319,12 +313,9 @@ def _ack_transitioned(before: dict[str, str], after: dict[str, str]) -> bool:
     active_states = {"running", "reserved", "queued", "processing"}
     processing_values = {"1", "true", "yes"}
     return (
-        after_state != before_state and after_state in active_states
-    ) or (
-        after_processing != before_processing
-        and after_processing in processing_values
-    ) or (
-        after_command != before_command and bool(after_command)
+        (after_state != before_state and after_state in active_states)
+        or (after_processing != before_processing and after_processing in processing_values)
+        or (after_command != before_command and bool(after_command))
     )
 
 
@@ -511,9 +502,7 @@ def dispatch_registered_applescript(
     prompt = render_dispatch_prompt(envelope)
     script = build_applescript(worker, prompt)
     verify_epoch(SUPERVISOR_RESOURCE, envelope.controller_epoch)
-    result = run(
-        ["osascript", "-e", script], capture_output=True, text=True, timeout=10
-    )
+    result = run(["osascript", "-e", script], capture_output=True, text=True, timeout=10)
     if result.returncode != 0 or "sent" not in result.stdout:
         return {
             "ok": False,

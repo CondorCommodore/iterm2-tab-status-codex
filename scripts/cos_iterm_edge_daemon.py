@@ -24,17 +24,21 @@ PARENT_SCRIPTS_DIR = SCRIPT_DIR.parent
 if str(PARENT_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(PARENT_SCRIPTS_DIR))
 
-from c2_contract import ContractError, DispatchEnvelope, ReceiptStore, load_manifest
-from c2_visual_decision import VisualDecision, VisualObservation
-from c2_coord_client import CoordClient, CoordConfig, LeaseBlocked
-from cos_iterm_edge_client import DEFAULT_SOCKET_PATH, MAX_RESPONSE_BYTES
-from cos_tab_dispatch import (
+from c2_contract import (  # noqa: E402
+    ContractError,
+    DispatchEnvelope,
+    ReceiptStore,
+    load_manifest,
+)
+from c2_coord_client import CoordClient, CoordConfig, LeaseBlocked  # noqa: E402
+from c2_visual_decision import VisualDecision, VisualObservation  # noqa: E402
+from cos_iterm_edge_client import DEFAULT_SOCKET_PATH, MAX_RESPONSE_BYTES  # noqa: E402
+from cos_tab_dispatch import (  # noqa: E402
     dispatch_registered,
     dispatch_registered_headless,
     execute_visual_decision,
     send_controller_poke,
 )
-
 
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
@@ -67,9 +71,7 @@ class EdgeDaemon:
         self.manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
         self.manifest = load_manifest(manifest_path)
         self.client = CoordClient(
-            CoordConfig.load(
-                expected_principal_id=self.manifest.controller_coord_agent_id
-            )
+            CoordConfig.load(expected_principal_id=self.manifest.controller_coord_agent_id)
         )
         self.dispatch_receipts = ReceiptStore(state_dir / "dispatch-receipts.jsonl")
         self.poke_receipts = ReceiptStore(state_dir / "poke-receipts.jsonl")
@@ -113,9 +115,7 @@ class EdgeDaemon:
             "reservation": reservation,
         }
 
-    async def audit_receipt(
-        self, result: dict[str, Any], receipt: dict[str, Any]
-    ) -> None:
+    async def audit_receipt(self, result: dict[str, Any], receipt: dict[str, Any]) -> None:
         try:
             await asyncio.to_thread(self.client.post_receipt, receipt)
         except Exception as exc:
@@ -163,9 +163,7 @@ class EdgeDaemon:
                         "in_flight": True,
                     }
                 self.dispatch_inflight.add(envelope.idempotency_key)
-            reservation_resource = (
-                f"workspace:mikebook:c2-worker:{envelope.worker_id}"
-            )
+            reservation_resource = f"workspace:mikebook:c2-worker:{envelope.worker_id}"
             reservation = None
             reservation_receipt = None
             try:
@@ -244,15 +242,11 @@ class EdgeDaemon:
                 result = {"ok": False, "error": str(exc), "transport": transport}
                 if reservation is not None:
                     try:
-                        await asyncio.to_thread(
-                            self.client.release_resource, reservation
-                        )
+                        await asyncio.to_thread(self.client.release_resource, reservation)
                         reservation = None
                     except Exception as release_exc:
                         result["reservation_release_error"] = str(release_exc)
-                if not self.dispatch_receipts.has_idempotency_key(
-                    envelope.idempotency_key
-                ):
+                if not self.dispatch_receipts.has_idempotency_key(envelope.idempotency_key):
                     receipt = self.rejection_receipt(
                         envelope=envelope,
                         transport=transport,
@@ -277,7 +271,11 @@ class EdgeDaemon:
                 return {"ok": False, "error": f"duplicate poke idempotency key: {key}"}
             async with self.dispatch_guard:
                 if key in self.dispatch_inflight:
-                    return {"ok": False, "error": f"poke already in flight: {key}", "in_flight": True}
+                    return {
+                        "ok": False,
+                        "error": f"poke already in flight: {key}",
+                        "in_flight": True,
+                    }
                 self.dispatch_inflight.add(key)
             try:
                 result = await send_controller_poke(
@@ -310,9 +308,10 @@ class EdgeDaemon:
             decision = VisualDecision.from_dict(raw_decision)
             async with self.dispatch_guard:
                 if self.dispatch_receipts.has_idempotency_key(decision.idempotency_key):
+                    error = f"duplicate visual action idempotency key: {decision.idempotency_key}"
                     return {
                         "ok": False,
-                        "error": f"duplicate visual action idempotency key: {decision.idempotency_key}",
+                        "error": error,
                     }
                 if decision.idempotency_key in self.dispatch_inflight:
                     return {
@@ -363,9 +362,7 @@ async def serve(
 ) -> None:
     lock_fd = acquire_edge_lock(socket_path)
     try:
-        daemon = EdgeDaemon(
-            connection, manifest_path=manifest_path, state_dir=state_dir
-        )
+        daemon = EdgeDaemon(connection, manifest_path=manifest_path, state_dir=state_dir)
         socket_path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(socket_path.parent, 0o700)
         if socket_path.exists() or socket_path.is_symlink():
@@ -374,9 +371,7 @@ async def serve(
         os.close(lock_fd)
         raise
 
-    async def on_client(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             raw = await reader.readline()
             if len(raw) > MAX_RESPONSE_BYTES:
@@ -390,8 +385,7 @@ async def serve(
                 except Exception as exc:
                     response = {"ok": False, "error": str(exc)}
             writer.write(
-                json.dumps(response, sort_keys=True, separators=(",", ":")).encode("utf-8")
-                + b"\n"
+                json.dumps(response, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
             )
             await writer.drain()
         finally:

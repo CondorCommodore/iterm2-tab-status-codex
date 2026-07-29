@@ -302,16 +302,26 @@ def test_visual_decision_requires_controller_and_worker_epochs(monkeypatch, tmp_
 
 def test_unacknowledged_visual_decision_fails_closed(monkeypatch, tmp_path):
     target = FakeSession(
-        "/dev/ttys003", runtime="codex", job="codex", session_id="iterm-worker",
-        cli_session_id="cli-worker", coord_session_id="coord-worker",
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
     )
     _install_fake_iterm(monkeypatch, [target])
     observation = _visual_observation()
-    result = asyncio.run(dispatch.execute_visual_decision(
-        object(), manifest=_manifest(), observation=observation,
-        decision=_visual_decision(observation), verify_epoch=lambda *_args: None,
-        receipts=ReceiptStore(tmp_path / "visual-receipts.jsonl"), ack_attempts=1,
-    ))
+    result = asyncio.run(
+        dispatch.execute_visual_decision(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=_visual_decision(observation),
+            verify_epoch=lambda *_args: None,
+            receipts=ReceiptStore(tmp_path / "visual-receipts.jsonl"),
+            ack_attempts=1,
+        )
+    )
     assert result["ok"] is False
     assert result["receipt"]["observed_ack"] is False
     assert target.sent == ["\r"]
@@ -403,9 +413,7 @@ def test_registered_dispatch_accepts_exact_foreground_runtime_when_iterm_name_dr
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
-    monkeypatch.setattr(
-        dispatch, "tty_foreground_group_matches_runtime", lambda *_args: True
-    )
+    monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_args: True)
 
     result = asyncio.run(
         dispatch.dispatch_registered(
@@ -506,30 +514,39 @@ def test_tab_dispatch_fences_worker_reservation_before_each_injection(monkeypatc
         session_id="iterm-worker",
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
-        snapshots=[{"session.isProcessing": False},
-                   {"session.isProcessing": True}],
+        snapshots=[{"session.isProcessing": False}, {"session.isProcessing": True}],
     )
     _install_fake_iterm(monkeypatch, [target])
     verified = []
     reservation = {"resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 19}
-    result = asyncio.run(dispatch.dispatch_registered(
-        object(), manifest=_manifest(), envelope=_envelope(),
-        verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
-        receipts=ReceiptStore(tmp_path / "receipts.jsonl"), reservation=reservation,
-        ack_attempts=1,
-    ))
+    asyncio.run(
+        dispatch.dispatch_registered(
+            object(),
+            manifest=_manifest(),
+            envelope=_envelope(),
+            verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+            reservation=reservation,
+            ack_attempts=1,
+        )
+    )
     assert target.sent
     assert (reservation["resource"], 19) in verified
 
 
 def test_headless_dispatch_fences_worker_reservation(tmp_path):
     verified = []
-    reservation = {"resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 23,
-                   "expires_at": "2099-01-01T00:00:00Z"}
+    reservation = {
+        "resource": "workspace:mikebook:c2-worker:worker-codex",
+        "epoch": 23,
+        "expires_at": "2099-01-01T00:00:00Z",
+    }
     result = dispatch.dispatch_registered_headless(
-        manifest=_manifest(), envelope=_envelope(),
+        manifest=_manifest(),
+        envelope=_envelope(),
         verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
-        receipts=ReceiptStore(tmp_path / "receipts.jsonl"), reservation=reservation,
+        receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+        reservation=reservation,
         run=lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "done", ""),
     )
     assert result["ok"] is True
@@ -539,7 +556,8 @@ def test_headless_dispatch_fences_worker_reservation(tmp_path):
 def test_headless_timeout_is_bounded_by_worker_reservation(tmp_path):
     observed = {}
     reservation = {
-        "resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 23,
+        "resource": "workspace:mikebook:c2-worker:worker-codex",
+        "epoch": 23,
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=40)).isoformat(),
     }
 
@@ -548,8 +566,12 @@ def test_headless_timeout_is_bounded_by_worker_reservation(tmp_path):
         return subprocess.CompletedProcess(command, 0, "done", "")
 
     result = dispatch.dispatch_registered_headless(
-        manifest=_manifest(), envelope=_envelope(), verify_epoch=lambda *_args: None,
-        receipts=ReceiptStore(tmp_path / "receipts.jsonl"), reservation=reservation, run=run,
+        manifest=_manifest(),
+        envelope=_envelope(),
+        verify_epoch=lambda *_args: None,
+        receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+        reservation=reservation,
+        run=run,
     )
     assert result["ok"] is True
     assert 30 <= observed["timeout"] < 40
@@ -763,9 +785,7 @@ def test_foreground_group_output_requires_runtime_executable_in_tpgid():
 
 
 def test_registered_dispatch_rejects_reused_tty_with_wrong_session(monkeypatch, tmp_path):
-    target = FakeSession(
-        "/dev/ttys003", runtime="codex", session_id="iterm-successor"
-    )
+    target = FakeSession("/dev/ttys003", runtime="codex", session_id="iterm-successor")
     _install_fake_iterm(monkeypatch, [target])
 
     result = asyncio.run(
@@ -804,7 +824,8 @@ def test_headless_commands_resume_same_uuid_for_codex_and_claude():
 
 def test_applescript_write_without_ack_fails_closed(tmp_path):
     result = dispatch.dispatch_registered_applescript(
-        manifest=_manifest(), envelope=_envelope(),
+        manifest=_manifest(),
+        envelope=_envelope(),
         verify_epoch=lambda *_args: None,
         receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
         run=lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "sent", ""),

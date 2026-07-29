@@ -244,8 +244,9 @@ def test_edge_restart_targets_only_registered_launchagent(monkeypatch):
     monkeypatch.setattr(watchdog.os, "getuid", lambda: 501)
 
     result = watchdog.restart_edge(
-        run=lambda command, **kwargs: seen.append((command, kwargs))
-        or subprocess.CompletedProcess(command, 0, "", "")
+        run=lambda command, **kwargs: (
+            seen.append((command, kwargs)) or subprocess.CompletedProcess(command, 0, "", "")
+        )
     )
 
     assert result["ok"] is True
@@ -364,7 +365,9 @@ def test_tab_recovery_uses_iterm_api_edge_poke(tmp_path):
         state_dir=tmp_path,
         client=Client({"holder": "mikebook_codex", "epoch": 7}),
         now_ts=500,
-        poke_fn=lambda **kwargs: seen.append(kwargs) or {"ok": True, "submit_method": "iterm2-python-api-crlf"},
+        poke_fn=lambda **kwargs: (
+            seen.append(kwargs) or {"ok": True, "submit_method": "iterm2-python-api-crlf"}
+        ),
     )
 
     assert result["action"] == "tab-poke"
@@ -480,9 +483,7 @@ def test_zero_exit_without_headless_authority_fails_closed(tmp_path):
         state_dir=tmp_path,
         client=Client(None),
         now_ts=500,
-        run=lambda command, **kwargs: subprocess.CompletedProcess(
-            command, 0, "done", ""
-        ),
+        run=lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "done", ""),
     )
 
     assert result["ok"] is False
@@ -501,9 +502,7 @@ def test_provider_backoff_still_checks_lease_and_fresh_heartbeat(tmp_path):
         state_dir=tmp_path,
         client=first_client,
         now_ts=500,
-        run=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            OSError("provider unavailable")
-        ),
+        run=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("provider unavailable")),
     )
     assert failed["backoff_seconds"] == 60
     assert failed["receipt"]["provider_error"] == "OSError"
@@ -546,9 +545,7 @@ def test_provider_failure_backoff_is_exponential_and_capped(tmp_path):
             state_dir=tmp_path,
             client=Client(None),
             now_ts=now_ts,
-            run=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                OSError("provider unavailable")
-            ),
+            run=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("provider unavailable")),
         )
         observed.append(result["backoff_seconds"])
         now_ts += result["backoff_seconds"]

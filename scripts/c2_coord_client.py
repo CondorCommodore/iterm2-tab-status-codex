@@ -21,9 +21,7 @@ class CoordError(RuntimeError):
 
 class LeaseBlocked(CoordError):
     def __init__(self, resource: str, payload: dict[str, Any]):
-        super().__init__(
-            f"lease {resource!r} held by {payload.get('current_holder') or 'unknown'}"
-        )
+        super().__init__(f"lease {resource!r} held by {payload.get('current_holder') or 'unknown'}")
         self.resource = resource
         self.payload = payload
 
@@ -32,9 +30,7 @@ class LeaseLost(CoordError):
     pass
 
 
-RequestFn = Callable[
-    [str, str, dict[str, str], bytes | None, float], tuple[int, Any]
-]
+RequestFn = Callable[[str, str, dict[str, str], bytes | None, float], tuple[int, Any]]
 
 
 def _request(
@@ -99,9 +95,7 @@ class CoordConfig:
             raise CoordError("coord config root must be an object")
         file_env = _load_env_file(secrets_path)
         runtime = {**file_env, **os.environ}
-        configured_agent = str(
-            runtime.get("COORD_AGENT_ID") or value.get("agent_id") or ""
-        ).strip()
+        configured_agent = str(runtime.get("COORD_AGENT_ID") or value.get("agent_id") or "").strip()
         principal_id = str(
             expected_principal_id
             or runtime.get("COORD_PRINCIPAL_ID")
@@ -113,25 +107,25 @@ class CoordConfig:
         configured_principal = str(value.get("principal_id") or configured_agent).strip()
         if not principal_token and principal_id == configured_principal:
             principal_token = str(
-                runtime.get("COORD_PRINCIPAL_TOKEN")
-                or value.get("principal_token")
-                or ""
+                runtime.get("COORD_PRINCIPAL_TOKEN") or value.get("principal_token") or ""
             ).strip()
         config = cls(
             api_url=str(
-                runtime.get("COORD_API_URL")
-                or value.get("api_url")
-                or "http://127.0.0.1:8800"
+                runtime.get("COORD_API_URL") or value.get("api_url") or "http://127.0.0.1:8800"
             ).rstrip("/"),
-            read_token=str(
-                runtime.get("COORD_API_KEY") or value.get("api_key") or ""
-            ).strip(),
+            read_token=str(runtime.get("COORD_API_KEY") or value.get("api_key") or "").strip(),
             principal_token=principal_token,
             agent_id=principal_id,
             principal_id=principal_id,
         )
         if not all(
-            (config.api_url, config.read_token, config.principal_token, config.agent_id, config.principal_id)
+            (
+                config.api_url,
+                config.read_token,
+                config.principal_token,
+                config.agent_id,
+                config.principal_id,
+            )
         ):
             raise CoordError("coord config lacks principal-bound read/write identity")
         return config
@@ -268,15 +262,15 @@ class CoordClient:
             )
         renewed = self._handle(handle.resource, payload.get("lease"))
         if renewed.epoch != handle.epoch:
-            raise LeaseLost(
-                f"lease epoch changed during renew: expected={handle.epoch} observed={renewed.epoch}"
+            message = (
+                f"lease epoch changed during renew: expected={handle.epoch} "
+                f"observed={renewed.epoch}"
             )
+            raise LeaseLost(message)
         return renewed
 
     def get_resource(self, resource: str) -> dict[str, Any] | None:
-        status, payload = self.call(
-            "GET", self.lease_path(resource), allowed=(200, 404)
-        )
+        status, payload = self.call("GET", self.lease_path(resource), allowed=(200, 404))
         if status == 404:
             return None
         return payload if isinstance(payload, dict) else None
@@ -289,9 +283,11 @@ class CoordClient:
         epoch = lease.get("epoch")
         expiry = _parse_expiry(lease.get("expires_at"))
         if holder != self.config.principal_id:
-            raise LeaseLost(
-                f"lease {resource!r} holder mismatch: expected={self.config.principal_id} observed={holder}"
+            message = (
+                f"lease {resource!r} holder mismatch: "
+                f"expected={self.config.principal_id} observed={holder}"
             )
+            raise LeaseLost(message)
         if epoch != expected_epoch:
             raise LeaseLost(
                 f"lease {resource!r} epoch mismatch: expected={expected_epoch} observed={epoch}"
@@ -319,18 +315,19 @@ class CoordClient:
 
     def actionable(self, agent_id: str | None = None) -> dict[str, Any]:
         _status, payload = self.call(
-            "GET", f"/agents/{urllib.parse.quote(agent_id or self.config.agent_id, safe='')}/actionable"
+            "GET",
+            f"/agents/{urllib.parse.quote(agent_id or self.config.agent_id, safe='')}/actionable",
         )
         return payload if isinstance(payload, dict) else {"items": []}
 
     def task(self, task_id: str) -> dict[str, Any]:
-        _status, payload = self.call(
-            "GET", f"/tasks/{urllib.parse.quote(task_id, safe='')}"
-        )
+        _status, payload = self.call("GET", f"/tasks/{urllib.parse.quote(task_id, safe='')}")
         return payload if isinstance(payload, dict) else {}
 
     def post_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
-        content = json.dumps({"c2_dispatch_receipt": receipt}, sort_keys=True, separators=(",", ":"))
+        content = json.dumps(
+            {"c2_dispatch_receipt": receipt}, sort_keys=True, separators=(",", ":")
+        )
         _status, payload = self.call(
             "POST",
             "/messages",
@@ -354,9 +351,7 @@ class CoordClient:
             raise CoordError(f"coord-api returned invalid lease epoch for {resource!r}: {epoch!r}")
         holder = str(lease.get("holder") or "")
         if holder != self.config.principal_id:
-            raise CoordError(
-                f"coord-api returned lease for unexpected holder: {holder!r}"
-            )
+            raise CoordError(f"coord-api returned lease for unexpected holder: {holder!r}")
         return LeaseHandle(
             resource=resource,
             holder=holder,

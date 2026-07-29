@@ -108,13 +108,13 @@ def test_envelope_is_bound_to_registration_repo_and_actions():
     assert len(envelope.digest()) == 64
 
     with pytest.raises(c2.ContractError, match="cli_session_id"):
-        c2.DispatchEnvelope.from_dict(
-            envelope_dict(cli_session_id="stale-cli")
-        ).validate_for(manifest)
+        c2.DispatchEnvelope.from_dict(envelope_dict(cli_session_id="stale-cli")).validate_for(
+            manifest
+        )
     with pytest.raises(c2.ContractError, match="outside run manifest"):
-        c2.DispatchEnvelope.from_dict(
-            envelope_dict(permitted_actions=["deploy"])
-        ).validate_for(manifest)
+        c2.DispatchEnvelope.from_dict(envelope_dict(permitted_actions=["deploy"])).validate_for(
+            manifest
+        )
 
 
 @pytest.mark.parametrize(

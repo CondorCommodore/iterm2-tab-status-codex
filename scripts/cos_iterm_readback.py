@@ -52,9 +52,7 @@ async def collect_readback(connection: object) -> dict[str, Any]:
             for session in tab.sessions:
                 sessions.append(
                     {
-                        "iterm_session_id": str(
-                            getattr(session, "session_id", "") or ""
-                        ),
+                        "iterm_session_id": str(getattr(session, "session_id", "") or ""),
                         **await session_snapshot(session),
                     }
                 )

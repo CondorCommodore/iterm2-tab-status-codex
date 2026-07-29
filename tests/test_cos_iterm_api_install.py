@@ -15,13 +15,7 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     scripts_dir.mkdir(parents=True)
     for name in installer.AUTOLAUNCH_SCRIPTS + installer.MENU_SCRIPTS:
         (scripts_dir / name).write_text(f"#!/usr/bin/env python3\n# {name}\n", encoding="utf-8")
-    legacy_edge = (
-        tmp_path
-        / "iterm"
-        / "Scripts"
-        / "AutoLaunch"
-        / "cos_iterm_edge_daemon.py"
-    )
+    legacy_edge = tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_edge_daemon.py"
     legacy_edge.parent.mkdir(parents=True)
     legacy_edge.write_text("legacy duplicate\n", encoding="utf-8")
 

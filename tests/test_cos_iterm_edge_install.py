@@ -5,7 +5,6 @@ import plistlib
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -76,10 +75,7 @@ def test_installer_discovers_highest_semantic_iterm_runtime(tmp_path):
     launchctl.chmod(0o755)
     for version in ("3.8.19", "3.10.19"):
         runtime = (
-            home
-            / "Library/Application Support/iTerm2/iterm2env/versions"
-            / version
-            / "bin/python3"
+            home / "Library/Application Support/iTerm2/iterm2env/versions" / version / "bin/python3"
         )
         runtime.parent.mkdir(parents=True)
         runtime.symlink_to("/usr/bin/python3")

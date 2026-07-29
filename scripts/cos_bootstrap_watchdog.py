@@ -12,11 +12,17 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from c2_contract import ReceiptStore, SUPERVISOR_RESOURCE, load_manifest
+from c2_contract import SUPERVISOR_RESOURCE, ReceiptStore, load_manifest
 from c2_coord_client import CoordClient, CoordConfig, CoordError
-from cos_bootstrap_supervisor import DEFAULT_MANIFEST, DEFAULT_STATE_DIR, _atomic_json, _iso, _load_json, state_paths
+from cos_bootstrap_supervisor import (
+    DEFAULT_MANIFEST,
+    DEFAULT_STATE_DIR,
+    _atomic_json,
+    _iso,
+    _load_json,
+    state_paths,
+)
 from cos_iterm_edge_client import poke_controller, request_edge
-
 
 HEARTBEAT_STALE_SECONDS = 180
 MAX_TAB_POKES = 2
@@ -91,9 +97,7 @@ def _record_outcome(path: Path, value: dict[str, Any]) -> None:
     ReceiptStore(path).append(value)
 
 
-def _headless_authority(
-    heartbeat_path: Path, *, attempted_at: float
-) -> dict[str, Any] | None:
+def _headless_authority(heartbeat_path: Path, *, attempted_at: float) -> dict[str, Any] | None:
     heartbeat = _load_json(heartbeat_path)
     recorded_ts = heartbeat.get("recorded_ts")
     if (
@@ -167,7 +171,11 @@ def run_once(
             watchdog["last_edge_error"] = edge_error or "edge health returned ok=false"
             watchdog["last_edge_failure_at"] = _iso(now_ts)
             _atomic_json(watchdog_path, watchdog)
-            if failures < MAX_EDGE_HEALTH_FAILURES and age is not None and age < HEARTBEAT_STALE_SECONDS:
+            if (
+                failures < MAX_EDGE_HEALTH_FAILURES
+                and age is not None
+                and age < HEARTBEAT_STALE_SECONDS
+            ):
                 return {
                     "ok": True,
                     "armed": True,
@@ -213,8 +221,9 @@ def run_once(
                 MAX_BACKOFF_SECONDS,
                 60 * (2 ** min(restart_attempts - 1, 4)),
             )
+            edge_sequence = int(watchdog.get("edge_restart_sequence") or 0)
             receipt = {
-                "idempotency_key": f"edge-recovery:{int(watchdog.get('edge_restart_sequence') or 0)}",
+                "idempotency_key": f"edge-recovery:{edge_sequence}",
                 "recorded_at": _iso(now_ts),
                 "kind": "edge-recovery",
                 "success": restart_ok,
@@ -225,9 +234,7 @@ def run_once(
                 "backoff_seconds": restart_backoff,
             }
             _record_outcome(state_dir / "edge-recovery-receipts.jsonl", receipt)
-            watchdog["edge_restart_sequence"] = int(
-                watchdog.get("edge_restart_sequence") or 0
-            ) + 1
+            watchdog["edge_restart_sequence"] = int(watchdog.get("edge_restart_sequence") or 0) + 1
             watchdog["edge_health_failures"] = 0
             watchdog["edge_restart_attempts"] = restart_attempts
             watchdog["edge_restart_backoff_until"] = now_ts + restart_backoff
@@ -242,9 +249,11 @@ def run_once(
                 }
 
     pending_since = watchdog.get("pending_since")
-    if isinstance(pending_since, (int, float)) and isinstance(
-        heartbeat.get("recorded_ts"), (int, float)
-    ) and heartbeat["recorded_ts"] > pending_since:
+    if (
+        isinstance(pending_since, (int, float))
+        and isinstance(heartbeat.get("recorded_ts"), (int, float))
+        and heartbeat["recorded_ts"] > pending_since
+    ):
         receipt = {
             "idempotency_key": str(watchdog.get("pending_key") or f"recovery:{pending_since}"),
             "recorded_at": _iso(now_ts),
@@ -350,9 +359,7 @@ def run_once(
     try:
         result = run(command, capture_output=True, text=True, timeout=1800)
         duration_ms = int((time.monotonic() - started) * 1000)
-        authority = _headless_authority(
-            paths["heartbeat"], attempted_at=now_ts
-        )
+        authority = _headless_authority(paths["heartbeat"], attempted_at=now_ts)
         success = result.returncode == 0 and authority is not None
         receipt = {
             "idempotency_key": key,
@@ -363,9 +370,7 @@ def run_once(
             "duration_ms": duration_ms,
             "exit_code": result.returncode,
             "authority_acquired": authority is not None,
-            "controller_epoch": (
-                authority.get("controller_epoch") if authority else None
-            ),
+            "controller_epoch": (authority.get("controller_epoch") if authority else None),
             "visible_reattach_required": True,
             "stdout_tail": result.stdout[-500:],
             "stderr_tail": result.stderr[-500:],
@@ -425,9 +430,7 @@ def main(argv: list[str] | None = None) -> int:
             state_dir=args.state_dir,
             client=None,
             client_factory=lambda: CoordClient(
-                CoordConfig.load(
-                    expected_principal_id=manifest.controller_coord_agent_id
-                )
+                CoordConfig.load(expected_principal_id=manifest.controller_coord_agent_id)
             ),
             edge_health_fn=lambda: edge_health(args.manifest),
             edge_restart_fn=restart_edge,

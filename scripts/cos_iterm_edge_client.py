@@ -8,7 +8,6 @@ import socket
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_SOCKET_PATH = Path.home() / ".cache" / "cos-c2" / "iterm-edge.sock"
 MAX_RESPONSE_BYTES = 1_048_576
 

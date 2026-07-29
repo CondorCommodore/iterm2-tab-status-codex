@@ -108,8 +108,7 @@ class FakeClient:
         return handle
 
     def verify_live_epoch(self, _resource, _epoch):
-        return {"holder": "mikebook_codex", "epoch": 7,
-                "expires_at": "2099-01-01T00:00:00Z"}
+        return {"holder": "mikebook_codex", "epoch": 7, "expires_at": "2099-01-01T00:00:00Z"}
 
     def release_resource(self, handle):
         self.released.append(handle.epoch)
@@ -128,9 +127,7 @@ def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     live = tmp_path / "live.json"
     live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
 
-    armed = supervisor.arm(
-        manifest=m, state_dir=tmp_path, validate_plan_paths=False
-    )
+    armed = supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
     tick = supervisor.run_tick(
         manifest=m,
         client=client,
@@ -155,8 +152,14 @@ def test_run_tick_rejects_manifest_changed_after_arm(tmp_path):
     live = tmp_path / "live.json"
     live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
     with pytest.raises(ContractError, match="explicit re-arm"):
-        supervisor.run_tick(manifest=changed, client=FakeClient(), state_dir=tmp_path,
-                            live_state_path=live, ownership="visible", wake=False)
+        supervisor.run_tick(
+            manifest=changed,
+            client=FakeClient(),
+            state_dir=tmp_path,
+            live_state_path=live,
+            ownership="visible",
+            wake=False,
+        )
 
 
 def test_failed_wake_is_retried_for_same_decision(monkeypatch, tmp_path):
@@ -164,17 +167,45 @@ def test_failed_wake_is_retried_for_same_decision(monkeypatch, tmp_path):
     client = FakeClient()
     client.actionable = lambda _agent: {"items": [{"kind": "task", "task_id": "task-1"}]}
     live = tmp_path / "live.json"
-    live.write_text(json.dumps({"generated_ts": time.time(), "sessions": [{
-        "iterm_session_id": "iterm-worker", "tty": "/dev/ttys003",
-        "runtime": "codex", "readiness": "idle"}]}), encoding="utf-8")
+    live.write_text(
+        json.dumps(
+            {
+                "generated_ts": time.time(),
+                "sessions": [
+                    {
+                        "iterm_session_id": "iterm-worker",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "readiness": "idle",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
     calls = []
-    monkeypatch.setattr(supervisor, "poke_controller",
-                        lambda **kwargs: calls.append(kwargs) or {"ok": len(calls) > 1})
-    first = supervisor.run_tick(manifest=m, client=client, state_dir=tmp_path,
-                                live_state_path=live, ownership="visible", wake=True)
-    second = supervisor.run_tick(manifest=m, client=client, state_dir=tmp_path,
-                                 live_state_path=live, ownership="visible", wake=True)
+    monkeypatch.setattr(
+        supervisor,
+        "poke_controller",
+        lambda **kwargs: calls.append(kwargs) or {"ok": len(calls) > 1},
+    )
+    first = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=True,
+    )
+    second = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=True,
+    )
     assert first["poked"] is False
     assert second["poked"] is True
     assert len(calls) == 2
@@ -193,11 +224,14 @@ def test_arm_clears_stale_heartbeat_decision_and_watchdog_state(tmp_path):
 
 def test_arm_preserves_and_derives_recovery_receipt_sequences(tmp_path):
     (tmp_path / "watchdog-state.json").write_text(
-        json.dumps({"recovery_sequence": 3, "edge_restart_sequence": 2}), encoding="utf-8")
+        json.dumps({"recovery_sequence": 3, "edge_restart_sequence": 2}), encoding="utf-8"
+    )
     (tmp_path / "recovery-receipts.jsonl").write_text(
-        json.dumps({"idempotency_key": "c2-recovery:4:headless"}) + "\n", encoding="utf-8")
+        json.dumps({"idempotency_key": "c2-recovery:4:headless"}) + "\n", encoding="utf-8"
+    )
     (tmp_path / "edge-recovery-receipts.jsonl").write_text(
-        json.dumps({"idempotency_key": "edge-recovery:6"}) + "\n", encoding="utf-8")
+        json.dumps({"idempotency_key": "edge-recovery:6"}) + "\n", encoding="utf-8"
+    )
     supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
     watchdog = json.loads((tmp_path / "watchdog-state.json").read_text())
     assert watchdog["recovery_sequence"] == 5

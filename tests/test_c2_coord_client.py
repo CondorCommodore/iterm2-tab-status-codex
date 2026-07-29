@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import json
 
 import pytest
 
@@ -85,7 +85,9 @@ def test_claim_and_renew_preserve_epoch_and_principal_headers():
         }
 
     client = coord.CoordClient(config(), request=request)
-    handle = client.claim_resource("workspace:mikebook:c2-supervisor", ttl_seconds=180, producer={"kind": "c2"})
+    handle = client.claim_resource(
+        "workspace:mikebook:c2-supervisor", ttl_seconds=180, producer={"kind": "c2"}
+    )
     renewed = client.renew_resource(handle)
 
     assert renewed.epoch == 9
@@ -98,7 +100,9 @@ def test_renew_rejects_successor_epoch():
         return 200, {"status": "renewed", "lease": {"holder": "mikebook_codex", "epoch": 10}}
 
     client = coord.CoordClient(config(), request=request)
-    handle = coord.LeaseHandle("resource", "mikebook_codex", 9, None, {"holder": "mikebook_codex", "epoch": 9})
+    handle = coord.LeaseHandle(
+        "resource", "mikebook_codex", 9, None, {"holder": "mikebook_codex", "epoch": 9}
+    )
 
     with pytest.raises(coord.LeaseLost, match="epoch changed"):
         client.renew_resource(handle)
@@ -118,7 +122,9 @@ def test_verify_epoch_rejects_wrong_holder_epoch_and_expiry():
     with pytest.raises(coord.LeaseLost, match="epoch mismatch"):
         client.verify_live_epoch("resource", 7)
 
-    payload.update(epoch=7, expires_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat())
+    payload.update(
+        epoch=7, expires_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    )
     with pytest.raises(coord.LeaseLost, match="expired"):
         client.verify_live_epoch("resource", 7)
 

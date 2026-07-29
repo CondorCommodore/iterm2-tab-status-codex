@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -130,6 +131,8 @@ def make_daemon(tmp_path) -> edge_daemon.EdgeDaemon:
     daemon.client = FakeCoordClient()
     daemon.dispatch_receipts = c2.ReceiptStore(tmp_path / "dispatch.jsonl")
     daemon.poke_receipts = c2.ReceiptStore(tmp_path / "poke.jsonl")
+    daemon.dispatch_inflight = set()
+    daemon.dispatch_guard = asyncio.Lock()
     return daemon
 
 
@@ -245,6 +248,89 @@ def test_failed_dispatch_releases_worker_reservation(monkeypatch, tmp_path):
         "release",
         "workspace:mikebook:c2-worker:worker-codex",
     )
+
+
+def test_dispatch_exception_releases_worker_reservation(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+
+    def fail_after_claim(**_kwargs):
+        raise RuntimeError("provider exploded")
+
+    monkeypatch.setattr(edge_daemon, "dispatch_registered_headless", fail_after_claim)
+    result = asyncio.run(
+        daemon.handle(
+            {
+                "protocol": "cos-c2-iterm-edge-v1",
+                "op": "dispatch",
+                "envelope": envelope(),
+            }
+        )
+    )
+
+    assert result["ok"] is False
+    assert "provider exploded" in result["error"]
+    assert (
+        "release",
+        "workspace:mikebook:c2-worker:worker-codex",
+    ) in daemon.client.events
+    assert result["receipt"]["observed_ack"] is False
+
+
+def test_invalid_envelope_is_rejected_before_worker_claim(tmp_path):
+    daemon = make_daemon(tmp_path)
+    invalid = envelope()
+    invalid["repo"] = "outside/manifest"
+
+    with pytest.raises(c2.ContractError, match="outside run manifest"):
+        asyncio.run(
+            daemon.handle(
+                {
+                    "protocol": "cos-c2-iterm-edge-v1",
+                    "op": "dispatch",
+                    "envelope": invalid,
+                }
+            )
+        )
+    assert not any(event[0] == "claim" for event in daemon.client.events)
+
+
+def test_concurrent_duplicate_does_not_poison_winning_receipt(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    started = threading.Event()
+    finish = threading.Event()
+
+    def blocked_dispatch(**kwargs):
+        started.set()
+        assert finish.wait(timeout=2)
+        receipt = {"idempotency_key": kwargs["envelope"].idempotency_key}
+        kwargs["receipts"].append(receipt)
+        return {"ok": True, "receipt": receipt}
+
+    monkeypatch.setattr(
+        edge_daemon, "dispatch_registered_headless", blocked_dispatch
+    )
+
+    async def scenario():
+        request = {
+            "protocol": "cos-c2-iterm-edge-v1",
+            "op": "dispatch",
+            "envelope": envelope(),
+        }
+        winner_task = asyncio.create_task(daemon.handle(request))
+        assert await asyncio.to_thread(started.wait, 1)
+        duplicate = await daemon.handle(request)
+        finish.set()
+        winner = await winner_task
+        return winner, duplicate
+
+    winner, duplicate = asyncio.run(scenario())
+
+    assert winner["ok"] is True
+    assert duplicate["ok"] is False
+    assert duplicate["in_flight"] is True
+    assert "receipt" not in duplicate
+    assert len(daemon.dispatch_receipts.records()) == 1
+    assert [event[0] for event in daemon.client.events].count("claim") == 1
 
 
 def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):

@@ -213,11 +213,20 @@ directory:
   sending input, writes `~/.claude/plans/fleet-reports/iterm-live-state.json`,
   appends `iterm-live-events.jsonl`, classifies readiness from prompt/screen
   state, and sets the `user.*` variables above for status bars/subtitles.
+- `scripts/cos_iterm_edge_daemon.py` is the authoritative C2 tab edge. It runs
+  inside iTerm2's Python API runtime and exposes a same-user mode-0600 Unix
+  socket at `~/.cache/cos-c2/iterm-edge.sock`. The daemon resolves the exact
+  registered iTerm session UUID, verifies the expected live coord-api lease
+  epoch immediately before injection, submits prompt + CR + LF through the
+  iTerm API, and returns an acknowledgment/receipt. Control Room and MCP
+  wrappers use this same adapter contract; AppleScript is fallback only.
 - `scripts/cos_iterm_readback.py` prints live iTerm2 session variables as JSON.
   Use it to prove the AutoLaunch daemon/overlay is loaded and setting variables.
-- `scripts/cos_tab_dispatch.py` sends one safe line to a target tab by TTY using
-  the iTerm2 API. By default it only accepts `/goal ...`, rejects Ctrl-C/Escape
-  and multi-line payloads, and appends only Enter/newline for submit.
+- `scripts/cos_tab_dispatch.py` validates complete registered-worker C2
+  envelopes. Authoritative dispatch uses the iTerm API edge, exact session UUID,
+  controller epoch fencing, idempotency, and append-only receipts. Legacy
+  TTY-only `/goal` dispatch remains available for compatibility but is not a C2
+  authority path.
 - `scripts/cos_dispatch_orchestrator.py` selects an eligible worker from the
   dashboard state and dispatches a validated `/goal ...` command. Use
   `--dry-run` outside iTerm2 first.
@@ -258,6 +267,105 @@ Run the fast dry-run harness before touching live tabs:
 ```bash
 python3 scripts/cos_dry_run_harness.py
 ```
+
+## Bootstrap C2 lifecycle
+
+Copy and fill the example manifest without storing credentials in it:
+
+```bash
+mkdir -p ~/.config/cos-c2
+cp config/run-manifest.example.json ~/.config/cos-c2/run-manifest.json
+```
+
+Install the watchdog and iTerm API scripts separately. Both remain inert until
+the operator explicitly arms the supervisor:
+
+```bash
+python3 scripts/cos_iterm_api_install.py
+bash launchd/install-cos-iterm-edge-launchd.sh \
+  --manifest ~/.config/cos-c2/run-manifest.json \
+  --state-dir ~/.local/state/cos-c2
+bash launchd/install-cos-bootstrap-watchdog-launchd.sh
+scripts/cosctl status
+scripts/cosctl arm
+scripts/cosctl run
+scripts/cosctl poke
+scripts/cosctl standby
+scripts/cosctl stop
+```
+
+The API installer removes the legacy edge daemon from iTerm AutoLaunch; only
+the observation daemon and overlay remain automatic iTerm scripts. The edge
+LaunchAgent pins the selected manifest, state directory, socket, and
+iTerm Python runtime. `KeepAlive` restarts the API transport after a crash with
+launchd throttling. An advisory lock tied to the socket rejects any second edge
+process before it can unlink or replace the live endpoint. The service does not
+dispatch or interpret terminal state by itself.
+The supervisor lease and per-worker reservation still fence every input action.
+
+`arm` is a deliberate unattended-work boundary; installation alone does not
+arm anything. The bootstrap lease is
+`workspace:mikebook:c2-supervisor` (180-second TTL, 60-second renewal), and a
+30-second tick wakes the registered COS session only for a refill, exception,
+recovery, or transition decision.
+
+The run manifest supports `tab`, `headless`, and `ab` for dispatch and recovery.
+`tab` uses the iTerm2 Python API edge. `headless` resumes the same Codex/Claude
+session UUID for one bounded turn and exits. `ab` selects deterministically and
+records comparable latency, completion, duplicate, recovery, provider-failure,
+and visible-reattachment metrics; neither transport is presumed superior.
+
+The launchd watchdog is a 60-second health/recovery tick. Its installed plist
+pins the selected manifest and state directory in `ProgramArguments` and writes
+both output streams to `<state-dir>/watchdog.log`. It remains inert without the
+state-local `ARMED` file. A fresh heartbeat is healthy without requiring model
+or coord-provider access. On a stale heartbeat it permits at most two
+epoch-fenced tab pokes, waits for the visible supervisor lease to expire before
+any headless trial, and accepts a headless zero exit only when a newer durable
+heartbeat proves `authority=true`, `ownership=headless`, and a controller
+epoch. Provider failures use bounded backoff, while every tick still performs
+local heartbeat evaluation and every stale/backoff tick still checks the live
+lease.
+
+While armed, the same tick also probes the edge socket with a two-second bound.
+Health includes the SHA-256 of the exact manifest bytes loaded by the edge; the
+watchdog compares it with the current on-disk manifest, so changing worker
+registration or authority bounds forces a fenced edge reload even when the
+human-readable `manifest_id` is unchanged. The edge performs the same comparison
+before every dispatch, poke, or visual action and rejects input immediately on
+drift; it never waits for the watchdog reload to fail closed.
+One failed probe records degraded health without restarting anything; two
+consecutive failures issue one scoped `launchctl kickstart -k` for
+`com.local.cos-iterm-edge` and append an edge-recovery receipt. A successful
+probe clears the failure counter, so a transient API hiccup cannot cause a
+restart. If the edge remains unhealthy after recovery, additional restarts use
+60/120/240/480/900-second exponential backoff while every 60-second probe still
+runs; the first healthy probe clears the backoff immediately.
+
+Do not run a live failure/A-B trial merely because the watchdog is armed. Safe
+preconditions are: an operator-approved failure injection, a preserved current
+manifest/state snapshot, confirmed coord lease/readback health, a verified
+tab-2-only target, no unrelated queued prompt, and an explicit rollback/visible
+reattachment plan. Installation or a healthy tick is not that authorization.
+
+Interactive runtime state is a model decision, not a prompt-specific rule.
+When terminal telemetry is blank, contradictory, or reports `needs_input`, C2
+captures the registered tab and binds its screenshot digest, target identity,
+timestamp, controller epoch, and existing worker-reservation epoch into a
+`VisualObservation`. The supervising LLM
+interprets that evidence and emits a bounded `VisualDecision` with its rationale.
+Only then may the edge adapter reverify both leases and execute the requested
+keypress or text through the `visual_action` operation. The adapter never
+infers what a dialog means and never maps a
+vendor string to an action. If visual capture or the supervising model is
+unavailable, the worker remains fenced at `needs_input` unless the run manifest
+contains a separately authorized fallback.
+
+After any visual action, capture again and require the LLM to confirm the
+intended transition. A process title, blank screen API, successful write call,
+or static `isProcessing` value is not acknowledgment. Headless completion also
+marks the visible tab stale until a screenshot proves reattachment or a fresh
+visible worker identity is registered.
 
 Run the non-mutating COS control-plane daemon once:
 

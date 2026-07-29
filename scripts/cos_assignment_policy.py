@@ -11,8 +11,17 @@ from typing import Any
 
 DEFAULT_POLICY = {
     "host_priority": ["forge", "aurora", "macbook", "local"],
-    "prefer_states": ["idle"],
-    "avoid_states": ["running", "attention", "unknown"],
+    "prefer_states": ["idle", "ready"],
+    "avoid_states": [
+        "reserved",
+        "running",
+        "needs_input",
+        "blocked",
+        "stale",
+        "lost",
+        "attention",
+        "unknown",
+    ],
     "role_field": "role",
 }
 
@@ -77,13 +86,15 @@ def choose_worker(
     target_host: str = "",
 ) -> Assignment | None:
     policy = dict(DEFAULT_POLICY) if policy is None else policy
+    eligible_states = set(policy.get("prefer_states") or ["idle", "ready"])
     candidates = [
         tab
         for tab in tabs
         if isinstance(tab, dict)
         and tab.get("tty")
         and _is_worker(tab)
-        and str(tab.get("state") or "unknown") not in {"attention"}
+        and str(tab.get("state") or "unknown") in eligible_states
+        and bool(tab.get("registered", True))
     ]
     if not candidates:
         return None

@@ -54,12 +54,17 @@ FAKE_PLUGIN="$DIR2/plugin_root"
 mkdir -p "$FAKE_PLUGIN/scripts"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/claude_tab_status.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_overlay.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_edge_daemon.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_readback.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_tab_dispatch.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_dispatch_orchestrator.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_assignment_policy.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_dashboard.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_report_parser.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/c2_contract.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/c2_coord_client.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/c2_visual_decision.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_edge_client.py"
 mkdir -p "$FAKE_PLUGIN/.claude-plugin"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN/.claude-plugin/plugin.json"
 
@@ -105,6 +110,11 @@ if [[ -f "$AUTOLAUNCH2/cos_iterm_overlay.py" ]]; then
 else
   fail "Overlay copy" "cos_iterm_overlay.py not found in $AUTOLAUNCH2"
 fi
+if [[ ! -e "$AUTOLAUNCH2/cos_iterm_edge_daemon.py" ]]; then
+  pass "cos_iterm_edge_daemon.py absent from AutoLaunch"
+else
+  fail "Edge daemon ownership" "legacy AutoLaunch edge remains in $AUTOLAUNCH2"
+fi
 if [[ -f "$DIR2/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
   pass "cos_iterm_readback.py present in Scripts"
 else
@@ -120,7 +130,7 @@ if [[ -f "$DIR2/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
 else
   fail "Orchestrator copy" "cos_dispatch_orchestrator.py not found in Scripts"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py cos_iterm_edge_daemon.py; do
   if [[ -f "$DIR2/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
     pass "$SUPPORT_NAME present in Scripts"
   else
@@ -166,6 +176,11 @@ if [[ -f "$DIR5B/iterm2_support/Scripts/AutoLaunch/cos_iterm_overlay.py" ]]; the
 else
   fail "Version mismatch" "overlay not re-deployed"
 fi
+if [[ ! -e "$DIR5B/iterm2_support/Scripts/AutoLaunch/cos_iterm_edge_daemon.py" ]]; then
+  pass "Legacy edge remains absent on version mismatch"
+else
+  fail "Edge daemon ownership" "legacy AutoLaunch edge was re-deployed"
+fi
 if [[ -f "$DIR5B/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
   pass "Readback re-deployed on version mismatch"
 else
@@ -181,7 +196,7 @@ if [[ -f "$DIR5B/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
 else
   fail "Version mismatch" "orchestrator not re-deployed"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py cos_iterm_edge_daemon.py; do
   if [[ -f "$DIR5B/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
     pass "$SUPPORT_NAME re-deployed on version mismatch"
   else
@@ -225,12 +240,17 @@ FAKE_PLUGIN7="$DIR7/plugin_root"
 mkdir -p "$FAKE_PLUGIN7/scripts" "$FAKE_PLUGIN7/.claude-plugin"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/claude_tab_status.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_overlay.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_edge_daemon.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_readback.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_tab_dispatch.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_dispatch_orchestrator.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_assignment_policy.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_dashboard.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_report_parser.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/c2_contract.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/c2_coord_client.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/c2_visual_decision.py"
+echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_edge_client.py"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN7/.claude-plugin/plugin.json"
 
 ITERM2_SUPPORT="$DIR7/iterm2_support" \

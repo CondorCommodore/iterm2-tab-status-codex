@@ -1,0 +1,52 @@
+{
+  "manifest_id": "macbook-c2-example-v1",
+  "controller": {
+    "controller_id": "bootstrap-cos",
+    "host": "mikebook",
+    "runtime": "codex",
+    "iterm_session_id": "replace-with-iterm-session-uuid",
+    "tty": "/dev/ttys001",
+    "cli_session_id": "replace-with-codex-or-claude-session-uuid",
+    "coord_session_id": "replace-with-coord-session-uuid",
+    "coord_agent_id": "mikebook_codex"
+  },
+  "workers": [
+    {
+      "worker_id": "macbook-codex-1",
+      "host": "mikebook",
+      "runtime": "codex",
+      "iterm_session_id": "replace-with-worker-iterm-session-uuid",
+      "tty": "/dev/ttys003",
+      "cli_session_id": "replace-with-worker-codex-session-uuid",
+      "coord_session_id": "replace-with-worker-coord-session-uuid",
+      "coord_agent_id": "mikebook_codex",
+      "capabilities": ["repo-build", "test", "pr-repair"],
+      "repositories": ["CondorCommodore/home-lab"],
+      "role": "worker"
+    }
+  ],
+  "plan_paths": [
+    "/Users/mikebook/code/workspace/docs/fleet-plans/MASTER_PLAN.md",
+    "/Users/mikebook/code/workspace/docs/fleet-plans/C2_SUPERVISOR_CONTRACT.md"
+  ],
+  "permitted_repositories": ["CondorCommodore/home-lab"],
+  "permitted_actions": ["inspect", "edit", "test", "commit", "push-branch", "open-pr", "repair-pr", "merge-policy-gated"],
+  "dispatch_transport": "ab",
+  "recovery_transport": "ab",
+  "ci_policy": {
+    "authority": "repository-configured",
+    "github_actions_is_not_assumed_authoritative": true
+  },
+  "merge_policy": {
+    "require_exact_head": true,
+    "require_independent_judge": true,
+    "invalidate_evidence_on_head_change": true
+  },
+  "hard_boundaries": [
+    "no live trading",
+    "no credential changes",
+    "no deployment or host activation",
+    "no SSH or remote-host mutation",
+    "no destructive cleanup"
+  ]
+}

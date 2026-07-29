@@ -13,6 +13,7 @@ import cos_iterm_readback as readback  # noqa: E402
 class FakeSession:
     def __init__(self, values):
         self.values = values
+        self.session_id = "iterm-session"
 
     async def async_get_variable(self, name):
         return self.values.get(name)
@@ -33,6 +34,7 @@ def test_session_snapshot_reads_cos_variables():
     assert result["user.cosRole"] == "worker"
     assert result["user.workerState"] == "running"
     assert result["user.workerGoal"] == ""
+    assert result["session.isProcessing"] == ""
 
 
 def test_session_snapshot_tolerates_variable_errors():

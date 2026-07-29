@@ -594,6 +594,36 @@ def test_edge_false_negative_then_model_ack_does_not_duplicate(tmp_path):
     watchdog.run_once(**kwargs, now_ts=500)
     waiting = watchdog.run_once(**kwargs, now_ts=501)
     assert waiting["action"] == "awaiting-action-ack"
+    ack = current_actions.acknowledge_actions(
+        actions_path=tmp_path / "current-actions.txt",
+        receipts_path=tmp_path / "action-receipts.jsonl",
+        manifest=load_manifest(manifest),
+        digest=actions.digest,
+        generation=actions.generation,
+        epoch=7,
+        ownership="visible",
+    )
+    current_actions.commit_action_ack(
+        ack_receipt=ack,
+        coord_response={"id": 43, "accepted": True},
+        progress_path=tmp_path / "action-progress.json",
+        receipts_path=tmp_path / "action-receipts.jsonl",
+    )
+    acknowledged = watchdog.run_once(**kwargs, now_ts=503)
+    assert acknowledged["action"] == "action-acknowledged"
+    assert len(seen) == 1
+
+
+def test_local_only_action_progress_cannot_acknowledge_wake(tmp_path):
+    manifest, actions = prepare_action_loop(tmp_path)
+    client = Client({"holder": "mikebook_codex", "epoch": 7})
+    kwargs = {
+        "manifest_path": manifest,
+        "state_dir": tmp_path,
+        "client": client,
+        "poke_fn": lambda **_call: {"ok": True, "injection_attempted": True},
+    }
+    watchdog.run_once(**kwargs, now_ts=500)
     (tmp_path / "action-progress.json").write_text(
         json.dumps(
             {
@@ -601,14 +631,16 @@ def test_edge_false_negative_then_model_ack_does_not_duplicate(tmp_path):
                 "action_digest": actions.digest,
                 "generation": actions.generation,
                 "controller_epoch": 7,
-                "recorded_ts": 502,
+                "coord_accepted_ts": 502,
+                "coord_message_id": 999,
             }
         ),
         encoding="utf-8",
     )
-    acknowledged = watchdog.run_once(**kwargs, now_ts=503)
-    assert acknowledged["action"] == "action-acknowledged"
-    assert len(seen) == 1
+
+    result = watchdog.run_once(**kwargs, now_ts=503)
+
+    assert result["action"] == "awaiting-action-ack"
 
 
 def test_pending_action_ack_fails_closed_after_epoch_loss(tmp_path):
@@ -682,6 +714,47 @@ def test_published_successor_checkpoint_waits_for_its_declared_deadline(tmp_path
         f"---\n{parsed.body}\n",
         encoding="utf-8",
     )
+    checkpoint = current_actions.checkpoint_actions(
+        source=source,
+        destination=tmp_path / "current-actions.txt",
+        manifest=m,
+        live_epoch=7,
+        receipts_path=tmp_path / "action-receipts.jsonl",
+    )
+    current_actions.record_coord_acceptance(
+        checkpoint_receipt=checkpoint,
+        coord_response={"id": 44, "accepted": True},
+        receipts_path=tmp_path / "action-receipts.jsonl",
+    )
+
+    result = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client({"holder": "mikebook_codex", "epoch": 7}),
+        now_ts=250,
+    )
+    assert result["action"] == "healthy"
+
+
+def test_local_only_checkpoint_receipt_remains_immediately_actionable(tmp_path):
+    manifest_path, first = prepare_action_loop(tmp_path)
+    m = load_manifest(manifest_path)
+    source = tmp_path / "next-actions.txt"
+    source.write_bytes(first.raw)
+    parsed = current_actions.parse_actions(source, manifest=m)
+    header = {
+        **parsed.header,
+        "generation": 2,
+        "previous_action_digest": first.digest,
+        "written_at": "1970-01-01T00:03:20Z",
+        "next_check_at": "1970-01-01T00:08:20Z",
+    }
+    source.write_text(
+        f"--- {current_actions.SCHEMA}\n"
+        f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{parsed.body}\n",
+        encoding="utf-8",
+    )
     current_actions.checkpoint_actions(
         source=source,
         destination=tmp_path / "current-actions.txt",
@@ -695,8 +768,11 @@ def test_published_successor_checkpoint_waits_for_its_declared_deadline(tmp_path
         state_dir=tmp_path,
         client=Client({"holder": "mikebook_codex", "epoch": 7}),
         now_ts=250,
+        poke_fn=lambda **_call: {"ok": True, "injection_attempted": True},
     )
-    assert result["action"] == "healthy"
+
+    assert result["action"] == "action-wake"
+    assert result["wake_reason"] == "current action generation has not been acknowledged"
 
 
 def test_recovery_hold_runs_one_headless_turn_then_waits_for_next_deadline(tmp_path):

@@ -93,6 +93,15 @@ def test_checkpoint_requires_monotonic_generation_and_digest_chain(tmp_path):
     )
     assert receipt["generation"] == 2
 
+    retry = actions.checkpoint_actions(
+        source=source,
+        destination=destination,
+        manifest=manifest(),
+        live_epoch=7,
+        receipts_path=tmp_path / "receipts.jsonl",
+    )
+    assert retry["duplicate"] is True
+    rewrite(source, next_check_at="1970-01-01T00:08:21Z")
     with pytest.raises(ContractError, match="generation must increase"):
         actions.checkpoint_actions(
             source=source,
@@ -148,7 +157,6 @@ def test_ack_must_match_exact_digest_generation_epoch_and_ownership(tmp_path):
     )
     kwargs = {
         "actions_path": path,
-        "progress_path": tmp_path / "progress.json",
         "receipts_path": tmp_path / "receipts.jsonl",
         "manifest": manifest(),
         "digest": current.digest,
@@ -172,7 +180,6 @@ def test_duplicate_ack_does_not_refresh_progress_timestamp(tmp_path):
     )
     kwargs = {
         "actions_path": path,
-        "progress_path": tmp_path / "progress.json",
         "receipts_path": tmp_path / "receipts.jsonl",
         "manifest": manifest(),
         "digest": current.digest,
@@ -181,11 +188,25 @@ def test_duplicate_ack_does_not_refresh_progress_timestamp(tmp_path):
         "ownership": "visible",
     }
     first = actions.acknowledge_actions(**kwargs)
+    progress_result = actions.commit_action_ack(
+        ack_receipt=first,
+        coord_response={"id": 42, "accepted": True},
+        progress_path=tmp_path / "progress.json",
+        receipts_path=tmp_path / "receipts.jsonl",
+    )
     progress = (tmp_path / "progress.json").read_bytes()
     duplicate = actions.acknowledge_actions(**kwargs)
+    duplicate_progress = actions.commit_action_ack(
+        ack_receipt=duplicate,
+        coord_response={"id": 42, "accepted": True},
+        progress_path=tmp_path / "progress.json",
+        receipts_path=tmp_path / "receipts.jsonl",
+    )
 
     assert duplicate["duplicate"] is True
     assert duplicate["recorded_ts"] == first["recorded_ts"]
+    assert duplicate_progress["duplicate"] is True
+    assert duplicate_progress["coord_accepted_ts"] == progress_result["coord_accepted_ts"]
     assert (tmp_path / "progress.json").read_bytes() == progress
 
 

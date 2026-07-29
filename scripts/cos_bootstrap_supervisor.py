@@ -39,6 +39,7 @@ from c2_coord_client import (
 from cos_current_actions import (
     acknowledge_actions,
     checkpoint_actions,
+    commit_action_ack,
     parse_actions,
     rebind_actions,
     record_coord_acceptance,
@@ -770,7 +771,6 @@ def main(argv: list[str] | None = None) -> int:
         client.verify_live_epoch(SUPERVISOR_RESOURCE, args.epoch)
         result = acknowledge_actions(
             actions_path=state_paths(args.state_dir)["actions"],
-            progress_path=state_paths(args.state_dir)["action_progress"],
             receipts_path=state_paths(args.state_dir)["action_receipts"],
             manifest=manifest,
             digest=args.digest,
@@ -778,7 +778,13 @@ def main(argv: list[str] | None = None) -> int:
             epoch=args.epoch,
             ownership=args.ownership,
         )
-        client.post_receipt(result)
+        coord_response = client.post_receipt(result)
+        result = commit_action_ack(
+            ack_receipt=result,
+            coord_response=coord_response,
+            progress_path=state_paths(args.state_dir)["action_progress"],
+            receipts_path=state_paths(args.state_dir)["action_receipts"],
+        )
         result = {"ok": True, **result}
     elif args.command == "finish-turn":
         if not args.digest:

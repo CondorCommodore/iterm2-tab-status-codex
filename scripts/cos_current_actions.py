@@ -303,11 +303,13 @@ def checkpoint_actions(
     previous = None
     if destination.exists():
         previous = parse_actions(destination, manifest=manifest)
-        if candidate.generation <= previous.generation:
+        exact_retry = candidate.digest == previous.digest
+        if candidate.generation <= previous.generation and not exact_retry:
             raise ContractError("current actions generation must increase")
-        if candidate.header["previous_action_digest"] != previous.digest:
+        if not exact_retry and candidate.header["previous_action_digest"] != previous.digest:
             raise ContractError("current actions previous_action_digest does not match")
-    _atomic_bytes(destination, candidate.raw)
+    if previous is None or candidate.digest != previous.digest:
+        _atomic_bytes(destination, candidate.raw)
     published = parse_actions(destination, manifest=manifest)
     receipt = {
         "idempotency_key": (
@@ -337,23 +339,24 @@ def record_coord_acceptance(
     receipts_path: Path,
 ) -> dict[str, Any]:
     """Cache proof that coord-api accepted the checkpoint audit message."""
-    checkpoint_key = str(checkpoint_receipt.get("idempotency_key") or "")
-    if checkpoint_receipt.get("kind") != "action-checkpoint" or not checkpoint_key:
-        raise ContractError("coord acceptance requires an action-checkpoint receipt")
+    source_key = str(checkpoint_receipt.get("idempotency_key") or "")
+    source_kind = str(checkpoint_receipt.get("kind") or "")
+    if source_kind not in {"action-checkpoint", "action-ack"} or not source_key:
+        raise ContractError("coord acceptance requires an action checkpoint or acknowledgment")
     message_id = coord_response.get("id")
     if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:
         raise ContractError("coord acceptance requires a server-owned message id")
     if coord_response.get("accepted") is not True:
         raise ContractError("coord acceptance requires verified server readback")
     receipt = {
-        "idempotency_key": f"{checkpoint_key}:coord-accepted",
-        "kind": "action-checkpoint-coord-accepted",
+        "idempotency_key": f"{source_key}:coord-accepted",
+        "kind": f"{source_kind}-coord-accepted",
         "recorded_at": _iso(),
         "recorded_ts": time.time(),
         "controller_epoch": checkpoint_receipt.get("controller_epoch"),
         "generation": checkpoint_receipt.get("generation"),
         "action_digest": checkpoint_receipt.get("action_digest"),
-        "checkpoint_idempotency_key": checkpoint_key,
+        "source_idempotency_key": source_key,
         "coord_message_id": message_id,
         "coord_response_digest": hashlib.sha256(
             json.dumps(coord_response, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -370,7 +373,6 @@ def record_coord_acceptance(
 def acknowledge_actions(
     *,
     actions_path: Path,
-    progress_path: Path,
     receipts_path: Path,
     manifest: RunManifest,
     digest: str,
@@ -405,9 +407,45 @@ def acknowledge_actions(
     for existing in store.records():
         if existing.get("idempotency_key") == receipt["idempotency_key"]:
             return {**existing, "duplicate": True}
-    store.append(receipt)
-    _atomic_json(progress_path, receipt)
     return receipt
+
+
+def commit_action_ack(
+    *,
+    ack_receipt: dict[str, Any],
+    coord_response: dict[str, Any],
+    progress_path: Path,
+    receipts_path: Path,
+) -> dict[str, Any]:
+    if ack_receipt.get("kind") != "action-ack":
+        raise ContractError("only an action acknowledgment can commit model progress")
+    acceptance = record_coord_acceptance(
+        checkpoint_receipt=ack_receipt,
+        coord_response=coord_response,
+        receipts_path=receipts_path,
+    )
+    store = ReceiptStore(receipts_path)
+    if not store.has_idempotency_key(str(ack_receipt["idempotency_key"])):
+        store.append(ack_receipt)
+    try:
+        existing_progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        existing_progress = {}
+    if (
+        isinstance(existing_progress, dict)
+        and existing_progress.get("idempotency_key") == ack_receipt["idempotency_key"]
+        and existing_progress.get("coord_message_id") == acceptance["coord_message_id"]
+        and isinstance(existing_progress.get("coord_accepted_ts"), (int, float))
+    ):
+        return {**existing_progress, "duplicate": True}
+    progress = {
+        **ack_receipt,
+        "coord_message_id": acceptance["coord_message_id"],
+        "coord_accepted_at": _iso(),
+        "coord_accepted_ts": time.time(),
+    }
+    _atomic_json(progress_path, progress)
+    return progress
 
 
 def action_wake_due(

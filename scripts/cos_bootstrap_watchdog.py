@@ -140,15 +140,76 @@ def _action_ack_matches(
     generation: int,
     epoch: int,
     after_ts: float,
+    client: CoordClient,
+    receipts_path: Path,
 ) -> bool:
-    return bool(
+    local_match = bool(
         progress.get("kind") == "action-ack"
         and progress.get("action_digest") == digest
         and progress.get("generation") == generation
         and progress.get("controller_epoch") == epoch
-        and isinstance(progress.get("recorded_ts"), (int, float))
-        and float(progress["recorded_ts"]) > after_ts
+        and isinstance(progress.get("coord_accepted_ts"), (int, float))
+        and float(progress["coord_accepted_ts"]) > after_ts
     )
+    if not local_match:
+        return False
+    ack_key = f"c2-action-ack:{epoch}:{generation}:{digest}"
+    ack_receipt = next(
+        (
+            receipt
+            for receipt in ReceiptStore(receipts_path).records()
+            if receipt.get("kind") == "action-ack" and receipt.get("idempotency_key") == ack_key
+        ),
+        None,
+    )
+    if ack_receipt is None:
+        return False
+    try:
+        client.verify_receipt_readback(ack_receipt, int(progress.get("coord_message_id") or 0))
+    except (CoordError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _checkpoint_has_durable_readback(
+    actions: Any,
+    *,
+    client: CoordClient,
+    receipts_path: Path,
+) -> bool:
+    records = ReceiptStore(receipts_path).records()
+    checkpoint = next(
+        (
+            receipt
+            for receipt in records
+            if receipt.get("kind") == "action-checkpoint"
+            and receipt.get("action_digest") == actions.digest
+            and receipt.get("generation") == actions.generation
+            and receipt.get("controller_epoch") == actions.controller_epoch
+        ),
+        None,
+    )
+    if checkpoint is None:
+        return False
+    acceptance = next(
+        (
+            receipt
+            for receipt in records
+            if receipt.get("kind") == "action-checkpoint-coord-accepted"
+            and receipt.get("source_idempotency_key") == checkpoint.get("idempotency_key")
+        ),
+        None,
+    )
+    if acceptance is None:
+        return False
+    try:
+        client.verify_receipt_readback(
+            checkpoint,
+            int(acceptance.get("coord_message_id") or 0),
+        )
+    except (CoordError, TypeError, ValueError):
+        return False
+    return True
 
 
 def _action_prompt(
@@ -355,6 +416,8 @@ def run_once(
             generation=int(action_pending_generation or 0),
             epoch=int(action_pending_epoch or 0),
             after_ts=float(action_pending_since),
+            client=client,
+            receipts_path=paths["action_receipts"],
         ):
             watchdog.update(
                 {
@@ -429,13 +492,24 @@ def run_once(
             actions, decision_digest=decision_digest, now_ts=now_ts
         )
         progress = _load_json(paths["action_progress"])
-        checkpoint_published = any(
-            receipt.get("kind") == "action-checkpoint"
+        checkpoint_published = False
+        acceptance_present = any(
+            receipt.get("kind") == "action-checkpoint-coord-accepted"
             and receipt.get("action_digest") == actions.digest
             and receipt.get("generation") == actions.generation
             and receipt.get("controller_epoch") == actions.controller_epoch
             for receipt in ReceiptStore(paths["action_receipts"]).records()
         )
+        if acceptance_present:
+            if client is None:
+                if client_factory is None:
+                    raise CoordError("coord client is required to verify checkpoint durability")
+                client = client_factory()
+            checkpoint_published = _checkpoint_has_durable_readback(
+                actions,
+                client=client,
+                receipts_path=paths["action_receipts"],
+            )
         never_acknowledged = not (
             progress.get("action_digest") == actions.digest
             and progress.get("generation") == actions.generation
@@ -515,6 +589,8 @@ def run_once(
                 generation=actions.generation,
                 epoch=actions.controller_epoch,
                 after_ts=float(action_pending_since),
+                client=client,
+                receipts_path=paths["action_receipts"],
             ):
                 watchdog.update(
                     {
@@ -729,7 +805,7 @@ def run_once(
                 for receipt in reversed(ReceiptStore(paths["action_receipts"]).records())
                 if receipt.get("kind") == "action-checkpoint-coord-accepted"
                 and checkpoint_receipt is not None
-                and receipt.get("checkpoint_idempotency_key")
+                and receipt.get("source_idempotency_key")
                 == checkpoint_receipt.get("idempotency_key")
                 and receipt.get("action_digest") == after_actions.digest
                 and receipt.get("controller_epoch") == after_actions.controller_epoch

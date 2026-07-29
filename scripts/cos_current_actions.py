@@ -407,6 +407,7 @@ def acknowledge_actions(
     for existing in store.records():
         if existing.get("idempotency_key") == receipt["idempotency_key"]:
             return {**existing, "duplicate": True}
+    store.append(receipt)
     return receipt
 
 

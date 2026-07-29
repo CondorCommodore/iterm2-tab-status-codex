@@ -58,9 +58,10 @@ class Config:
 class Client:
     config = Config()
 
-    def __init__(self, lease, *, durable_readback=True):
+    def __init__(self, lease, *, durable_readback=True, post_error=False):
         self.lease = lease
         self.durable_readback = durable_readback
+        self.post_error = post_error
 
     def get_resource(self, resource):
         return self.lease
@@ -69,6 +70,16 @@ class Client:
         if not self.durable_readback:
             raise CoordError("durable readback unavailable")
         return {"id": message_id, "accepted": True}
+
+    def verify_live_epoch(self, resource, epoch):
+        if not isinstance(self.lease, dict) or self.lease.get("epoch") != epoch:
+            raise CoordError("live epoch unavailable")
+        return self.lease
+
+    def post_receipt(self, receipt):
+        if self.post_error:
+            raise CoordError("coord receipt unavailable")
+        return {"id": 45, "accepted": True}
 
 
 class CountingClient(Client):
@@ -736,7 +747,7 @@ def test_published_successor_checkpoint_waits_for_its_declared_deadline(tmp_path
     assert result["action"] == "healthy"
 
 
-def test_local_only_checkpoint_receipt_remains_immediately_actionable(tmp_path):
+def test_watchdog_retries_local_only_checkpoint_receipt_to_durable_readback(tmp_path):
     manifest_path, first = prepare_action_loop(tmp_path)
     m = load_manifest(manifest_path)
     source = tmp_path / "next-actions.txt"
@@ -768,11 +779,13 @@ def test_local_only_checkpoint_receipt_remains_immediately_actionable(tmp_path):
         state_dir=tmp_path,
         client=Client({"holder": "mikebook_codex", "epoch": 7}),
         now_ts=250,
-        poke_fn=lambda **_call: {"ok": True, "injection_attempted": True},
     )
 
-    assert result["action"] == "action-wake"
-    assert result["wake_reason"] == "current action generation has not been acknowledged"
+    assert result["action"] == "healthy"
+    assert any(
+        receipt.get("kind") == "action-checkpoint-coord-accepted"
+        for receipt in current_actions.ReceiptStore(tmp_path / "action-receipts.jsonl").records()
+    )
 
 
 def test_recovery_hold_runs_one_headless_turn_then_waits_for_next_deadline(tmp_path):

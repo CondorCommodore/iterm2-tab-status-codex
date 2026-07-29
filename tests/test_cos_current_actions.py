@@ -210,6 +210,29 @@ def test_duplicate_ack_does_not_refresh_progress_timestamp(tmp_path):
     assert (tmp_path / "progress.json").read_bytes() == progress
 
 
+def test_ack_retry_reuses_identical_prepared_receipt_before_coord_acceptance(tmp_path):
+    path = tmp_path / "current-actions.txt"
+    current = actions.seed_actions(
+        manifest=manifest(), path=path, decision_digest="a" * 64, epoch=7, now_ts=100
+    )
+    kwargs = {
+        "actions_path": path,
+        "receipts_path": tmp_path / "receipts.jsonl",
+        "manifest": manifest(),
+        "digest": current.digest,
+        "generation": 1,
+        "epoch": 7,
+        "ownership": "visible",
+    }
+
+    first = actions.acknowledge_actions(**kwargs)
+    retry = actions.acknowledge_actions(**kwargs)
+
+    assert retry["duplicate"] is True
+    assert {key: value for key, value in retry.items() if key != "duplicate"} == first
+    assert not (tmp_path / "progress.json").exists()
+
+
 def test_deadline_and_changed_decision_are_independent_wake_signals(tmp_path):
     path = tmp_path / "current-actions.txt"
     current = actions.seed_actions(

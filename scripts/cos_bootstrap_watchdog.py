@@ -22,7 +22,7 @@ from cos_bootstrap_supervisor import (
     _load_json,
     state_paths,
 )
-from cos_current_actions import action_wake_due, parse_actions
+from cos_current_actions import action_wake_due, parse_actions, record_coord_acceptance
 from cos_iterm_edge_client import poke_controller, request_edge
 
 HEARTBEAT_STALE_SECONDS = 180
@@ -493,18 +493,42 @@ def run_once(
         )
         progress = _load_json(paths["action_progress"])
         checkpoint_published = False
+        action_receipts = ReceiptStore(paths["action_receipts"])
+        receipt_records = action_receipts.records()
+        local_checkpoint = next(
+            (
+                receipt
+                for receipt in receipt_records
+                if receipt.get("kind") == "action-checkpoint"
+                and receipt.get("action_digest") == actions.digest
+                and receipt.get("generation") == actions.generation
+                and receipt.get("controller_epoch") == actions.controller_epoch
+            ),
+            None,
+        )
         acceptance_present = any(
             receipt.get("kind") == "action-checkpoint-coord-accepted"
             and receipt.get("action_digest") == actions.digest
             and receipt.get("generation") == actions.generation
             and receipt.get("controller_epoch") == actions.controller_epoch
-            for receipt in ReceiptStore(paths["action_receipts"]).records()
+            for receipt in receipt_records
         )
-        if acceptance_present:
+        if local_checkpoint is not None:
             if client is None:
                 if client_factory is None:
                     raise CoordError("coord client is required to verify checkpoint durability")
                 client = client_factory()
+            if not acceptance_present:
+                try:
+                    client.verify_live_epoch(SUPERVISOR_RESOURCE, actions.controller_epoch)
+                    coord_response = client.post_receipt(local_checkpoint)
+                    record_coord_acceptance(
+                        checkpoint_receipt=local_checkpoint,
+                        coord_response=coord_response,
+                        receipts_path=paths["action_receipts"],
+                    )
+                except CoordError:
+                    pass
             checkpoint_published = _checkpoint_has_durable_readback(
                 actions,
                 client=client,

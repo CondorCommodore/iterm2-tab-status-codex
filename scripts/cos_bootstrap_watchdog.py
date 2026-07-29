@@ -140,6 +140,7 @@ def run_once(
             "edge_health_failures": 0,
         },
     )
+    edge_available = True
 
     if edge_health_fn is not None:
         try:
@@ -160,12 +161,13 @@ def run_once(
                 watchdog["last_edge_healthy_at"] = _iso(now_ts)
                 _atomic_json(watchdog_path, watchdog)
         else:
+            edge_available = False
             failures = int(watchdog.get("edge_health_failures") or 0) + 1
             watchdog["edge_health_failures"] = failures
             watchdog["last_edge_error"] = edge_error or "edge health returned ok=false"
             watchdog["last_edge_failure_at"] = _iso(now_ts)
             _atomic_json(watchdog_path, watchdog)
-            if failures < MAX_EDGE_HEALTH_FAILURES:
+            if failures < MAX_EDGE_HEALTH_FAILURES and age is not None and age < HEARTBEAT_STALE_SECONDS:
                 return {
                     "ok": True,
                     "armed": True,
@@ -177,6 +179,8 @@ def run_once(
             if (
                 isinstance(edge_backoff_until, (int, float))
                 and now_ts < edge_backoff_until
+                and age is not None
+                and age < HEARTBEAT_STALE_SECONDS
             ):
                 return {
                     "ok": True,
@@ -186,20 +190,23 @@ def run_once(
                     "backoff_seconds": int(edge_backoff_until - now_ts),
                     "error": watchdog["last_edge_error"],
                 }
-            if edge_restart_fn is None:
+            if edge_restart_fn is None and age is not None and age < HEARTBEAT_STALE_SECONDS:
                 return {
                     "ok": False,
                     "armed": True,
                     "action": "edge-restart-unavailable",
                     "edge_health_failures": failures,
                 }
-            try:
-                restart_result = edge_restart_fn()
-            except Exception as exc:
-                restart_result = {
-                    "ok": False,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
+            if edge_restart_fn is None:
+                restart_result = {"ok": False, "error": "edge restart unavailable"}
+            else:
+                try:
+                    restart_result = edge_restart_fn()
+                except Exception as exc:
+                    restart_result = {
+                        "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
             restart_ok = bool(restart_result.get("ok"))
             restart_attempts = int(watchdog.get("edge_restart_attempts") or 0) + 1
             restart_backoff = min(
@@ -226,12 +233,13 @@ def run_once(
             watchdog["edge_restart_backoff_until"] = now_ts + restart_backoff
             watchdog["last_edge_restart_at"] = _iso(now_ts)
             _atomic_json(watchdog_path, watchdog)
-            return {
-                "ok": restart_ok,
-                "armed": True,
-                "action": "edge-restarted" if restart_ok else "edge-restart-failed",
-                "receipt": receipt,
-            }
+            if age is not None and age < HEARTBEAT_STALE_SECONDS:
+                return {
+                    "ok": restart_ok,
+                    "armed": True,
+                    "action": "edge-restarted" if restart_ok else "edge-restart-failed",
+                    "receipt": receipt,
+                }
 
     pending_since = watchdog.get("pending_since")
     if isinstance(pending_since, (int, float)) and isinstance(
@@ -288,7 +296,7 @@ def run_once(
             "live_epoch": epoch,
         }
 
-    use_tab = primary == "tab" and tab_pokes < MAX_TAB_POKES
+    use_tab = edge_available and primary == "tab" and tab_pokes < MAX_TAB_POKES
     if use_tab:
         if not isinstance(epoch, int) or holder != client.config.principal_id:
             return {

@@ -269,6 +269,9 @@ def test_persistent_edge_restart_backoff_is_exponential_capped_and_health_reset(
     observed = []
 
     for _ in range(6):
+        (tmp_path / "supervisor-heartbeat.json").write_text(
+            json.dumps({"recorded_ts": now_ts - 10}), encoding="utf-8"
+        )
         degraded = watchdog.run_once(
             manifest_path=manifest,
             state_dir=tmp_path,
@@ -307,6 +310,22 @@ def test_persistent_edge_restart_backoff_is_exponential_capped_and_health_reset(
     state = json.loads((tmp_path / "watchdog-state.json").read_text())
     assert state["edge_restart_attempts"] == 0
     assert state["edge_restart_backoff_until"] is None
+
+
+def test_stale_heartbeat_checks_lease_even_when_edge_is_unhealthy(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest, recovery="tab")
+    arm_stale(tmp_path)
+    result = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client({"holder": "mikebook_codex", "epoch": 7}),
+        edge_health_fn=lambda: {"ok": False, "error": "edge unavailable"},
+        edge_restart_fn=lambda: {"ok": False, "error": "restart failed"},
+        now_ts=500,
+    )
+    assert result["action"] == "awaiting-visible-lease-expiry-for-headless-trial"
+    assert result["live_epoch"] == 7
 
 
 def test_edge_backoff_keeps_probing_without_restarting(tmp_path):

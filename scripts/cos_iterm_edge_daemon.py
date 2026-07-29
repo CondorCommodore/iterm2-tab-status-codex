@@ -275,22 +275,30 @@ class EdgeDaemon:
                 return {"ok": False, "error": "idempotency_key is required"}
             if self.poke_receipts.has_idempotency_key(key):
                 return {"ok": False, "error": f"duplicate poke idempotency key: {key}"}
-            result = await send_controller_poke(
-                self.connection,
-                manifest=self.manifest,
-                text=str(request.get("text") or ""),
-                controller_epoch=epoch,
-                idempotency_key=key,
-                verify_epoch=self.client.verify_live_epoch,
-            )
-            if result.get("ok"):
-                receipt = {**result, "receipt_version": 1}
-                self.poke_receipts.append(receipt)
-                try:
-                    await asyncio.to_thread(self.client.post_receipt, receipt)
-                except Exception as exc:
-                    result["coord_audit_error"] = str(exc)
-            return result
+            async with self.dispatch_guard:
+                if key in self.dispatch_inflight:
+                    return {"ok": False, "error": f"poke already in flight: {key}", "in_flight": True}
+                self.dispatch_inflight.add(key)
+            try:
+                result = await send_controller_poke(
+                    self.connection,
+                    manifest=self.manifest,
+                    text=str(request.get("text") or ""),
+                    controller_epoch=epoch,
+                    idempotency_key=key,
+                    verify_epoch=self.client.verify_live_epoch,
+                )
+                if result.get("ok"):
+                    receipt = {**result, "receipt_version": 1}
+                    self.poke_receipts.append(receipt)
+                    try:
+                        await asyncio.to_thread(self.client.post_receipt, receipt)
+                    except Exception as exc:
+                        result["coord_audit_error"] = str(exc)
+                return result
+            finally:
+                async with self.dispatch_guard:
+                    self.dispatch_inflight.discard(key)
         if operation == "visual_action":
             raw_observation = request.get("observation")
             raw_decision = request.get("decision")

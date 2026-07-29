@@ -391,3 +391,34 @@ def test_concurrent_duplicate_visual_action_only_injects_once(monkeypatch, tmp_p
     assert duplicate["ok"] is False
     assert duplicate["in_flight"] is True
     assert calls == 1
+
+
+def test_concurrent_duplicate_poke_only_injects_once(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def fake_poke(_connection, **kwargs):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return {"ok": True, "idempotency_key": kwargs["idempotency_key"]}
+
+    monkeypatch.setattr(edge_daemon, "send_controller_poke", fake_poke)
+    request = {"protocol": "cos-c2-iterm-edge-v1", "op": "poke",
+               "controller_epoch": 7, "idempotency_key": "poke-once", "text": "/goal continue"}
+
+    async def exercise():
+        first = asyncio.create_task(daemon.handle(request))
+        await started.wait()
+        duplicate = await daemon.handle(request)
+        release.set()
+        return await first, duplicate
+
+    first, duplicate = asyncio.run(exercise())
+    assert first["ok"] is True
+    assert duplicate["ok"] is False
+    assert duplicate["in_flight"] is True
+    assert calls == 1

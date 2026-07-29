@@ -607,7 +607,11 @@ async def execute_visual_decision(
         "post_visual_verification_required": True,
     }
     receipts.append(receipt)
-    return {"ok": True, "receipt": receipt}
+    return {
+        "ok": observed_ack,
+        "receipt": receipt,
+        **({} if observed_ack else {"error": "visual action was not acknowledged"}),
+    }
 
 
 def headless_command(worker: WorkerRegistration, prompt: str) -> list[str]:

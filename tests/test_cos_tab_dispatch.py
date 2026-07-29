@@ -297,6 +297,22 @@ def test_visual_decision_requires_controller_and_worker_epochs(monkeypatch, tmp_
         ("workspace:mikebook:c2-supervisor", 7),
         ("workspace:mikebook:c2-worker:worker", 13),
     ]
+
+
+def test_unacknowledged_visual_decision_fails_closed(monkeypatch, tmp_path):
+    target = FakeSession(
+        "/dev/ttys003", runtime="codex", job="codex", session_id="iterm-worker",
+        cli_session_id="cli-worker", coord_session_id="coord-worker",
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _visual_observation()
+    result = asyncio.run(dispatch.execute_visual_decision(
+        object(), manifest=_manifest(), observation=observation,
+        decision=_visual_decision(observation), verify_epoch=lambda *_args: None,
+        receipts=ReceiptStore(tmp_path / "visual-receipts.jsonl"), ack_attempts=1,
+    ))
+    assert result["ok"] is False
+    assert result["receipt"]["observed_ack"] is False
     assert target.sent == ["\r"]
     assert result["receipt"]["post_visual_verification_required"] is True
 

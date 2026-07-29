@@ -77,3 +77,27 @@ def test_dispatch_client_timeout_covers_bounded_headless_turn(monkeypatch):
     monkeypatch.setattr(edge, "request_edge", fake_request)
     edge.dispatch_envelope({"assignment_id": "a-1"})
     assert seen["timeout_seconds"] > 1800
+
+
+def test_request_edge_honors_environment_socket_override(monkeypatch, tmp_path):
+    custom_socket = tmp_path / "custom-edge.sock"
+    monkeypatch.setenv("COS_C2_EDGE_SOCKET", str(custom_socket))
+
+    class FakeSocket:
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, path):
+            assert path == str(custom_socket)
+
+        def sendall(self, _payload):
+            pass
+
+        def recv(self, _size):
+            return b'{"ok":true}\n'
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(edge.socket, "socket", lambda *_args: FakeSocket())
+    assert edge.request_edge({"op": "health"}) == {"ok": True}

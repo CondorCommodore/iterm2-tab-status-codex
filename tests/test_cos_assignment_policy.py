@@ -34,6 +34,13 @@ def test_choose_worker_avoids_attention_tabs():
     assert assignment.tty == "/dev/ttys002"
 
 
+def test_choose_worker_accepts_prompt_ready_state():
+    assignment = policy.choose_worker([{"tty": "/dev/ttys002", "state": "ready", "role": "worker"}])
+
+    assert assignment is not None
+    assert assignment.tty == "/dev/ttys002"
+
+
 def test_choose_worker_can_bias_target_host():
     assignment = policy.choose_worker(
         [

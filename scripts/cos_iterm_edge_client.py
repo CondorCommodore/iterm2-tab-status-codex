@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 from pathlib import Path
 from typing import Any
@@ -16,12 +17,18 @@ class EdgeClientError(RuntimeError):
     pass
 
 
+def configured_socket_path() -> Path:
+    """Resolve the edge socket at call time so launchd/client overrides agree."""
+    return Path(os.environ.get("COS_C2_EDGE_SOCKET", str(DEFAULT_SOCKET_PATH))).expanduser()
+
+
 def request_edge(
     request: dict[str, Any],
     *,
-    socket_path: Path = DEFAULT_SOCKET_PATH,
+    socket_path: Path | None = None,
     timeout_seconds: float = 1800.0,
 ) -> dict[str, Any]:
+    socket_path = configured_socket_path() if socket_path is None else socket_path
     payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
     if len(payload) > MAX_RESPONSE_BYTES:
         raise EdgeClientError("edge request exceeds size limit")
@@ -60,7 +67,7 @@ def execute_visual_action(
     observation: dict[str, Any],
     decision: dict[str, Any],
     *,
-    socket_path: Path = DEFAULT_SOCKET_PATH,
+    socket_path: Path | None = None,
 ) -> dict[str, Any]:
     return request_edge(
         {
@@ -76,7 +83,7 @@ def execute_visual_action(
 def dispatch_envelope(
     envelope: dict[str, Any],
     *,
-    socket_path: Path = DEFAULT_SOCKET_PATH,
+    socket_path: Path | None = None,
     timeout_seconds: float = 1810.0,
 ) -> dict[str, Any]:
     """Allow the daemon's 1800-second bounded headless turn plus framing slack."""
@@ -92,7 +99,7 @@ def poke_controller(
     text: str,
     controller_epoch: int,
     idempotency_key: str,
-    socket_path: Path = DEFAULT_SOCKET_PATH,
+    socket_path: Path | None = None,
 ) -> dict[str, Any]:
     return request_edge(
         {

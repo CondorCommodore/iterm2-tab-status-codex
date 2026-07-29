@@ -11,7 +11,7 @@ from typing import Any
 
 DEFAULT_POLICY = {
     "host_priority": ["forge", "aurora", "macbook", "local"],
-    "prefer_states": ["idle"],
+    "prefer_states": ["idle", "ready"],
     "avoid_states": [
         "reserved",
         "running",
@@ -86,7 +86,7 @@ def choose_worker(
     target_host: str = "",
 ) -> Assignment | None:
     policy = dict(DEFAULT_POLICY) if policy is None else policy
-    eligible_states = set(policy.get("prefer_states") or ["idle"])
+    eligible_states = set(policy.get("prefer_states") or ["idle", "ready"])
     candidates = [
         tab
         for tab in tabs

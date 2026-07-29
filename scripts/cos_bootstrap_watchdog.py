@@ -22,8 +22,8 @@ from cos_bootstrap_supervisor import (
     _load_json,
     state_paths,
 )
-from cos_iterm_edge_client import poke_controller, request_edge
 from cos_current_actions import action_wake_due, parse_actions
+from cos_iterm_edge_client import poke_controller, request_edge
 
 HEARTBEAT_STALE_SECONDS = 180
 MAX_TAB_POKES = 2

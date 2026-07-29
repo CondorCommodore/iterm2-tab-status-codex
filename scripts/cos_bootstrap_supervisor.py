@@ -36,7 +36,6 @@ from c2_coord_client import (
     LeaseHandle,
     LeaseLost,
 )
-from cos_iterm_edge_client import poke_controller
 from cos_current_actions import (
     acknowledge_actions,
     checkpoint_actions,
@@ -45,6 +44,7 @@ from cos_current_actions import (
     rebind_actions,
     seed_actions,
 )
+from cos_iterm_edge_client import poke_controller
 
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"

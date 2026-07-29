@@ -340,6 +340,7 @@ def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):
         assert kwargs["observation"].worker_epoch == 13
         assert kwargs["decision"].decided_by == "llm:test-supervisor"
         receipt = {"idempotency_key": kwargs["decision"].idempotency_key}
+        kwargs["receipts"].append(receipt)
         return {"ok": True, "receipt": receipt}
 
     monkeypatch.setattr(edge_daemon, "execute_visual_decision", fake_execute)
@@ -356,6 +357,15 @@ def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):
 
     assert result["ok"] is True
     assert daemon.client.events[-1] == ("post", result["receipt"])
+
+    duplicate = asyncio.run(
+        daemon.handle(
+            {"protocol": "cos-c2-iterm-edge-v1", "op": "visual_action",
+             "observation": visual_observation(), "decision": visual_decision()}
+        )
+    )
+    assert duplicate["ok"] is False
+    assert "duplicate visual action" in duplicate["error"]
 
 
 def test_concurrent_duplicate_visual_action_only_injects_once(monkeypatch, tmp_path):

@@ -309,6 +309,11 @@ class EdgeDaemon:
             observation = VisualObservation.from_dict(raw_observation)
             decision = VisualDecision.from_dict(raw_decision)
             async with self.dispatch_guard:
+                if self.dispatch_receipts.has_idempotency_key(decision.idempotency_key):
+                    return {
+                        "ok": False,
+                        "error": f"duplicate visual action idempotency key: {decision.idempotency_key}",
+                    }
                 if decision.idempotency_key in self.dispatch_inflight:
                     return {
                         "ok": False,

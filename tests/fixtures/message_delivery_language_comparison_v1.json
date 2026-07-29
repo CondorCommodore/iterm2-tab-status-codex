@@ -1,0 +1,37 @@
+{
+  "schema": "cos.message-language-comparison.v1",
+  "instructions": "For each anonymized label set, choose the label that best matches the delivery behavior. One set is a historical reference vocabulary used only to compare comprehension; it is not proposed product terminology. Do not judge wording preference until every scenario is answered.",
+  "candidates": [
+    {
+      "candidate_id": "A",
+      "labels": ["Normal", "Elevated", "Urgent", "Critical"]
+    },
+    {
+      "candidate_id": "B",
+      "labels": ["Routine", "Priority", "Immediate", "Flash"],
+      "experimental_reference_only": true
+    }
+  ],
+  "questions": [
+    {
+      "question_id": "baseline-hold",
+      "scenario": "Informational context can wait for the normal inbox cadence and must not interrupt active work.",
+      "expected_rank": 0
+    },
+    {
+      "question_id": "idle-ordering",
+      "scenario": "The message should be shown before baseline context when the worker next becomes idle, but it must not steer or interrupt running work.",
+      "expected_rank": 1
+    },
+    {
+      "question_id": "bounded-steer",
+      "scenario": "Time-sensitive input may request one graceful steering transition while work is running, without an immediate hard interruption.",
+      "expected_rank": 2
+    },
+    {
+      "question_id": "safety-interrupt",
+      "scenario": "An immediate safety or authority conflict requires the shortest fenced interruption path and operator-visible escalation on failure.",
+      "expected_rank": 3
+    }
+  ]
+}

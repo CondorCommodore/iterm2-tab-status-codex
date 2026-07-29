@@ -286,10 +286,15 @@ def run_tick(
     previous = _load_json(paths["decision"])
     decision["decision_digest"] = digest
     decision["controller_epoch"] = handle.epoch
+    decision["wake_delivered"] = False
     _atomic_json(paths["decision"], decision)
     poked = False
     poke_result: dict[str, Any] | None = None
-    if wake and decision["wake_required"] and previous.get("decision_digest") != digest:
+    already_delivered = (
+        previous.get("decision_digest") == digest
+        and previous.get("wake_delivered") is True
+    )
+    if wake and decision["wake_required"] and not already_delivered:
         prompt = (
             "/goal C2_WAKE decision="
             f"{paths['decision']} epoch={handle.epoch}. Read every manifest plan path and the "
@@ -304,6 +309,8 @@ def run_tick(
         )
         if poke_result.get("ok"):
             poked = True
+            decision["wake_delivered"] = True
+            _atomic_json(paths["decision"], decision)
     heartbeat = {
         "recorded_at": _iso(),
         "recorded_ts": time.time(),
@@ -330,6 +337,12 @@ def arm(
             )
     paths = state_paths(state_dir)
     paths["armed"].parent.mkdir(parents=True, exist_ok=True)
+    for stale_path in (
+        paths["heartbeat"],
+        paths["decision"],
+        state_dir / "watchdog-state.json",
+    ):
+        stale_path.unlink(missing_ok=True)
     paths["armed"].write_text(f"manifest_id={manifest.manifest_id}\n", encoding="utf-8")
     os.chmod(paths["armed"], 0o600)
     state = {

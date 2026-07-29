@@ -40,8 +40,8 @@ from cos_current_actions import (
     acknowledge_actions,
     checkpoint_actions,
     parse_actions,
-    record_coord_acceptance,
     rebind_actions,
+    record_coord_acceptance,
     seed_actions,
 )
 from cos_iterm_edge_client import poke_controller

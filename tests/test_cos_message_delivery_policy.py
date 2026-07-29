@@ -369,6 +369,23 @@ def test_same_idempotency_key_with_different_payload_is_rejected():
     )
 
 
+def test_same_idempotency_key_with_changed_time_conflicts_without_poisoning_replay():
+    value = fixture()
+    original = copy.deepcopy(value["events"][0])
+    changed_time = copy.deepcopy(original)
+    changed_time["recorded_at"] = "2026-07-29T12:01:30Z"
+    exact_replay = copy.deepcopy(original)
+    value["events"] = [original, changed_time, exact_replay]
+
+    result = project(value)
+
+    assert result["receipt_projection"] == [original]
+    assert result["state"]["4"]["presented"] is True
+    assert [row["kind"] for row in result["violations"]] == [
+        "receipt_idempotency_collision"
+    ]
+
+
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [
@@ -386,6 +403,116 @@ def test_malformed_or_empty_response_does_not_discharge_obligation(field, replac
     obligation = next(row for row in result["response_due"] if row["message_id"] == 3)
     assert obligation["response_due"] is True
     assert obligation["response_message_id"] is None
+
+
+def test_response_created_before_original_does_not_discharge_obligation():
+    value = fixture()
+    response = next(row for row in value["messages"] if row["id"] == 24)
+    response["created_at"] = "2026-07-29T12:00:02Z"
+
+    result = project(value)
+    obligation = next(row for row in result["response_due"] if row["message_id"] == 3)
+
+    assert obligation["response_due"] is True
+    assert obligation["response_message_id"] is None
+
+
+def test_agent_scoped_response_requires_verified_producing_session():
+    value = fixture()
+    response = next(row for row in value["messages"] if row["id"] == 24)
+    response["from_session_id"] = "unverified-worker-session"
+
+    result = project(value)
+    obligation = next(row for row in result["response_due"] if row["message_id"] == 3)
+
+    assert obligation["response_due"] is True
+    assert obligation["response_message_id"] is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"response_disposition": None},
+        {"response_disposition": "deferred"},
+        {"response_references": {}},
+        {"response_references": {"task_id": "T-wrong", "result_id": "R-003"}},
+    ],
+)
+def test_explicit_response_disposition_and_references_fail_closed(mutation):
+    value = fixture()
+    response_policy = next(row for row in value["policies"] if row["message_id"] == 3)
+    response_policy.update(
+        {
+            "allowed_response_dispositions": ["completed", "blocked"],
+            "required_response_references": {
+                "task_id": "T-003",
+                "result_id": "R-003",
+            },
+        }
+    )
+    response = next(row for row in value["messages"] if row["id"] == 24)
+    response.update(
+        {
+            "response_disposition": "completed",
+            "response_references": {"task_id": "T-003", "result_id": "R-003"},
+        }
+    )
+    response.update(mutation)
+
+    result = project(value)
+    obligation = next(row for row in result["response_due"] if row["message_id"] == 3)
+
+    assert obligation["response_due"] is True
+    assert obligation["response_message_id"] is None
+
+
+def test_explicit_response_disposition_and_references_accept_exact_match():
+    value = fixture()
+    response_policy = next(row for row in value["policies"] if row["message_id"] == 3)
+    response_policy.update(
+        {
+            "allowed_response_dispositions": ["completed", "blocked"],
+            "required_response_references": {
+                "task_id": "T-003",
+                "result_id": "R-003",
+            },
+        }
+    )
+    response = next(row for row in value["messages"] if row["id"] == 24)
+    response.update(
+        {
+            "response_disposition": "completed",
+            "response_references": {"task_id": "T-003", "result_id": "R-003"},
+        }
+    )
+
+    result = project(value)
+    obligation = next(row for row in result["response_due"] if row["message_id"] == 3)
+
+    assert obligation["response_due"] is False
+    assert obligation["response_message_id"] == 24
+
+
+@pytest.mark.parametrize(
+    "policy_update",
+    [
+        {"allowed_response_dispositions": "completed"},
+        {"allowed_response_dispositions": ["completed", "completed"]},
+        {"required_response_references": []},
+        {"required_response_references": {"": "R-003"}},
+        {
+            "requires_response": False,
+            "allowed_response_dispositions": ["completed"],
+        },
+    ],
+)
+def test_invalid_explicit_response_policy_is_rejected(policy_update):
+    value = fixture()
+    response_policy = next(row for row in value["policies"] if row["message_id"] == 3)
+    response_policy.update(policy_update)
+
+    with pytest.raises(policy.DeliveryPolicyError):
+        project(value)
 
 
 def test_reply_to_superseded_predecessor_does_not_close_replacement():
@@ -744,7 +871,7 @@ def test_fixture_has_stable_cross_tier_identity():
     value = fixture()
     assert value["schema"] == "cos.message-delivery-shadow.fixture.v1"
     assert policy.content_digest(value) == (
-        "765b17bc8d139949b66f58b2a3c53c6e1d9e890df0ec5b428ff3d1f10c314fb2"
+        "639d66f9363e1211d876ab4862e104c06692309cceaed3985573aef5f7097a6f"
     )
 
 

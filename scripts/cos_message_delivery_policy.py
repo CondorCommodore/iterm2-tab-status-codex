@@ -186,10 +186,37 @@ def _policy_map(
         urgency = str(raw.get("urgency") or "Normal")
         if urgency not in URGENCY_ORDER:
             raise DeliveryPolicyError(f"unsupported neutral urgency: {urgency}")
+        allowed_dispositions = raw.get("allowed_response_dispositions", [])
+        if (
+            not isinstance(allowed_dispositions, list)
+            or any(not isinstance(value, str) or not value.strip() for value in allowed_dispositions)
+            or len(set(allowed_dispositions)) != len(allowed_dispositions)
+        ):
+            raise DeliveryPolicyError(
+                "allowed_response_dispositions must be a list of unique non-empty strings"
+            )
+        required_references = raw.get("required_response_references", {})
+        if not isinstance(required_references, Mapping) or any(
+            not isinstance(name, str)
+            or not name.strip()
+            or value is None
+            or (isinstance(value, str) and not value.strip())
+            for name, value in required_references.items()
+        ):
+            raise DeliveryPolicyError(
+                "required_response_references must map non-empty names to expected values"
+            )
+        requires_response = bool(raw.get("requires_response", False))
+        if (allowed_dispositions or required_references) and not requires_response:
+            raise DeliveryPolicyError(
+                "response constraints require requires_response=true"
+            )
         result[message_id] = {
             "message_id": message_id,
             "urgency": urgency,
-            "requires_response": bool(raw.get("requires_response", False)),
+            "requires_response": requires_response,
+            "allowed_response_dispositions": list(allowed_dispositions),
+            "required_response_references": dict(required_references),
             "supersedes_message_id": raw.get("supersedes_message_id"),
             "authorized_by": raw.get("authorized_by"),
         }
@@ -200,6 +227,8 @@ def _policy_map(
                 "message_id": message_id,
                 "urgency": "Normal",
                 "requires_response": False,
+                "allowed_response_dispositions": [],
+                "required_response_references": {},
                 "supersedes_message_id": None,
                 "authorized_by": None,
             },
@@ -297,24 +326,45 @@ def _validate_supersession(
 
 
 def _valid_response(
-    original: dict[str, Any], response: dict[str, Any], recipient_agent: str
+    original: dict[str, Any],
+    response: dict[str, Any],
+    policy: dict[str, Any],
+    recipient_agent: str,
+    verified_actor_sessions: Mapping[str, set[str]],
 ) -> bool:
     exact_session = str(original.get("to_session_id") or "")
+    producing_session = str(response.get("from_session_id") or "")
+    response_references = response.get("response_references")
+    required_references = policy["required_response_references"]
+    references_match = isinstance(response_references, Mapping) and all(
+        response_references.get(name) == expected
+        for name, expected in required_references.items()
+    )
+    if not required_references:
+        references_match = True
+    allowed_dispositions = policy["allowed_response_dispositions"]
     return bool(
         response.get("reply_to") == original.get("id")
         and response.get("correlation_id")
         and response.get("correlation_id") == original.get("correlation_id")
         and response.get("from_agent") == recipient_agent
         and str(response.get("content") or "").strip()
+        and _timestamp(response.get("created_at"), "message.created_at")
+        >= _timestamp(original.get("created_at"), "message.created_at")
+        and producing_session in verified_actor_sessions.get(recipient_agent, set())
+        and (not exact_session or producing_session == exact_session)
         and (
-            not exact_session
-            or str(response.get("from_session_id") or "") == exact_session
+            not allowed_dispositions
+            or response.get("response_disposition") in allowed_dispositions
         )
+        and references_match
     )
 
 
 def _apply_responses(
-    states: dict[int, dict[str, Any]], recipient_agent: str
+    states: dict[int, dict[str, Any]],
+    recipient_agent: str,
+    verified_actor_sessions: Mapping[str, set[str]],
 ) -> None:
     responses = [state["message"] for state in states.values() if state["message"].get("reply_to")]
     responses.sort(
@@ -327,7 +377,13 @@ def _apply_responses(
         if not state["policy"]["requires_response"]:
             continue
         for response in responses:
-            if _valid_response(state["message"], response, recipient_agent):
+            if _valid_response(
+                state["message"],
+                response,
+                state["policy"],
+                recipient_agent,
+                verified_actor_sessions,
+            ):
                 state["response_message_id"] = response["id"]
                 state["response_at"] = _timestamp(response["created_at"], "message.created_at")
                 break
@@ -353,9 +409,7 @@ def _apply_events(
         if not key:
             violations.append({"kind": "receipt_missing_idempotency_key"})
             continue
-        event_digest = content_digest(
-            {name: value for name, value in event.items() if name != "recorded_at"}
-        )
+        event_digest = content_digest(event)
         if key in seen:
             if seen[key] != event_digest:
                 violations.append({"kind": "receipt_idempotency_collision", "key": key})
@@ -588,7 +642,7 @@ def project_delivery(
     }
     violations: list[dict[str, Any]] = []
     _validate_supersession(states, event_rows, violations)
-    _apply_responses(states, recipient_agent)
+    _apply_responses(states, recipient_agent, verified_actor_session_sets)
     accepted_receipts = _apply_events(
         states,
         event_rows,

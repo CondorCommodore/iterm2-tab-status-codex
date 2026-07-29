@@ -366,11 +366,18 @@ closes only when the delivery hub validates a substantive numbered reply with:
 - `reply_to` equal to the original message ID;
 - matching `correlation_id` (or a server-derived one);
 - an authorized sender equal to the recipient obligation;
+- `created_at` equal to or later than the original message creation time;
+- an authenticated producing coord session enrolled to the recipient for
+  agent-scoped traffic;
 - for exact-session traffic, an authenticated producing coord session equal to
   the active delivery binding;
-- a valid terminal disposition such as `completed`, `declined`, `blocked`, or
-  `superseded`; and
-- required task/result references where the authoritative message demands them.
+- a disposition allowed by the message's explicit shadow response policy; and
+- exact required task/result reference values where that policy declares them.
+
+The Phase 1 metadata fields are `allowed_response_dispositions` and
+`required_response_references`. They only constrain an existing
+`requires_response=true` obligation; defaults are empty, and the reducer does
+not infer them from subject text, message content, task state, or an LLM.
 
 `received` or `acting` are unnumbered receipt states, not substantive replies.
 A precise blocker or requested answer is a numbered semantic response. Deadlines
@@ -439,7 +446,10 @@ Any delivery generation or physical-attempt coordinate must derive from the
 existing message, binding, controller epoch, and dispatch attempt/idempotency
 coordinates; it is not a new semantic task or message identity. A lost
 presentation ACK can therefore be reconciled from post-state without injecting
-the body twice. Retries use bounded exponential backoff with jitter, urgency
+the body twice. Every field that affects reconstruction, including the
+server-owned recorded timestamp, is covered by the immutable event digest. The
+same idempotency key with a changed timestamp is a collision, not a replay.
+Retries use bounded exponential backoff with jitter, urgency
 deadlines, and fresh fencing/identity/state checks. They never repeat Escape or
 Enter blindly.
 
@@ -713,11 +723,11 @@ before/after, language results, and pass/fail assertions.
 **Current Phase 1b technical result (not full Test 1 acceptance).** The pure
 reducer is implemented in `scripts/cos_message_delivery_policy.py`; its canonical
 24-message fixture is `tests/fixtures/message_delivery_shadow_v1.json`, pinned as
-`765b17bc8d139949b66f58b2a3c53c6e1d9e890df0ec5b428ff3d1f10c314fb2`.
-The focused suite contains 53 passing cases, including an exhaustive 216-case
+`639d66f9363e1211d876ab4862e104c06692309cceaed3985573aef5f7097a6f`.
+The focused suite contains 66 passing cases, including an exhaustive 216-case
 three-event lifecycle check, deterministic control/treatment divergence
 evidence, and cancellation-after-presentation acknowledgement semantics. The
-full repository suite passes 372 tests. An AST/import guard proves the reducer
+full repository suite passes 385 tests. An AST/import guard proves the reducer
 has no coord client, edge, terminal, process, socket, SQL, or HTTP dependency.
 The compatibility matrix in Section 11.1 records which current coord-api fields
 can be reused and which proposed meanings require new durable state. The
@@ -737,14 +747,14 @@ Named Phase 1a mutations are permanent tests:
 | controller fencing is monotonic | present under a stale controller epoch |
 | receipts are bound to the intended principal and exact session | use the wrong edge/hub/recipient actor or a stale session UUID |
 | receipt stages remain independent | receive without fabricating `presented` |
-| invalid replays cannot poison idempotency | submit wrong-session then valid same-key receipts, and a same-key/different-payload collision |
+| invalid replays cannot poison idempotency | submit wrong-session then valid same-key receipts, a same-key/different-payload collision, and a changed timestamp under the same key |
 | terminal delivery state cannot regress | receive after `delivery_failed` |
 | supersession is singular and authorized | foreign-sender or two-replacement supersession |
 | digests contain headers, not authoritative bodies | copy private body text into a digest subject |
 | exact-session traffic does not follow a successor | address a message to the old session UUID |
 | failures remain visible | exhaust bounded delivery and require a DLQ projection |
-| a substantive response is non-empty and exactly correlated | use wrong sender, `reply_to`, correlation, blank content, or a superseded predecessor |
-| exact-session responses come from the bound session | reply from another session under the same logical agent |
+| a substantive response is causal, non-empty, and exactly constrained | use a before-original timestamp, wrong sender, `reply_to`, correlation, disposition, required reference, blank content, or a superseded predecessor |
+| responses come from a verified producing session | use an unverified agent-scoped session or another exact session under the same logical agent |
 | digest bounds and FIFO are deterministic | replay limits 1/5/50 and equal timestamps |
 
 Remaining work before Test 1 can pass is the human language/digest comparison

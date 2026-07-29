@@ -414,12 +414,18 @@ async def dispatch_registered(
         return {"ok": False, "error": "stale coord session identity", "session": values}
 
     prompt = render_dispatch_prompt(envelope)
-    verify_epoch(SUPERVISOR_RESOURCE, envelope.controller_epoch)
+
+    def verify_dispatch_fences(_resource: str, _epoch: int) -> None:
+        verify_epoch(SUPERVISOR_RESOURCE, envelope.controller_epoch)
+        if reservation is not None:
+            verify_epoch(str(reservation["resource"]), int(reservation["epoch"]))
+
+    verify_dispatch_fences(SUPERVISOR_RESOURCE, envelope.controller_epoch)
     observed_ack, recovery_submitted = await _submit_with_bounded_recovery(
         session,
         prompt=prompt,
         before=values,
-        verify_epoch=verify_epoch,
+        verify_epoch=verify_dispatch_fences,
         controller_epoch=envelope.controller_epoch,
         ack_attempts=ack_attempts,
     )
@@ -478,7 +484,7 @@ async def send_controller_poke(
         ack_attempts=ack_attempts,
     )
     return {
-        "ok": True,
+        "ok": observed_ack,
         "target_iterm_session_id": manifest.controller_iterm_session_id,
         "target_tty": manifest.controller_tty,
         "controller_epoch": controller_epoch,
@@ -486,6 +492,7 @@ async def send_controller_poke(
         "submit_method": "iterm2-python-api-crlf",
         "observed_ack": observed_ack,
         "metrics": {"recovery_submitted": recovery_submitted},
+        **({} if observed_ack else {"error": "registered COS did not acknowledge poke"}),
     }
 
 
@@ -623,6 +630,8 @@ def dispatch_registered_headless(
     prompt = render_dispatch_prompt(envelope)
     command = headless_command(worker, prompt)
     verify_epoch(SUPERVISOR_RESOURCE, envelope.controller_epoch)
+    if reservation is not None:
+        verify_epoch(str(reservation["resource"]), int(reservation["epoch"]))
     started = time.monotonic()
     try:
         result = run(

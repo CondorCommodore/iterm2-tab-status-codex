@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -478,6 +479,43 @@ def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
         ("workspace:mikebook:c2-supervisor", 7),
         ("workspace:mikebook:c2-supervisor", 7),
     ]
+
+
+def test_tab_dispatch_fences_worker_reservation_before_each_injection(monkeypatch, tmp_path):
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        snapshots=[{"session.isProcessing": False},
+                   {"session.isProcessing": True}],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    verified = []
+    reservation = {"resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 19}
+    result = asyncio.run(dispatch.dispatch_registered(
+        object(), manifest=_manifest(), envelope=_envelope(),
+        verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+        receipts=ReceiptStore(tmp_path / "receipts.jsonl"), reservation=reservation,
+        ack_attempts=1,
+    ))
+    assert target.sent
+    assert (reservation["resource"], 19) in verified
+
+
+def test_headless_dispatch_fences_worker_reservation(tmp_path):
+    verified = []
+    reservation = {"resource": "workspace:mikebook:c2-worker:worker-codex", "epoch": 23}
+    result = dispatch.dispatch_registered_headless(
+        manifest=_manifest(), envelope=_envelope(),
+        verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+        receipts=ReceiptStore(tmp_path / "receipts.jsonl"), reservation=reservation,
+        run=lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "done", ""),
+    )
+    assert result["ok"] is True
+    assert verified == [("workspace:mikebook:c2-supervisor", 7), (reservation["resource"], 23)]
 
 
 def test_queued_prompt_gets_one_refenced_recovery_submit(monkeypatch, tmp_path):

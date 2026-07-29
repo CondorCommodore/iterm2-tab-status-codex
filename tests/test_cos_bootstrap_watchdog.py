@@ -9,6 +9,8 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import cos_bootstrap_watchdog as watchdog  # noqa: E402
+import cos_current_actions as current_actions  # noqa: E402
+from c2_contract import load_manifest  # noqa: E402
 from c2_coord_client import CoordError  # noqa: E402
 
 
@@ -56,11 +58,17 @@ class Config:
 class Client:
     config = Config()
 
-    def __init__(self, lease):
+    def __init__(self, lease, *, durable_readback=True):
         self.lease = lease
+        self.durable_readback = durable_readback
 
     def get_resource(self, resource):
         return self.lease
+
+    def verify_receipt_readback(self, receipt, message_id):
+        if not self.durable_readback:
+            raise CoordError("durable readback unavailable")
+        return {"id": message_id, "accepted": True}
 
 
 class CountingClient(Client):
@@ -95,6 +103,57 @@ def write_headless_authority(state_dir: Path, *, recorded_ts=501, epoch=8):
         ),
         encoding="utf-8",
     )
+
+
+def publish_headless_checkpoint(
+    state_dir: Path, manifest_path: Path, *, coord_accept: bool = True
+):
+    m = load_manifest(manifest_path)
+    path = state_dir / "current-actions.txt"
+    seeded = current_actions.seed_actions(
+        manifest=m,
+        path=path,
+        decision_digest="a" * 64,
+        epoch=8,
+        now_ts=501,
+    )
+    rebound = current_actions.rebind_actions(
+        current=seeded,
+        path=path,
+        manifest=m,
+        decision_digest="a" * 64,
+        epoch=8,
+        ownership="headless",
+        now_ts=502,
+    )
+    source = state_dir / "headless-next-actions.txt"
+    header = {
+        **rebound.header,
+        "generation": rebound.generation + 1,
+        "previous_action_digest": rebound.digest,
+        "written_at": "1970-01-01T00:08:23Z",
+        "next_check_at": "1970-01-01T00:13:23Z",
+    }
+    source.write_text(
+        f"--- {current_actions.SCHEMA}\n"
+        f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{rebound.body}\n",
+        encoding="utf-8",
+    )
+    checkpoint = current_actions.checkpoint_actions(
+        source=source,
+        destination=path,
+        manifest=m,
+        live_epoch=8,
+        receipts_path=state_dir / "action-receipts.jsonl",
+        expected_decision_digest="a" * 64,
+    )
+    if coord_accept:
+        current_actions.record_coord_acceptance(
+            checkpoint_receipt=checkpoint,
+            coord_response={"id": 42, "accepted": True},
+            receipts_path=state_dir / "action-receipts.jsonl",
+        )
 
 
 def test_unarmed_watchdog_is_inert_without_coord_provider(tmp_path):
@@ -401,6 +460,7 @@ def test_headless_trial_waits_for_epoch_expiry_then_resumes_same_uuid(tmp_path):
     def resume(command, **kwargs):
         commands.append(command)
         write_headless_authority(tmp_path)
+        publish_headless_checkpoint(tmp_path, manifest)
         return subprocess.CompletedProcess(command, 0, "done", "")
 
     result = watchdog.run_once(
@@ -412,22 +472,23 @@ def test_headless_trial_waits_for_epoch_expiry_then_resumes_same_uuid(tmp_path):
     )
 
     assert result["action"] == "headless-resume"
-    assert result["receipt"]["success"] is False
+    assert result["receipt"]["success"] is True
     assert result["receipt"]["headless_turn_success"] is True
-    assert result["receipt"]["recovery_state"] == "awaiting-visible-reattach"
+    assert result["receipt"]["recovery_state"] == "bounded-turn-complete"
     assert commands[0][:4] == ["codex", "exec", "resume", "cli-cos"]
-    assert result["receipt"]["visible_reattach_required"] is True
+    assert result["receipt"]["visible_reattach_required"] is False
     assert result["receipt"]["authority_acquired"] is True
     assert result["receipt"]["controller_epoch"] == 8
 
 
-def test_headless_recovery_requires_new_visible_heartbeat(tmp_path):
+def test_headless_recovery_does_not_block_on_visible_reattach(tmp_path):
     manifest = tmp_path / "manifest.json"
     write_manifest(manifest, recovery="headless")
     arm_stale(tmp_path)
 
     def resume(command, **kwargs):
         write_headless_authority(tmp_path)
+        publish_headless_checkpoint(tmp_path, manifest)
         return subprocess.CompletedProcess(command, 0, "done", "")
 
     watchdog.run_once(
@@ -443,27 +504,333 @@ def test_headless_recovery_requires_new_visible_heartbeat(tmp_path):
         client=Client(None),
         now_ts=502,
     )
-    assert pending["action"] == "awaiting-visible-reattach"
-    assert pending["ok"] is False
+    assert pending["action"] == "healthy"
+    assert pending["ok"] is True
 
+
+def test_headless_local_acceptance_marker_without_coord_readback_is_not_success(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest, recovery="headless")
+    arm_stale(tmp_path)
+
+    def resume(command, **_kwargs):
+        write_headless_authority(tmp_path)
+        publish_headless_checkpoint(tmp_path, manifest)
+        return subprocess.CompletedProcess(command, 0, "done", "")
+
+    result = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client(None, durable_readback=False),
+        now_ts=500,
+        run=resume,
+    )
+
+    assert result["receipt"]["success"] is False
+    assert result["receipt"]["model_checkpoint_published"] is True
+    assert result["receipt"]["model_checkpoint_durable"] is False
+
+
+def prepare_action_loop(tmp_path, *, now_ts=100, next_decision=None):
+    manifest_path = tmp_path / "manifest.json"
+    write_manifest(manifest_path, recovery="headless")
+    m = load_manifest(manifest_path)
+    actions = current_actions.seed_actions(
+        manifest=m,
+        path=tmp_path / "current-actions.txt",
+        decision_digest="a" * 64,
+        epoch=7,
+        now_ts=now_ts,
+    )
+    (tmp_path / "ARMED").write_text("armed\n", encoding="utf-8")
+    (tmp_path / "supervisor-state.json").write_text(
+        json.dumps({"mode": "bootstrap-authoritative"}), encoding="utf-8"
+    )
     (tmp_path / "supervisor-heartbeat.json").write_text(
+        json.dumps({"recorded_ts": 490}), encoding="utf-8"
+    )
+    (tmp_path / "decision-current.json").write_text(
         json.dumps(
             {
-                "recorded_ts": 503,
-                "ownership": "visible",
-                "controller_epoch": 9,
+                "decision_digest": next_decision or "a" * 64,
+                "wake_required": True,
             }
         ),
         encoding="utf-8",
     )
-    recovered = watchdog.run_once(
+    return manifest_path, actions
+
+
+def test_fresh_process_heartbeat_does_not_hide_unacknowledged_action(tmp_path):
+    manifest, actions = prepare_action_loop(tmp_path)
+    seen = []
+
+    result = watchdog.run_once(
         manifest_path=manifest,
         state_dir=tmp_path,
-        client=Client({"holder": "mikebook_codex", "epoch": 9}),
-        now_ts=504,
+        client=Client({"holder": "mikebook_codex", "epoch": 7}),
+        now_ts=500,
+        poke_fn=lambda **kwargs: seen.append(kwargs)
+        or {"ok": False, "injection_attempted": True, "observed_ack": False},
     )
-    assert recovered["action"] == "recovered"
-    assert recovered["receipt"]["success"] is True
+
+    assert result["action"] == "action-wake"
+    assert result["ok"] is True
+    assert result["awaiting_model_ack"] is True
+    assert str(tmp_path / "current-actions.txt") in seen[0]["text"]
+    assert actions.digest in seen[0]["text"]
+
+
+def test_edge_false_negative_then_model_ack_does_not_duplicate(tmp_path):
+    manifest, actions = prepare_action_loop(tmp_path)
+    seen = []
+    kwargs = {
+        "manifest_path": manifest,
+        "state_dir": tmp_path,
+        "client": Client({"holder": "mikebook_codex", "epoch": 7}),
+        "poke_fn": lambda **call: seen.append(call)
+        or {"ok": False, "injection_attempted": True, "observed_ack": False},
+    }
+    watchdog.run_once(**kwargs, now_ts=500)
+    waiting = watchdog.run_once(**kwargs, now_ts=501)
+    assert waiting["action"] == "awaiting-action-ack"
+    (tmp_path / "action-progress.json").write_text(
+        json.dumps(
+            {
+                "kind": "action-ack",
+                "action_digest": actions.digest,
+                "generation": actions.generation,
+                "controller_epoch": 7,
+                "recorded_ts": 502,
+            }
+        ),
+        encoding="utf-8",
+    )
+    acknowledged = watchdog.run_once(**kwargs, now_ts=503)
+    assert acknowledged["action"] == "action-acknowledged"
+    assert len(seen) == 1
+
+
+def test_pending_action_ack_fails_closed_after_epoch_loss(tmp_path):
+    manifest, _actions = prepare_action_loop(tmp_path)
+    client = Client({"holder": "mikebook_codex", "epoch": 7})
+    kwargs = {
+        "manifest_path": manifest,
+        "state_dir": tmp_path,
+        "client": client,
+        "poke_fn": lambda **_call: {"ok": True, "injection_attempted": True},
+    }
+    watchdog.run_once(**kwargs, now_ts=500)
+    client.lease = None
+
+    result = watchdog.run_once(**kwargs, now_ts=501)
+
+    assert result["ok"] is False
+    assert result["action"] == "action-ack-epoch-lost"
+
+
+def test_two_expired_model_ack_windows_request_epoch_yield(tmp_path):
+    manifest, _actions = prepare_action_loop(tmp_path)
+    kwargs = {
+        "manifest_path": manifest,
+        "state_dir": tmp_path,
+        "client": Client({"holder": "mikebook_codex", "epoch": 7}),
+        "poke_fn": lambda **_call: {"ok": True, "injection_attempted": True},
+    }
+    first = watchdog.run_once(**kwargs, now_ts=500)
+    second = watchdog.run_once(**kwargs, now_ts=591)
+    yielded = watchdog.run_once(**kwargs, now_ts=682)
+
+    assert [first["action"], second["action"], yielded["action"]] == [
+        "action-wake",
+        "action-wake",
+        "yield-requested",
+    ]
+    hold = json.loads((tmp_path / "recovery-hold.json").read_text())
+    assert hold["controller_epoch"] == 7
+
+
+def test_changed_decision_wakes_before_action_deadline(tmp_path):
+    manifest, _actions = prepare_action_loop(tmp_path, next_decision="b" * 64)
+    result = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client({"holder": "mikebook_codex", "epoch": 7}),
+        now_ts=200,
+        poke_fn=lambda **_call: {"ok": True, "injection_attempted": True},
+    )
+    assert result["action"] == "action-wake"
+    assert result["wake_reason"] == "deterministic decision changed"
+
+
+def test_published_successor_checkpoint_waits_for_its_declared_deadline(tmp_path):
+    manifest_path, first = prepare_action_loop(tmp_path)
+    m = load_manifest(manifest_path)
+    source = tmp_path / "next-actions.txt"
+    source.write_bytes(first.raw)
+    parsed = current_actions.parse_actions(source, manifest=m)
+    header = {
+        **parsed.header,
+        "generation": 2,
+        "previous_action_digest": first.digest,
+        "written_at": "1970-01-01T00:03:20Z",
+        "next_check_at": "1970-01-01T00:08:20Z",
+    }
+    source.write_text(
+        f"--- {current_actions.SCHEMA}\n"
+        f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{parsed.body}\n",
+        encoding="utf-8",
+    )
+    current_actions.checkpoint_actions(
+        source=source,
+        destination=tmp_path / "current-actions.txt",
+        manifest=m,
+        live_epoch=7,
+        receipts_path=tmp_path / "action-receipts.jsonl",
+    )
+
+    result = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client({"holder": "mikebook_codex", "epoch": 7}),
+        now_ts=250,
+    )
+    assert result["action"] == "healthy"
+
+
+def test_recovery_hold_runs_one_headless_turn_then_waits_for_next_deadline(tmp_path):
+    manifest_path, actions = prepare_action_loop(tmp_path)
+    m = load_manifest(manifest_path)
+    (tmp_path / "recovery-hold.json").write_text(
+        json.dumps(
+            {
+                "controller_epoch": 7,
+                "action_digest": actions.digest,
+                "reason": "two missed acknowledgments",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def resume(command, **_kwargs):
+        write_headless_authority(tmp_path, recorded_ts=501, epoch=8)
+        current = current_actions.parse_actions(tmp_path / "current-actions.txt", manifest=m)
+        rebound = current_actions.rebind_actions(
+            current=current,
+            path=tmp_path / "current-actions.txt",
+            manifest=m,
+            decision_digest="a" * 64,
+            epoch=8,
+            ownership="headless",
+            now_ts=501,
+        )
+        source = tmp_path / "headless-next-actions.txt"
+        header = {
+            **rebound.header,
+            "generation": rebound.generation + 1,
+            "previous_action_digest": rebound.digest,
+            "written_at": "1970-01-01T00:08:22Z",
+            "next_check_at": "1970-01-01T00:13:22Z",
+        }
+        source.write_text(
+            f"--- {current_actions.SCHEMA}\n"
+            f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+            f"---\n{rebound.body}\n",
+            encoding="utf-8",
+        )
+        checkpoint = current_actions.checkpoint_actions(
+            source=source,
+            destination=tmp_path / "current-actions.txt",
+            manifest=m,
+            live_epoch=8,
+            receipts_path=tmp_path / "action-receipts.jsonl",
+            expected_decision_digest="a" * 64,
+        )
+        current_actions.record_coord_acceptance(
+            checkpoint_receipt=checkpoint,
+            coord_response={"id": 42, "accepted": True},
+            receipts_path=tmp_path / "action-receipts.jsonl",
+        )
+        return subprocess.CompletedProcess(command, 0, "done", "")
+
+    completed = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=500,
+        run=resume,
+    )
+    waiting = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=502,
+    )
+
+    assert completed["receipt"]["success"] is True
+    assert completed["receipt"]["checkpoint_advanced"] is True
+    assert completed["receipt"]["model_checkpoint_published"] is True
+    assert completed["receipt"]["model_checkpoint_durable"] is True
+    assert completed["receipt"]["epoch_released"] is True
+    assert waiting["action"] == "headless-waiting"
+
+
+def test_headless_rebind_without_model_checkpoint_is_not_recovery(tmp_path):
+    manifest_path, actions = prepare_action_loop(tmp_path)
+    m = load_manifest(manifest_path)
+    (tmp_path / "recovery-hold.json").write_text(
+        json.dumps({"controller_epoch": 7, "action_digest": actions.digest}),
+        encoding="utf-8",
+    )
+
+    def resume(command, **_kwargs):
+        write_headless_authority(tmp_path, recorded_ts=501, epoch=8)
+        current = current_actions.parse_actions(tmp_path / "current-actions.txt", manifest=m)
+        current_actions.rebind_actions(
+            current=current,
+            path=tmp_path / "current-actions.txt",
+            manifest=m,
+            decision_digest="a" * 64,
+            epoch=8,
+            ownership="headless",
+            now_ts=501,
+        )
+        return subprocess.CompletedProcess(command, 0, "done", "")
+
+    result = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=500,
+        run=resume,
+    )
+
+    assert result["receipt"]["success"] is False
+    assert result["receipt"]["checkpoint_advanced"] is True
+    assert result["receipt"]["model_checkpoint_published"] is False
+
+
+def test_headless_waiting_fails_closed_if_any_live_lease_appears(tmp_path):
+    manifest_path, actions = prepare_action_loop(tmp_path)
+    (tmp_path / "recovery-hold.json").write_text(
+        json.dumps({"controller_epoch": 7, "action_digest": actions.digest}),
+        encoding="utf-8",
+    )
+    (tmp_path / "watchdog-state.json").write_text(
+        json.dumps({"last_headless_checkpoint_digest": actions.digest}),
+        encoding="utf-8",
+    )
+
+    result = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client({"holder": "another-controller", "epoch": 9}),
+        now_ts=200,
+    )
+
+    assert result["ok"] is False
+    assert result["action"] == "headless-waiting-live-lease-present"
 
 
 def test_headless_trial_never_starts_while_visible_epoch_is_live(tmp_path):

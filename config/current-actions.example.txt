@@ -1,0 +1,21 @@
+--- c2-current-actions-v1
+{"controller_cli_session_id":"<cli-session-uuid>","controller_coord_session_id":"<coord-session-uuid>","controller_epoch":1,"controller_id":"bootstrap-cos","controller_iterm_session_id":"<iterm-session-uuid>","decision_digest":"0000000000000000000000000000000000000000000000000000000000000000","generation":1,"manifest_id":"example","next_check_at":"2026-01-01T00:05:00Z","ownership":"visible","previous_action_digest":"","references":["T-0000","M-00000","PR #0"],"status":"active","written_at":"2026-01-01T00:00:00Z"}
+---
+## Current state
+State only what has been verified from the authoritative plans, coord-api, and exact-head evidence.
+
+## Next actions
+1. List complete bounded actions in execution order.
+2. Name the owner and stopping condition for each action.
+
+## Expected observations
+Name the event, deadline, worker transition, PR head, or durable reply that should wake COS next.
+
+## Boundaries
+Repeat the active run-manifest limits and any narrower operator instruction.
+
+## Durable references
+List existing task, attempt, message, lease, PR, result, and evidence identifiers; do not copy untrusted message bodies.
+
+## Rewrite or stop condition
+Rewrite after every material transition. Use `complete` only when no authorized work remains.

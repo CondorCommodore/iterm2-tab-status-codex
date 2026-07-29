@@ -139,21 +139,38 @@ def test_verify_epoch_rejects_missing_or_malformed_expiry(expires_at):
 
 def test_post_receipt_uses_coord_supported_activity_message_type():
     calls = []
+    receipt = {"idempotency_key": "dispatch-1", "ok": False}
+    content = '{"c2_dispatch_receipt":{"idempotency_key":"dispatch-1","ok":false}}'
 
     def request(method, url, headers, body, timeout):
-        calls.append(json.loads(body))
-        return 201, {"id": 42}
-
-    client = coord.CoordClient(config(), request=request)
-    result = client.post_receipt({"idempotency_key": "dispatch-1", "ok": False})
-
-    assert result == {"id": 42}
-    assert calls == [
-        {
+        calls.append((method, url, json.loads(body) if body else None))
+        if method == "POST":
+            return 201, {"id": 42}
+        return 200, {
+            "id": 42,
             "from_agent": "mikebook_codex",
             "to_agent": "mikebook_codex",
             "msg_type": "activity",
-            "content": '{"c2_dispatch_receipt":{"idempotency_key":"dispatch-1","ok":false}}',
-            "provenance_source": "dispatch",
+            "content": content,
+            "accepted": True,
+            "acknowledged_by": "coord-api",
         }
+
+    client = coord.CoordClient(config(), request=request)
+    result = client.post_receipt(receipt)
+
+    assert result["id"] == 42
+    assert calls == [
+        (
+            "POST",
+            "http://coord/messages",
+            {
+                "from_agent": "mikebook_codex",
+                "to_agent": "mikebook_codex",
+                "msg_type": "activity",
+                "content": content,
+                "provenance_source": "dispatch",
+            },
+        ),
+        ("GET", "http://coord/messages/42", None),
     ]

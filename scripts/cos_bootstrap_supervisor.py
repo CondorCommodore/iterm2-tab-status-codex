@@ -23,6 +23,7 @@ from c2_contract import (
     SUPERVISOR_RESOURCE,
     SUPERVISOR_TTL_SECONDS,
     ContractError,
+    ReceiptStore,
     RunManifest,
     load_manifest,
     normalize_worker_state,
@@ -36,6 +37,14 @@ from c2_coord_client import (
     LeaseLost,
 )
 from cos_iterm_edge_client import poke_controller
+from cos_current_actions import (
+    acknowledge_actions,
+    checkpoint_actions,
+    parse_actions,
+    record_coord_acceptance,
+    rebind_actions,
+    seed_actions,
+)
 
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"
@@ -85,6 +94,10 @@ def state_paths(state_dir: Path) -> dict[str, Path]:
         "state": state_dir / "supervisor-state.json",
         "heartbeat": state_dir / "supervisor-heartbeat.json",
         "decision": state_dir / "decision-current.json",
+        "actions": state_dir / "current-actions.txt",
+        "action_progress": state_dir / "action-progress.json",
+        "action_receipts": state_dir / "action-receipts.jsonl",
+        "recovery_hold": state_dir / "recovery-hold.json",
         "pokes": state_dir / "poke-receipts.jsonl",
     }
 
@@ -248,9 +261,68 @@ def reconcile(
 
 
 def decision_digest(decision: dict[str, Any]) -> str:
-    stable = dict(decision)
-    stable.pop("generated_at", None)
-    stable.pop("generated_ts", None)
+    worker_fields = (
+        "worker_id",
+        "host",
+        "runtime",
+        "iterm_session_id",
+        "tty",
+        "state",
+    )
+    item_fields = (
+        "kind",
+        "id",
+        "display_id",
+        "task_id",
+        "message_id",
+        "attempt_id",
+        "status",
+        "priority",
+        "required_ack",
+        "to_session_id",
+    )
+    volatile_item_fields = {
+        "fetched_at",
+        "fetched_ts",
+        "generated_at",
+        "generated_ts",
+        "last_seen_at",
+        "last_seen_ts",
+        "observed_at",
+        "observed_ts",
+        "screen_tail",
+        "terminal_tail",
+    }
+
+    def stable_item(item: dict[str, Any]) -> dict[str, Any]:
+        result = {field: item.get(field) for field in item_fields if field in item}
+        payload = {
+            field: value
+            for field, value in item.items()
+            if field not in volatile_item_fields and field not in item_fields
+        }
+        result["payload_digest"] = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return result
+
+    stable = {
+        "manifest_id": decision.get("manifest_id"),
+        "workers": [
+            {field: worker.get(field) for field in worker_fields if field in worker}
+            for worker in decision.get("workers", [])
+            if isinstance(worker, dict)
+        ],
+        "actionable_items": [
+            stable_item(item)
+            for item in decision.get("actionable_items", [])
+            if isinstance(item, dict)
+        ],
+        "idle_worker_ids": decision.get("idle_worker_ids", []),
+        "exception_worker_ids": decision.get("exception_worker_ids", []),
+        "wake_required": decision.get("wake_required"),
+        "wake_reasons": decision.get("wake_reasons", []),
+    }
     return hashlib.sha256(
         json.dumps(stable, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -288,6 +360,36 @@ def run_tick(
         }
         _atomic_json(paths["heartbeat"], heartbeat)
         return {"ok": True, "armed": True, **heartbeat, "action": "observe-only"}
+    recovery_hold = _load_json(paths["recovery_hold"])
+    if recovery_hold and ownership == "visible":
+        handle = _handle_from_state(state)
+        released = False
+        if handle is not None:
+            try:
+                released = client.release_resource(handle)
+            except LeaseLost:
+                released = False
+        state = {
+            **state,
+            "authority": False,
+            "lease": None,
+            "recovery_hold": True,
+            "last_error": None,
+        }
+        _atomic_json(paths["state"], state)
+        heartbeat = {
+            "recorded_at": _iso(),
+            "recorded_ts": time.time(),
+            "mode": mode,
+            "authority": False,
+            "ownership": ownership,
+            "recovery_hold": True,
+            "released": released,
+            "held_epoch": recovery_hold.get("controller_epoch"),
+            "action_digest": recovery_hold.get("action_digest"),
+        }
+        _atomic_json(paths["heartbeat"], heartbeat)
+        return {"ok": True, "armed": True, **heartbeat, "action": "recovery-hold"}
     state, handle = ensure_authority(
         client=client,
         manifest=manifest,
@@ -304,6 +406,27 @@ def run_tick(
     decision["controller_epoch"] = handle.epoch
     decision["wake_delivered"] = False
     _atomic_json(paths["decision"], decision)
+    if paths["actions"].exists():
+        current_actions = parse_actions(paths["actions"], manifest=manifest)
+    else:
+        current_actions = seed_actions(
+            manifest=manifest,
+            path=paths["actions"],
+            decision_digest=digest,
+            epoch=handle.epoch,
+        )
+    if (
+        current_actions.controller_epoch != handle.epoch
+        or current_actions.header.get("ownership") != ownership
+    ):
+        current_actions = rebind_actions(
+            current=current_actions,
+            path=paths["actions"],
+            manifest=manifest,
+            decision_digest=digest,
+            epoch=handle.epoch,
+            ownership=ownership,
+        )
     poked = False
     poke_result: dict[str, Any] | None = None
     already_delivered = (
@@ -311,10 +434,10 @@ def run_tick(
     )
     if wake and decision["wake_required"] and not already_delivered:
         prompt = (
-            "/goal C2_WAKE decision="
-            f"{paths['decision']} epoch={handle.epoch}. Read every manifest plan path and the "
-            "actionable coord feed; resolve exceptions, assign complete bounded slices through "
-            "fenced dispatch envelopes, and record actions through coord-api."
+            f"/goal C2_CONTINUE actions={paths['actions']} sha256={current_actions.digest} "
+            f"generation={current_actions.generation} decision={digest} epoch={handle.epoch}. "
+            "First acknowledge this exact action version, then read it, execute its bounded next "
+            "actions, and publish a new checkpoint before ending the turn."
         )
         poke_key = f"c2-wake:{handle.epoch}:{digest}"
         poke_result = poke_controller(
@@ -336,6 +459,9 @@ def run_tick(
         "decision_digest": digest,
         "wake_required": decision["wake_required"],
         "poked": poked,
+        "action_digest": current_actions.digest,
+        "action_generation": current_actions.generation,
+        "action_next_check_ts": current_actions.next_check_ts,
     }
     _atomic_json(paths["heartbeat"], heartbeat)
     return {"ok": True, "armed": True, **heartbeat, "poke_result": poke_result}
@@ -352,7 +478,13 @@ def arm(
     paths["armed"].parent.mkdir(parents=True, exist_ok=True)
     watchdog_path = state_dir / "watchdog-state.json"
     prior_watchdog = _load_json(watchdog_path)
-    for stale_path in (paths["heartbeat"], paths["decision"]):
+    for stale_path in (
+        paths["heartbeat"],
+        paths["decision"],
+        paths["actions"],
+        paths["action_progress"],
+        paths["recovery_hold"],
+    ):
         stale_path.unlink(missing_ok=True)
     recovery_sequence = max(
         int(prior_watchdog.get("recovery_sequence") or 0),
@@ -376,6 +508,12 @@ def arm(
             "pending_transport": None,
             "backoff_until": None,
             "edge_restart_backoff_until": None,
+            "action_pending_since": None,
+            "action_pending_digest": None,
+            "action_pending_generation": None,
+            "action_pending_epoch": None,
+            "action_wake_attempts": 0,
+            "last_headless_checkpoint_digest": None,
         },
     )
     paths["armed"].write_text(f"manifest_id={manifest.manifest_id}\n", encoding="utf-8")
@@ -433,6 +571,67 @@ def stop(*, client: CoordClient, state_dir: Path) -> dict[str, Any]:
     return {"ok": True, "armed": False, "released": released, **updated}
 
 
+def finish_headless_turn(
+    *, client: CoordClient, manifest: RunManifest, state_dir: Path, digest: str
+) -> dict[str, Any]:
+    paths = state_paths(state_dir)
+    state = _load_json(paths["state"])
+    if state.get("ownership") != "headless" or state.get("authority") is not True:
+        raise ContractError("finish-turn requires the authoritative headless owner")
+    actions = parse_actions(paths["actions"], manifest=manifest)
+    if actions.digest != digest or actions.header.get("ownership") != "headless":
+        raise ContractError("finish-turn digest must name the headless checkpoint")
+    handle = _handle_from_state(state)
+    if handle is None:
+        raise ContractError("finish-turn has no live lease handle")
+    released = client.release_resource(handle)
+    updated = {
+        **state,
+        "authority": False,
+        "lease": None,
+        "headless_finished_at": _iso(),
+        "headless_checkpoint_digest": digest,
+    }
+    _atomic_json(paths["state"], updated)
+    receipt = {
+        "idempotency_key": f"c2-headless-finish:{handle.epoch}:{actions.generation}:{digest}",
+        "kind": "headless-finish",
+        "recorded_at": _iso(),
+        "recorded_ts": time.time(),
+        "controller_epoch": handle.epoch,
+        "generation": actions.generation,
+        "action_digest": digest,
+        "released": released,
+    }
+    store = ReceiptStore(paths["action_receipts"])
+    if not store.has_idempotency_key(receipt["idempotency_key"]):
+        store.append(receipt)
+    client.post_receipt(receipt)
+    return {"ok": released, **receipt}
+
+
+def reattach_visible(
+    *, client: CoordClient, manifest: RunManifest, state_dir: Path, digest: str
+) -> dict[str, Any]:
+    paths = state_paths(state_dir)
+    actions = parse_actions(paths["actions"], manifest=manifest)
+    if actions.digest != digest:
+        raise ContractError("reattach digest does not match current actions")
+    if client.get_resource(SUPERVISOR_RESOURCE) is not None:
+        raise ContractError("reattach requires the prior controller epoch to be absent")
+    paths["recovery_hold"].unlink(missing_ok=True)
+    state = {
+        **_load_json(paths["state"]),
+        "authority": False,
+        "lease": None,
+        "ownership": "visible",
+        "recovery_hold": False,
+        "reattached_at": _iso(),
+    }
+    _atomic_json(paths["state"], state)
+    return {"ok": True, "action_digest": digest, "ownership": "visible"}
+
+
 def status(*, client: CoordClient | None, state_dir: Path) -> dict[str, Any]:
     paths = state_paths(state_dir)
     state = _load_json(paths["state"])
@@ -448,25 +647,70 @@ def status(*, client: CoordClient | None, state_dir: Path) -> dict[str, Any]:
         "armed": paths["armed"].exists(),
         "state": state,
         "heartbeat": heartbeat,
+        "current_actions": (
+            {
+                "digest": actions.digest,
+                "generation": actions.generation,
+                "status": actions.status,
+                "decision_digest": actions.decision_digest,
+                "controller_epoch": actions.controller_epoch,
+                "ownership": actions.header.get("ownership"),
+                "next_check_ts": actions.next_check_ts,
+            }
+            if (actions := _status_actions(paths["actions"])) is not None
+            else None
+        ),
+        "action_progress": _load_json(paths["action_progress"]),
+        "recovery_hold": _load_json(paths["recovery_hold"]),
         "live_lease": lease,
         "coord_error": error,
     }
 
 
+def _status_actions(path: Path):
+    try:
+        return parse_actions(path)
+    except ContractError:
+        return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bootstrap COS C2 lifecycle")
-    parser.add_argument("command", choices=("arm", "status", "run", "poke", "standby", "stop"))
+    parser.add_argument(
+        "command",
+        choices=(
+            "arm",
+            "status",
+            "run",
+            "poke",
+            "standby",
+            "stop",
+            "checkpoint",
+            "ack",
+            "finish-turn",
+            "reattach",
+        ),
+    )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--live-state", type=Path, default=DEFAULT_LIVE_STATE)
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--no-wake", action="store_true")
+    parser.add_argument(
+        "--no-wake",
+        action="store_true",
+        help="deprecated compatibility flag; automatic wakes belong to the watchdog",
+    )
     parser.add_argument("--ownership", choices=("visible", "headless"), default="visible")
+    parser.add_argument("--from-file", type=Path)
+    parser.add_argument("--digest")
+    parser.add_argument("--generation", type=int)
+    parser.add_argument("--epoch", type=int)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     manifest = load_manifest(args.manifest)
     if args.command == "arm":
         print(
@@ -485,7 +729,70 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(status(client=client, state_dir=args.state_dir), indent=2, sort_keys=True))
         return 0
     assert client is not None
-    if args.command == "standby":
+    if args.command == "checkpoint":
+        if args.from_file is None:
+            parser.error("checkpoint requires --from-file")
+        state = _load_json(state_paths(args.state_dir)["state"])
+        epoch = state.get("controller_epoch")
+        if not isinstance(epoch, int) or state.get("authority") is not True:
+            raise ContractError("checkpoint requires live supervisor authority")
+        client.verify_live_epoch(SUPERVISOR_RESOURCE, epoch)
+        decision = _load_json(state_paths(args.state_dir)["decision"])
+        current_decision_digest = str(decision.get("decision_digest") or "")
+        if not current_decision_digest:
+            raise ContractError("checkpoint requires a current deterministic decision")
+        receipt = checkpoint_actions(
+            source=args.from_file,
+            destination=state_paths(args.state_dir)["actions"],
+            manifest=manifest,
+            live_epoch=epoch,
+            receipts_path=state_paths(args.state_dir)["action_receipts"],
+            expected_decision_digest=current_decision_digest,
+            allow_complete=decision.get("wake_required") is False,
+        )
+        coord_response = client.post_receipt(receipt)
+        record_coord_acceptance(
+            checkpoint_receipt=receipt,
+            coord_response=coord_response,
+            receipts_path=state_paths(args.state_dir)["action_receipts"],
+        )
+        result = {"ok": True, **receipt}
+    elif args.command == "ack":
+        if not args.digest or args.generation is None or args.epoch is None:
+            parser.error("ack requires --digest, --generation, and --epoch")
+        state = _load_json(state_paths(args.state_dir)["state"])
+        if (
+            state.get("authority") is not True
+            or state.get("controller_epoch") != args.epoch
+            or state.get("ownership") != args.ownership
+        ):
+            raise ContractError("ack requires the matching authoritative controller owner")
+        client.verify_live_epoch(SUPERVISOR_RESOURCE, args.epoch)
+        result = acknowledge_actions(
+            actions_path=state_paths(args.state_dir)["actions"],
+            progress_path=state_paths(args.state_dir)["action_progress"],
+            receipts_path=state_paths(args.state_dir)["action_receipts"],
+            manifest=manifest,
+            digest=args.digest,
+            generation=args.generation,
+            epoch=args.epoch,
+            ownership=args.ownership,
+        )
+        client.post_receipt(result)
+        result = {"ok": True, **result}
+    elif args.command == "finish-turn":
+        if not args.digest:
+            parser.error("finish-turn requires --digest")
+        result = finish_headless_turn(
+            client=client, manifest=manifest, state_dir=args.state_dir, digest=args.digest
+        )
+    elif args.command == "reattach":
+        if not args.digest:
+            parser.error("reattach requires --digest")
+        result = reattach_visible(
+            client=client, manifest=manifest, state_dir=args.state_dir, digest=args.digest
+        )
+    elif args.command == "standby":
         result = set_standby(client=client, state_dir=args.state_dir)
     elif args.command == "stop":
         result = stop(client=client, state_dir=args.state_dir)
@@ -507,7 +814,7 @@ def main(argv: list[str] | None = None) -> int:
                     state_dir=args.state_dir,
                     live_state_path=args.live_state,
                     ownership=args.ownership,
-                    wake=not args.no_wake,
+                    wake=False,
                 )
             except LeaseBlocked as exc:
                 result = {

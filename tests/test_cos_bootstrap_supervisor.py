@@ -93,6 +93,66 @@ def test_reconcile_marks_reused_tty_with_wrong_session_lost():
     assert decision["wake_required"] is True
 
 
+def test_decision_digest_ignores_screen_churn_but_tracks_worker_state():
+    base = {
+        "manifest_id": "test",
+        "workers": [
+            {
+                "worker_id": "worker",
+                "host": "macbook",
+                "runtime": "codex",
+                "iterm_session_id": "iterm-worker",
+                "tty": "/dev/ttys003",
+                "state": "running",
+                "observed": {"screen_tail": "first", "generated_ts": 100},
+            }
+        ],
+        "actionable_items": [],
+        "idle_worker_ids": [],
+        "exception_worker_ids": [],
+        "wake_required": False,
+        "wake_reasons": [],
+    }
+    churn = json.loads(json.dumps(base))
+    churn["workers"][0]["observed"] = {"screen_tail": "second", "generated_ts": 101}
+    changed = json.loads(json.dumps(base))
+    changed["workers"][0]["state"] = "idle"
+
+    assert supervisor.decision_digest(base) == supervisor.decision_digest(churn)
+    assert supervisor.decision_digest(base) != supervisor.decision_digest(changed)
+
+
+def test_decision_digest_tracks_actionable_payload_without_exposing_it():
+    base = {
+        "manifest_id": "test",
+        "workers": [],
+        "actionable_items": [
+            {
+                "kind": "message",
+                "message_id": "M-1",
+                "subject": "Immediate review",
+                "content": "Inspect exact head abc",
+                "scope": ["repo-a"],
+                "fetched_at": 100,
+            }
+        ],
+        "idle_worker_ids": [],
+        "exception_worker_ids": [],
+        "wake_required": True,
+        "wake_reasons": ["actionable coordination message requires model decision"],
+    }
+    volatile = json.loads(json.dumps(base))
+    volatile["actionable_items"][0]["fetched_at"] = 200
+    changed = json.loads(json.dumps(base))
+    changed["actionable_items"][0]["content"] = "Inspect exact head def"
+    authorization_changed = json.loads(json.dumps(base))
+    authorization_changed["actionable_items"][0]["authorization_limits"] = ["no-merge"]
+
+    assert supervisor.decision_digest(base) == supervisor.decision_digest(volatile)
+    assert supervisor.decision_digest(base) != supervisor.decision_digest(changed)
+    assert supervisor.decision_digest(base) != supervisor.decision_digest(authorization_changed)
+
+
 class FakeClient:
     def __init__(self):
         self.config = type("Config", (), {"principal_id": "mikebook_codex"})()
@@ -236,3 +296,76 @@ def test_arm_preserves_and_derives_recovery_receipt_sequences(tmp_path):
     watchdog = json.loads((tmp_path / "watchdog-state.json").read_text())
     assert watchdog["recovery_sequence"] == 5
     assert watchdog["edge_restart_sequence"] == 7
+
+
+def test_visible_recovery_hold_releases_epoch_and_headless_rebinds_actions(tmp_path):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": time.time(), "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    first = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=False,
+    )
+    (tmp_path / "recovery-hold.json").write_text(
+        json.dumps(
+            {
+                "controller_epoch": 7,
+                "action_digest": first["action_digest"],
+                "reason": "missed acknowledgments",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    held = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=False,
+    )
+    resumed = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="headless",
+        wake=False,
+    )
+
+    assert held["action"] == "recovery-hold"
+    assert held["authority"] is False
+    assert client.released == [7]
+    assert resumed["authority"] is True
+    rebound = supervisor.parse_actions(tmp_path / "current-actions.txt", manifest=m)
+    assert rebound.header["ownership"] == "headless"
+    assert rebound.generation == 2
+
+
+def test_existing_malformed_actions_fail_closed_without_reseed(tmp_path):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": time.time(), "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    malformed = b"corrupt-current-actions\n"
+    (tmp_path / "current-actions.txt").write_bytes(malformed)
+
+    with pytest.raises(ContractError, match="versioned JSON header"):
+        supervisor.run_tick(
+            manifest=m,
+            client=client,
+            state_dir=tmp_path,
+            live_state_path=live,
+            ownership="visible",
+            wake=False,
+        )
+
+    assert (tmp_path / "current-actions.txt").read_bytes() == malformed

@@ -468,6 +468,38 @@ def test_controller_poke_uses_same_crlf_submission_helper(monkeypatch):
     assert result["metrics"] == {"recovery_submitted": False}
 
 
+def test_controller_poke_accepts_kernel_foreground_runtime_fallback(monkeypatch):
+    target = FakeSession(
+        "/dev/ttys001",
+        runtime="unknown",
+        job="",
+        session_id="iterm-cos",
+        cli_session_id="cli-cos",
+        coord_session_id="coord-cos",
+        snapshots=[
+            {"session.isProcessing": False},
+            {"session.isProcessing": True},
+        ],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_: True)
+
+    result = asyncio.run(
+        dispatch.send_controller_poke(
+            object(),
+            manifest=_manifest(),
+            text="controller wake",
+            controller_epoch=7,
+            idempotency_key="poke-kernel-fallback",
+            verify_epoch=lambda *_: None,
+            ack_attempts=1,
+        )
+    )
+
+    assert result["ok"] is True
+    assert target.sent == ["controller wake", "\r", "\n"]
+
+
 def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
     target = FakeSession(
         "/dev/ttys003",

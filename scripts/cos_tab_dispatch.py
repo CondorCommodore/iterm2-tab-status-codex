@@ -460,7 +460,12 @@ async def send_controller_poke(
     observed_runtime = str(values.get("user.workerRuntime") or "").lower()
     if observed_runtime in {"codex", "claude"} and observed_runtime != manifest.controller_runtime:
         return {"ok": False, "error": "registered COS runtime mismatch", "session": values}
-    if not foreground_matches_runtime(values, manifest.controller_runtime):
+    if not (
+        foreground_matches_runtime(values, manifest.controller_runtime)
+        or tty_foreground_group_matches_runtime(
+            manifest.controller_tty, manifest.controller_runtime
+        )
+    ):
         return {
             "ok": False,
             "error": "registered COS does not own the terminal foreground",

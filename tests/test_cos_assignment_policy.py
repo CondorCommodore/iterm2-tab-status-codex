@@ -45,3 +45,19 @@ def test_choose_worker_can_bias_target_host():
 
     assert assignment is not None
     assert assignment.tty == "/dev/ttys002"
+
+
+def test_choose_worker_never_falls_back_to_running_or_unregistered():
+    assignment = policy.choose_worker(
+        [
+            {"tty": "/dev/ttys001", "state": "running", "role": "worker"},
+            {
+                "tty": "/dev/ttys002",
+                "state": "idle",
+                "role": "worker",
+                "registered": False,
+            },
+        ]
+    )
+
+    assert assignment is None

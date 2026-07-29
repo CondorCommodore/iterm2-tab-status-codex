@@ -13,6 +13,9 @@ from typing import Any
 
 VARIABLES = (
     "tty",
+    "session.isProcessing",
+    "jobName",
+    "foregroundJobName",
     "user.cosRole",
     "user.workerState",
     "user.workerReadiness",
@@ -20,6 +23,8 @@ VARIABLES = (
     "user.lastFleetReport",
     "user.workerRuntime",
     "user.workerCwd",
+    "user.cliSessionId",
+    "user.coordSessionId",
 )
 
 
@@ -45,7 +50,14 @@ async def collect_readback(connection: object) -> dict[str, Any]:
     for window in app.terminal_windows:
         for tab in window.tabs:
             for session in tab.sessions:
-                sessions.append(await session_snapshot(session))
+                sessions.append(
+                    {
+                        "iterm_session_id": str(
+                            getattr(session, "session_id", "") or ""
+                        ),
+                        **await session_snapshot(session),
+                    }
+                )
     return {
         "session_count": len(sessions),
         "sessions": sessions,

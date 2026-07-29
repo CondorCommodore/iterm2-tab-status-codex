@@ -63,6 +63,12 @@ NEEDS_INPUT_PATTERNS = (
 )
 
 
+def classify_attention_reason(text: str) -> str | None:
+    if any(pattern.search(text) for pattern in NEEDS_INPUT_PATTERNS):
+        return "interactive_input"
+    return None
+
+
 def utc_now() -> float:
     return time.time()
 
@@ -180,6 +186,7 @@ class SessionRecord:
     window_index: int
     tab_index: int
     session_index: int
+    iterm_session_id: str
     tty: str
     title: str
     cwd: str
@@ -188,17 +195,20 @@ class SessionRecord:
     role: str
     screen_tail: str
     last_fleet_report: str
+    attention_reason: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "window_index": self.window_index,
             "tab_index": self.tab_index,
             "session_index": self.session_index,
+            "iterm_session_id": self.iterm_session_id,
             "tty": self.tty,
             "title": self.title,
             "cwd": self.cwd,
             "runtime": self.runtime,
             "readiness": self.readiness,
+            "attention_reason": self.attention_reason,
             "role": self.role,
             "screen_tail": compact_text(self.screen_tail, limit=500),
             "last_fleet_report": self.last_fleet_report,
@@ -259,16 +269,19 @@ async def read_session_record(
     is_processing = await _get_processing(session)
     runtime = classify_runtime(title, cwd, screen_tail)
     readiness = classify_readiness(text=screen_tail, is_processing=is_processing)
+    attention_reason = classify_attention_reason(screen_tail)
     role = role_for_tty(tty, cos_ttys)
     return SessionRecord(
         window_index=window_index,
         tab_index=tab_index,
         session_index=session_index,
+        iterm_session_id=str(getattr(session, "session_id", "") or ""),
         tty=tty,
         title=title,
         cwd=cwd,
         runtime=runtime,
         readiness=readiness,
+        attention_reason=attention_reason,
         role=role,
         screen_tail=screen_tail,
         last_fleet_report=reports_by_tty.get(tty_short(tty), ""),

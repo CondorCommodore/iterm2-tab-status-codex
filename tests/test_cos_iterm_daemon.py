@@ -51,6 +51,19 @@ def test_classify_readiness_prioritizes_input_and_queue():
     assert daemon.classify_readiness(text="no prompt", is_processing=False) == "idle"
 
 
+def test_unknown_interactive_modal_is_generic_needs_input():
+    screen = """GPT-5.4 Mini will be deprecated soon
+Codex now uses GPT-5.6 Luna in place of GPT-5.4 Mini.
+Choose how you'd like Codex to proceed.
+1. Try new model
+2. Use existing model
+Use arrows to move, press enter to confirm
+"""
+
+    assert daemon.classify_readiness(text=screen, is_processing=False) == "needs_input"
+    assert daemon.classify_attention_reason(screen) == "interactive_input"
+
+
 def test_screen_to_text_reads_tail_from_iterm_screen_shape():
     screen = FakeScreen(["one", "two", "three"])
 
@@ -84,6 +97,7 @@ def test_read_session_record_classifies_runtime_and_report(tmp_path):
     assert record.tty == "/dev/ttys003"
     assert record.runtime == "codex"
     assert record.readiness == "ready"
+    assert record.attention_reason is None
     assert record.role == "worker"
     assert record.last_fleet_report == "worker-ttys003-report.md"
 
@@ -94,6 +108,7 @@ def test_set_session_variables_sets_status_surface():
         window_index=1,
         tab_index=1,
         session_index=1,
+        iterm_session_id="iterm-worker-3",
         tty="/dev/ttys003",
         title="codex",
         cwd="/Users/mikebook/code/home-lab",
@@ -120,6 +135,7 @@ def test_write_state_and_transition_events(tmp_path):
         window_index=1,
         tab_index=1,
         session_index=1,
+        iterm_session_id="iterm-worker-3",
         tty="/dev/ttys003",
         title="codex",
         cwd="/Users/mikebook/code/home-lab",
@@ -133,6 +149,7 @@ def test_write_state_and_transition_events(tmp_path):
         window_index=1,
         tab_index=1,
         session_index=1,
+        iterm_session_id="iterm-worker-3",
         tty="/dev/ttys003",
         title="codex",
         cwd="/Users/mikebook/code/home-lab",

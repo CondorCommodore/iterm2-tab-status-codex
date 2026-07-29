@@ -15,6 +15,15 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     scripts_dir.mkdir(parents=True)
     for name in installer.AUTOLAUNCH_SCRIPTS + installer.MENU_SCRIPTS:
         (scripts_dir / name).write_text(f"#!/usr/bin/env python3\n# {name}\n", encoding="utf-8")
+    legacy_edge = (
+        tmp_path
+        / "iterm"
+        / "Scripts"
+        / "AutoLaunch"
+        / "cos_iterm_edge_daemon.py"
+    )
+    legacy_edge.parent.mkdir(parents=True)
+    legacy_edge.write_text("legacy duplicate\n", encoding="utf-8")
 
     result = installer.install_scripts(
         repo_root=repo_root,
@@ -22,9 +31,14 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     )
 
     assert result["ok"] is True
-    assert len(result["installed"]) == 9
+    assert len(result["installed"]) == 14
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_overlay.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_daemon.py").exists()
+    assert not legacy_edge.exists()
+    assert result["removed_legacy_autolaunch"] == [str(legacy_edge)]
     assert (tmp_path / "iterm" / "Scripts" / "cos_iterm_daemon.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_tab_dispatch.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_dashboard.py").exists()
+    assert (tmp_path / "iterm" / "Scripts" / "c2_contract.py").exists()
+    assert (tmp_path / "iterm" / "Scripts" / "c2_visual_decision.py").exists()
+    assert (tmp_path / "iterm" / "Scripts" / "cos_iterm_edge_daemon.py").exists()

@@ -12,7 +12,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ITERM_SUPPORT = Path.home() / "Library" / "Application Support" / "iTerm2"
 
-AUTOLAUNCH_SCRIPTS = ("cos_iterm_overlay.py", "cos_iterm_daemon.py")
+AUTOLAUNCH_SCRIPTS = (
+    "cos_iterm_overlay.py",
+    "cos_iterm_daemon.py",
+)
+LEGACY_AUTOLAUNCH_SCRIPTS = ("cos_iterm_edge_daemon.py",)
 MENU_SCRIPTS = (
     "cos_iterm_readback.py",
     "cos_iterm_daemon.py",
@@ -21,6 +25,11 @@ MENU_SCRIPTS = (
     "cos_assignment_policy.py",
     "cos_dashboard.py",
     "cos_report_parser.py",
+    "c2_contract.py",
+    "c2_coord_client.py",
+    "c2_visual_decision.py",
+    "cos_iterm_edge_client.py",
+    "cos_iterm_edge_daemon.py",
 )
 
 
@@ -34,6 +43,12 @@ def install_scripts(
     menu_dir = iterm_support / "Scripts"
     autolaunch_dir.mkdir(parents=True, exist_ok=True)
     menu_dir.mkdir(parents=True, exist_ok=True)
+    removed: list[str] = []
+    for name in LEGACY_AUTOLAUNCH_SCRIPTS:
+        legacy = autolaunch_dir / name
+        if legacy.exists() or legacy.is_symlink():
+            legacy.unlink()
+            removed.append(str(legacy))
     installed: list[dict[str, object]] = []
     for name in AUTOLAUNCH_SCRIPTS:
         src = scripts_dir / name
@@ -60,6 +75,7 @@ def install_scripts(
     return {
         "ok": all(item["matches"] for item in installed),
         "installed": installed,
+        "removed_legacy_autolaunch": removed,
         "reload_note": (
             "Restart iTerm2 or run the scripts from iTerm2 Scripts menu to load new API code."
         ),

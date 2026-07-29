@@ -77,6 +77,14 @@ class EdgeDaemon:
         self.poke_receipts = ReceiptStore(state_dir / "poke-receipts.jsonl")
         self.dispatch_inflight: set[str] = set()
         self.dispatch_guard = asyncio.Lock()
+        self.target_locks: dict[str, asyncio.Lock] = {}
+
+    def target_lock(self, iterm_session_id: str) -> asyncio.Lock:
+        lock = self.target_locks.get(iterm_session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.target_locks[iterm_session_id] = lock
+        return lock
 
     def disk_manifest_sha256(self) -> str | None:
         if self.manifest_path is None:
@@ -321,14 +329,15 @@ class EdgeDaemon:
                     }
                 self.dispatch_inflight.add(decision.idempotency_key)
             try:
-                result = await execute_visual_decision(
-                    self.connection,
-                    manifest=self.manifest,
-                    observation=observation,
-                    decision=decision,
-                    verify_epoch=self.client.verify_live_epoch,
-                    receipts=self.dispatch_receipts,
-                )
+                async with self.target_lock(observation.iterm_session_id):
+                    result = await execute_visual_decision(
+                        self.connection,
+                        manifest=self.manifest,
+                        observation=observation,
+                        decision=decision,
+                        verify_epoch=self.client.verify_live_epoch,
+                        receipts=self.dispatch_receipts,
+                    )
                 if isinstance(result.get("receipt"), dict):
                     await self.audit_receipt(result, result["receipt"])
                 return result

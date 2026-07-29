@@ -133,6 +133,7 @@ def make_daemon(tmp_path) -> edge_daemon.EdgeDaemon:
     daemon.poke_receipts = c2.ReceiptStore(tmp_path / "poke.jsonl")
     daemon.dispatch_inflight = set()
     daemon.dispatch_guard = asyncio.Lock()
+    daemon.target_locks = {}
     return daemon
 
 
@@ -397,6 +398,48 @@ def test_concurrent_duplicate_visual_action_only_injects_once(monkeypatch, tmp_p
     assert duplicate["ok"] is False
     assert duplicate["in_flight"] is True
     assert calls == 1
+
+
+def test_distinct_visual_actions_serialize_per_target_session(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    active = 0
+    max_active = 0
+
+    async def fake_execute(_connection, **kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        if kwargs["decision"].idempotency_key == "visual-edge-1":
+            first_started.set()
+            await release_first.wait()
+        active -= 1
+        return {"ok": False, "error": "verification pending"}
+
+    monkeypatch.setattr(edge_daemon, "execute_visual_decision", fake_execute)
+    first_request = {
+        "protocol": "cos-c2-iterm-edge-v1",
+        "op": "visual_action",
+        "observation": visual_observation(),
+        "decision": visual_decision(),
+    }
+    second_request = {
+        **first_request,
+        "decision": {**visual_decision(), "idempotency_key": "visual-2"},
+    }
+
+    async def exercise():
+        first = asyncio.create_task(daemon.handle(first_request))
+        await first_started.wait()
+        second = asyncio.create_task(daemon.handle(second_request))
+        await asyncio.sleep(0)
+        assert max_active == 1
+        release_first.set()
+        await asyncio.gather(first, second)
+
+    asyncio.run(exercise())
+    assert max_active == 1
 
 
 def test_concurrent_duplicate_poke_only_injects_once(monkeypatch, tmp_path):

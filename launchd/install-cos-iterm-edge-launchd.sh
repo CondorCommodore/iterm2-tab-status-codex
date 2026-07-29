@@ -45,6 +45,7 @@ fi
 if [[ -z "${ITERM_PYTHON}" ]]; then
   ITERM_PYTHON="$("${DISCOVERY_PYTHON}" -c '
 import pathlib
+import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -54,7 +55,16 @@ for path in root.glob("*/bin/python3"):
         version = tuple(int(part) for part in path.parents[1].name.split("."))
     except ValueError:
         continue
-    if path.is_file():
+    if not path.is_file():
+        continue
+    probe = subprocess.run(
+        [str(path), "-c", "import iterm2"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
+    if probe.returncode == 0:
         candidates.append((version, path))
 if candidates:
     print(max(candidates)[1])

@@ -73,12 +73,20 @@ def test_installer_discovers_highest_semantic_iterm_runtime(tmp_path):
     launchctl = fake_bin / "launchctl"
     launchctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launchctl.chmod(0o755)
-    for version in ("3.8.19", "3.10.19"):
+    for version in ("3.8.19", "3.10.19", "3.11.9"):
         runtime = (
             home / "Library/Application Support/iTerm2/iterm2env/versions" / version / "bin/python3"
         )
         runtime.parent.mkdir(parents=True)
-        runtime.symlink_to("/usr/bin/python3")
+        import_status = "1" if version == "3.11.9" else "0"
+        runtime.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "-c" ] && [ "$2" = "import iterm2" ]; then '
+            f"exit {import_status}; fi\n"
+            'exec /usr/bin/python3 "$@"\n',
+            encoding="utf-8",
+        )
+        runtime.chmod(0o755)
     env = os.environ.copy()
     env.update({"HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"})
 

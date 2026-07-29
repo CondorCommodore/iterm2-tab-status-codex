@@ -320,9 +320,7 @@ def run_once(
                 raise CoordError("coord client is required while awaiting action acknowledgment")
             client = client_factory()
         pending_lease = client.get_resource(SUPERVISOR_RESOURCE)
-        pending_live_epoch = (
-            pending_lease.get("epoch") if isinstance(pending_lease, dict) else None
-        )
+        pending_live_epoch = pending_lease.get("epoch") if isinstance(pending_lease, dict) else None
         pending_holder = (
             str(pending_lease.get("actual_holder") or pending_lease.get("holder") or "")
             if isinstance(pending_lease, dict)
@@ -449,8 +447,7 @@ def run_once(
             and decision.get("wake_required") is True
             and not checkpoint_published
             and not (
-                recovery_hold
-                and watchdog.get("last_headless_checkpoint_digest") == actions.digest
+                recovery_hold and watchdog.get("last_headless_checkpoint_digest") == actions.digest
             )
         ):
             action_due = True

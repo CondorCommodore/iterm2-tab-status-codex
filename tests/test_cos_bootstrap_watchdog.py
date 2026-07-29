@@ -105,9 +105,7 @@ def write_headless_authority(state_dir: Path, *, recorded_ts=501, epoch=8):
     )
 
 
-def publish_headless_checkpoint(
-    state_dir: Path, manifest_path: Path, *, coord_accept: bool = True
-):
+def publish_headless_checkpoint(state_dir: Path, manifest_path: Path, *, coord_accept: bool = True):
     m = load_manifest(manifest_path)
     path = state_dir / "current-actions.txt"
     seeded = current_actions.seed_actions(
@@ -570,8 +568,9 @@ def test_fresh_process_heartbeat_does_not_hide_unacknowledged_action(tmp_path):
         state_dir=tmp_path,
         client=Client({"holder": "mikebook_codex", "epoch": 7}),
         now_ts=500,
-        poke_fn=lambda **kwargs: seen.append(kwargs)
-        or {"ok": False, "injection_attempted": True, "observed_ack": False},
+        poke_fn=lambda **kwargs: (
+            seen.append(kwargs) or {"ok": False, "injection_attempted": True, "observed_ack": False}
+        ),
     )
 
     assert result["action"] == "action-wake"
@@ -588,8 +587,9 @@ def test_edge_false_negative_then_model_ack_does_not_duplicate(tmp_path):
         "manifest_path": manifest,
         "state_dir": tmp_path,
         "client": Client({"holder": "mikebook_codex", "epoch": 7}),
-        "poke_fn": lambda **call: seen.append(call)
-        or {"ok": False, "injection_attempted": True, "observed_ack": False},
+        "poke_fn": lambda **call: (
+            seen.append(call) or {"ok": False, "injection_attempted": True, "observed_ack": False}
+        ),
     }
     watchdog.run_once(**kwargs, now_ts=500)
     waiting = watchdog.run_once(**kwargs, now_ts=501)

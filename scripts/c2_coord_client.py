@@ -330,9 +330,7 @@ class CoordClient:
         _status, payload = self.call("GET", f"/messages/{message_id}")
         return payload if isinstance(payload, dict) else {}
 
-    def verify_receipt_readback(
-        self, receipt: dict[str, Any], message_id: int
-    ) -> dict[str, Any]:
+    def verify_receipt_readback(self, receipt: dict[str, Any], message_id: int) -> dict[str, Any]:
         expected_content = json.dumps(
             {"c2_dispatch_receipt": receipt}, sort_keys=True, separators=(",", ":")
         )

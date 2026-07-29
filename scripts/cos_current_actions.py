@@ -244,8 +244,7 @@ Rewrite after every material transition; stop automatic work only when status is
 standby.
 """
     raw = (
-        f"--- {SCHEMA}\n{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
-        f"---\n{body}"
+        f"--- {SCHEMA}\n{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n---\n{body}"
     ).encode()
     _atomic_bytes(path, raw)
     return parse_actions(path, manifest=manifest)

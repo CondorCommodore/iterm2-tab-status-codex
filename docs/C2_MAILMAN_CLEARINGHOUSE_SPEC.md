@@ -762,10 +762,12 @@ Named Phase 1a mutations are permanent tests:
 | digest bounds and FIFO are deterministic | replay limits 1/5/50 and equal timestamps |
 
 Remaining work before Test 1 can pass is the human language/digest comparison
-and the real integration tier: persist the artifact through coord-api, stop its
-producer, reconstruct it through the supported read route, and compare live
-control/treatment behavior. Those claims cannot be inferred from this pure
-model.
+and the remaining real integration tier: compare live control/treatment
+behavior against the persisted artifact and producer-stopped supported-route
+readback described later in this section. The later deployed readback closes
+only the persistence, producer-stop, and repeatability subcase; it does not
+establish the language result or the full control/treatment acceptance claim.
+Those claims cannot be inferred from this pure model.
 
 **Phase 2 implementation state (not live acceptance).** The isolated coord-api
 slice `feat/c2-mailman-phase2` adds an append-only
@@ -792,9 +794,10 @@ semantic message count remained zero and `coord_messages_id_seq` remained
 uncalled. The durable row itself does not prove that a producer stopped:
 `readback` reports `producer_stop_observed=false`, and only an independent
 process-lifecycle observation may establish that experiment condition. The
-external run supports the disposable path but does not prove the running
-coord-api: independent review, deployment, and an authorized running-edge probe
-remain required before Test 1 can claim live durable reconstruction.
+external run supports the disposable path but did not itself prove the running
+coord-api. The later deployed evidence closes that durable-readback subcase,
+but independent review and the remaining acceptance comparisons are still
+required before Test 1 can pass.
 
 **Pre-protocol diagnostics only, 2026-07-29.** In one operator-authorized
 bounded review, the local edge returned `observed_ack=false`; the prompt was
@@ -1018,13 +1021,17 @@ Normal/Elevated/Urgent/Critical reducer and 24-message fixture remain frozen v1
 experimental evidence so their published digests stay reproducible; they are
 not the vocabulary for new schemas, model outputs, or product behavior.
 
-The deployed Test 1 acceptance ran three producer-stopped reads over the frozen
-28,921-message snapshot. All three produced projection digest
+**Protocol status.** Test 1 is not passed; Test 2 and Test 3 remain blocked.
+
+The deployed Test 1 durable-readback subcase ran three producer-stopped reads
+over the frozen 28,921-message snapshot. All three produced projection digest
 `c254b011fdb84957b54a92a41670f69b91e97710e244c301316c7fb3c1673938`
 without changing the message count or sequence. The evidence bundle SHA-256 is
 `0e0b28f173459acb86cfd659a2a8514c133633ad3de30dca6352b7b5b9242b84`.
-This establishes a repeatable read-only source for the next, observation-only
-classification stage; it does not activate delivery or interruption policy.
+This establishes only a repeatable read-only source for the next,
+observation-only classification stage. It is not full Test 1 acceptance, does
+not satisfy the outstanding language and live control/treatment comparisons,
+and does not activate delivery or interruption policy.
 
 ## 13. Staged acceptance plan
 

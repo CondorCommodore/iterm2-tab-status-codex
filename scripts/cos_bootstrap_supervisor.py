@@ -51,7 +51,7 @@ from cos_current_actions import (
     record_coord_acceptance,
     seed_actions,
 )
-from cos_iterm_edge_client import poke_controller
+from cos_iterm_edge_client import poke_controller, request_edge
 
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"
@@ -841,6 +841,58 @@ def status(
     }
 
 
+def preflight(
+    *,
+    manifest: RunManifest,
+    manifest_path: Path,
+    readiness: dict[str, Any] | None = None,
+    edge_probe: Any = request_edge,
+) -> dict[str, Any]:
+    """Run read-only gates required before an authorized terminal experiment."""
+    observed_readiness = readiness if readiness is not None else service_readiness()
+    plan_missing = [path for path in manifest.plan_paths if not Path(path).is_file()]
+    manifest_sha256 = manifest_file_sha256(manifest_path)
+    edge: dict[str, Any]
+    if not manifest.terminal_actions_enabled:
+        edge = {
+            "ready": False,
+            "reason": "terminal_actions_disabled_in_manifest",
+        }
+    else:
+        try:
+            response = edge_probe(
+                {"protocol": "cos-c2-iterm-edge-v1", "op": "health"},
+                timeout_seconds=2.0,
+            )
+            edge = {
+                "ready": bool(response.get("ok"))
+                and response.get("manifest_sha256") == manifest_sha256,
+                "response": response,
+                "manifest_sha256": manifest_sha256,
+            }
+            if edge["ready"] is not True:
+                edge["reason"] = "edge_health_or_manifest_digest_failed"
+        except Exception as exc:
+            edge = {
+                "ready": False,
+                "reason": "edge_unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    return {
+        "ready": (
+            observed_readiness.get("ready") is True
+            and not plan_missing
+            and edge.get("ready") is True
+        ),
+        "manifest_id": manifest.manifest_id,
+        "manifest_sha256": manifest_sha256,
+        "missing_plan_paths": plan_missing,
+        "service_readiness": observed_readiness,
+        "edge": edge,
+        "terminal_actions_enabled": manifest.terminal_actions_enabled,
+    }
+
+
 def _status_actions(path: Path):
     try:
         return parse_actions(path)
@@ -855,6 +907,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(
             "arm",
             "status",
+            "preflight",
             "run",
             "poke",
             "standby",
@@ -887,6 +940,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     manifest = load_manifest(args.manifest)
     selected_manifest_sha256 = manifest_file_sha256(args.manifest)
+    if args.command == "preflight":
+        result = preflight(
+            manifest=manifest,
+            manifest_path=args.manifest,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["ready"] else 1
     if args.command == "arm":
         print(
             json.dumps(

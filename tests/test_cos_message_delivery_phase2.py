@@ -31,6 +31,40 @@ def test_durable_readback_reconstructs_byte_identically():
     assert result["projection_sha256"] == result["projection"]["projection_sha256"]
 
 
+def test_reconstruct_accepts_external_producer_stop_witness():
+    item = phase2.build_run(fixture(), "phase2-producer-stop-witness-1")
+    witness = {
+        "schema": phase2.PRODUCER_STOP_WITNESS_SCHEMA,
+        "run_id": "phase2-producer-stop-witness-1",
+        "producer_pid": 1234,
+        "producer_exit_code": 0,
+        "producer_started_at": "2026-07-30T19:00:00Z",
+        "producer_exited_at": "2026-07-30T19:00:01Z",
+        "message_highwater_before": 29239,
+        "message_highwater_after": 29239,
+    }
+    result = phase2.reconstruct(item, producer_stop_witness=witness)
+    assert result["producer_stop_observed"] is True
+    assert result["message_highwater_unchanged"] is True
+    assert result["producer_stop_witness_sha256"] == phase2.policy.content_digest(witness)
+
+
+def test_reconstruct_rejects_changed_message_highwater_witness():
+    item = phase2.build_run(fixture(), "phase2-producer-stop-witness-red-1")
+    witness = {
+        "schema": phase2.PRODUCER_STOP_WITNESS_SCHEMA,
+        "run_id": "phase2-producer-stop-witness-red-1",
+        "producer_pid": 1234,
+        "producer_exit_code": 0,
+        "producer_started_at": "2026-07-30T19:00:00Z",
+        "producer_exited_at": "2026-07-30T19:00:01Z",
+        "message_highwater_before": 29239,
+        "message_highwater_after": 29240,
+    }
+    with pytest.raises(phase2.Phase2EvidenceError, match="high-water mark changed"):
+        phase2.reconstruct(item, producer_stop_witness=witness)
+
+
 def test_producer_and_fresh_reader_share_only_durable_route_state_without_stop_claim():
     class DurableClient:
         def __init__(self):

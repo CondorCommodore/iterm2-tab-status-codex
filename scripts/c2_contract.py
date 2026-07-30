@@ -46,10 +46,86 @@ RUNTIME_OBSERVATION_PROFILES = {
 }
 DISPATCH_TRANSPORTS = {"tab", "headless", "ab"}
 TTY_RE = re.compile(r"^/dev/ttys[0-9A-Za-z_.-]+$")
+ARM_MARKER_SCHEMA = "cos-c2.arm-marker.v1"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ContractError(ValueError):
     """Raised when a manifest or dispatch envelope violates the C2 contract."""
+
+
+def manifest_file_sha256(path: Path) -> str:
+    """Digest the exact manifest bytes selected by the operator."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ContractError(f"cannot read run manifest for digest: {path}: {exc}") from exc
+
+
+def manifest_contract_sha256(manifest: "RunManifest") -> str:
+    """Deterministic test/in-process fallback when no manifest file exists."""
+    return hashlib.sha256(
+        json.dumps(asdict(manifest), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def render_arm_marker(*, manifest_id: str, manifest_sha256: str) -> str:
+    if not SHA256_RE.fullmatch(str(manifest_sha256 or "")):
+        raise ContractError("arm marker manifest_sha256 must be lowercase SHA-256")
+    return json.dumps(
+        {
+            "schema": ARM_MARKER_SCHEMA,
+            "manifest_id": _required(manifest_id, "manifest_id"),
+            "manifest_sha256": manifest_sha256,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ) + "\n"
+
+
+def arm_marker_status(
+    marker_text: str,
+    *,
+    manifest_id: str,
+    manifest_sha256: str,
+) -> dict[str, Any]:
+    """Classify a marker without accepting legacy or partially parsed forms."""
+    try:
+        marker = json.loads(marker_text)
+    except (TypeError, json.JSONDecodeError):
+        marker = None
+    expected_fields = {"schema", "manifest_id", "manifest_sha256"}
+    if not isinstance(marker, dict) or set(marker) != expected_fields:
+        return {
+            "valid": False,
+            "reason": "legacy-or-malformed-arm-marker",
+            "requires_explicit_rearm": True,
+        }
+    if marker.get("schema") != ARM_MARKER_SCHEMA:
+        return {
+            "valid": False,
+            "reason": "unsupported-arm-marker-schema",
+            "requires_explicit_rearm": True,
+        }
+    if marker.get("manifest_id") != manifest_id:
+        return {
+            "valid": False,
+            "reason": "manifest-id-mismatch",
+            "requires_explicit_rearm": True,
+        }
+    if marker.get("manifest_sha256") != manifest_sha256:
+        return {
+            "valid": False,
+            "reason": "manifest-digest-mismatch",
+            "requires_explicit_rearm": True,
+        }
+    return {
+        "valid": True,
+        "reason": "current",
+        "requires_explicit_rearm": False,
+        "manifest_id": manifest_id,
+        "manifest_sha256": manifest_sha256,
+    }
 
 
 def _required(value: object, name: str) -> str:

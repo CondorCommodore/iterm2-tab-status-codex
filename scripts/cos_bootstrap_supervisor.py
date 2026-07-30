@@ -853,8 +853,23 @@ def preflight(
     observed_readiness = readiness if readiness is not None else service_readiness()
     plan_missing = [path for path in manifest.plan_paths if not Path(path).is_file()]
     manifest_sha256 = manifest_file_sha256(manifest_path)
-    workers = classify_registered_workers(manifest, _load_json(live_state_path))
+    live_state = _load_json(live_state_path)
+    workers = classify_registered_workers(manifest, live_state)
     idle_workers = [worker for worker in workers if worker["state"] == "idle"]
+    registered_ttys = {worker.tty for worker in manifest.workers}
+    registered_sessions = {worker.iterm_session_id for worker in manifest.workers}
+    identity_drift = [
+        {
+            "tty": str(session.get("tty") or ""),
+            "observed_session_id": str(session.get("iterm_session_id") or ""),
+            "runtime": str(session.get("runtime") or "unknown"),
+            "readiness": str(session.get("readiness") or "unknown"),
+        }
+        for session in live_state.get("sessions", [])
+        if isinstance(session, dict)
+        and session.get("tty") in registered_ttys
+        and session.get("iterm_session_id") not in registered_sessions
+    ]
     edge: dict[str, Any]
     if not manifest.terminal_actions_enabled:
         edge = {
@@ -894,6 +909,7 @@ def preflight(
         "workers": workers,
         "idle_worker_ids": [worker["worker_id"] for worker in idle_workers],
         "worker_roster_ready": bool(idle_workers),
+        "identity_drift": identity_drift,
         "service_readiness": observed_readiness,
         "edge": edge,
         "terminal_actions_enabled": manifest.terminal_actions_enabled,

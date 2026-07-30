@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from c2_runtime_hook import DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR
+from c2_runtime_hook import load_record as load_runtime_hook_record
 from c2_runtime_observation import RuntimeObservation
 
 DEFAULT_REPORT_DIR = Path.home() / ".claude" / "plans" / "fleet-reports"
@@ -210,6 +212,8 @@ class SessionRecord:
     input_buffer_state: str = "unknown"
     prompt_ready: bool = False
     observation_trusted: bool = False
+    cli_session_id: str = ""
+    coord_session_id: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -229,6 +233,8 @@ class SessionRecord:
             "input_buffer_state": self.input_buffer_state,
             "prompt_ready": self.prompt_ready,
             "observation_trusted": self.observation_trusted,
+            "cli_session_id": self.cli_session_id,
+            "coord_session_id": self.coord_session_id,
             "role": self.role,
             "screen_tail": compact_text(self.screen_tail, limit=500),
             "last_fleet_report": self.last_fleet_report,
@@ -277,6 +283,7 @@ async def read_session_record(
     session_index: int,
     reports_by_tty: dict[str, str] | None = None,
     cos_ttys: set[str] | None = None,
+    runtime_hook_state_dir: Path = DEFAULT_RUNTIME_HOOK_STATE_DIR,
 ) -> SessionRecord:
     reports_by_tty = {} if reports_by_tty is None else reports_by_tty
     cos_ttys = set() if cos_ttys is None else cos_ttys
@@ -289,18 +296,27 @@ async def read_session_record(
     is_processing = await _get_processing(session)
     runtime = classify_runtime(title, cwd, screen_tail)
     readiness = classify_readiness(text=screen_tail, is_processing=is_processing)
-    observation_values = {
-        name: await _get_variable(session, name)
-        for name in (
-            "user.workerRuntime",
-            "user.workerObservationProfile",
-            "user.workerObservationProfileVersion",
-            "user.workerPromptState",
-            "user.workerInputBufferState",
-            "user.cliSessionId",
-            "user.coordSessionId",
-        )
-    }
+    iterm_session_id = str(getattr(session, "session_id", "") or "")
+    hook_record = load_runtime_hook_record(
+        runtime_hook_state_dir,
+        iterm_session_id=iterm_session_id,
+        tty=tty,
+    )
+    if hook_record is not None and hook_record.runtime != runtime:
+        hook_record = None
+    observation_values = (
+        {
+            "user.workerRuntime": hook_record.runtime,
+            "user.workerObservationProfile": hook_record.profile_id,
+            "user.workerObservationProfileVersion": str(hook_record.profile_version),
+            "user.workerPromptState": hook_record.prompt_state,
+            "user.workerInputBufferState": hook_record.input_buffer_state,
+            "user.cliSessionId": hook_record.cli_session_id,
+            "user.coordSessionId": hook_record.coord_session_id,
+        }
+        if hook_record is not None
+        else {}
+    )
     runtime_observation = RuntimeObservation.from_session_variables(observation_values)
     attention_reason = classify_attention_reason(screen_tail)
     role = role_for_tty(tty, cos_ttys)
@@ -308,7 +324,7 @@ async def read_session_record(
         window_index=window_index,
         tab_index=tab_index,
         session_index=session_index,
-        iterm_session_id=str(getattr(session, "session_id", "") or ""),
+        iterm_session_id=iterm_session_id,
         tty=tty,
         title=title,
         cwd=cwd,
@@ -328,6 +344,8 @@ async def read_session_record(
         ),
         prompt_ready=(runtime_observation.prompt_ready if runtime_observation else False),
         observation_trusted=runtime_observation is not None,
+        cli_session_id=(runtime_observation.cli_session_id if runtime_observation else ""),
+        coord_session_id=(runtime_observation.coord_session_id if runtime_observation else ""),
     )
 
 
@@ -448,6 +466,16 @@ async def set_session_variables(session: Any, record: SessionRecord) -> None:
         "user.lastFleetReport": record.last_fleet_report,
         "user.workerRuntime": record.runtime,
         "user.workerCwd": record.cwd,
+        "user.workerObservationProfile": record.observation_profile_id,
+        "user.workerObservationProfileVersion": (
+            str(record.observation_profile_version) if record.observation_trusted else ""
+        ),
+        "user.workerPromptState": record.prompt_state if record.observation_trusted else "",
+        "user.workerInputBufferState": (
+            record.input_buffer_state if record.observation_trusted else ""
+        ),
+        "user.cliSessionId": record.cli_session_id if record.observation_trusted else "",
+        "user.coordSessionId": record.coord_session_id if record.observation_trusted else "",
     }
     for key, value in values.items():
         try:

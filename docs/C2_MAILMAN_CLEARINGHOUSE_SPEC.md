@@ -928,9 +928,19 @@ or changed live observation rejects before an epoch check or terminal byte.
 Escape additionally requires the captured runtime to be `running`; every other
 currently bounded visual action requires `ready` plus a verified empty buffer.
 
-Test 2 remains blocked before execution because no enrolled Codex or Claude
-runtime hook yet publishes those trusted observation variables, and therefore
-there is still no real trusted empty/non-empty input-buffer observation. The
+The source tree now also contains a shared, inert Codex/Claude lifecycle-hook
+publisher. It accepts an exact runtime payload session ID plus explicit iTerm,
+TTY, CLI, and coord identities; writes one atomic mode-0600 record beneath a
+mode-0700 machine-local cache; and is consumed only for the same fresh iTerm/TTY
+binding. Corrupt, stale, non-private, reused-identity, and symlinked records are
+ignored, and the daemon clears prior action variables when no valid record is
+present. The publisher has no input-buffer override: every record is `unknown`,
+so even a `ready` lifecycle event remains non-actionable.
+
+Test 2 remains blocked before execution because this publisher is not installed
+in either runtime's hook configuration and deliberately supplies no real trusted
+empty/non-empty input-buffer observation. Installed Codex/Claude hooks and
+settings remain unchanged and require separate operator authorization. The
 atomic Escape-to-freshly-reverified-prompt-ready transaction before text and a
 distinct recipient receipt beyond transport acknowledgement also remain
 unimplemented. Soft-queue parity and the full dual-runtime fault matrix remain

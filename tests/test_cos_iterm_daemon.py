@@ -9,6 +9,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import cos_iterm_daemon as daemon  # noqa: E402
+from c2_runtime_hook import RuntimeHookRecord, write_record  # noqa: E402
 
 
 class FakeLine:
@@ -26,15 +27,26 @@ class FakeScreen:
 
 
 class FakeSession:
-    def __init__(self, *, variables: dict[str, object], screen: object = ""):
+    def __init__(
+        self,
+        *,
+        variables: dict[str, object],
+        screen: object = "",
+        session_id: str = "",
+        fail_set: bool = False,
+    ):
         self.variables = dict(variables)
         self.screen = screen
+        self.session_id = session_id
+        self.fail_set = fail_set
         self.set_calls: list[tuple[str, str]] = []
 
     async def async_get_variable(self, name: str):
         return self.variables.get(name)
 
     async def async_set_variable(self, name: str, value: str):
+        if self.fail_set:
+            raise RuntimeError("simulated iTerm variable write failure")
         self.set_calls.append((name, value))
 
     async def async_get_screen_contents(self):
@@ -161,7 +173,7 @@ def test_partial_hook_without_live_runtime_cannot_promote():
     assert record.observation_trusted is False
 
 
-def test_exact_codex_hook_reports_prompt_ready_only_with_empty_buffer():
+def test_unbacked_session_variables_cannot_self_promote():
     base = {
         "tty": "/dev/ttys003",
         "session.title": "codex worker",
@@ -174,7 +186,7 @@ def test_exact_codex_hook_reports_prompt_ready_only_with_empty_buffer():
         "user.cliSessionId": "cli-1",
         "user.coordSessionId": "coord-1",
     }
-    for buffer_state, expected in (("empty", True), ("nonempty", False), ("unknown", False)):
+    for buffer_state in ("empty", "nonempty", "unknown"):
         session = FakeSession(
             variables={**base, "user.workerInputBufferState": buffer_state},
             screen="› ",
@@ -187,8 +199,136 @@ def test_exact_codex_hook_reports_prompt_ready_only_with_empty_buffer():
                 session_index=1,
             )
         )
-        assert record.prompt_ready is expected
-        assert record.observation_trusted is True
+        assert record.prompt_ready is False
+        assert record.observation_trusted is False
+
+
+def test_inert_hook_cache_sets_exact_profile_but_never_prompt_ready(tmp_path):
+    hook = RuntimeHookRecord.from_hook(
+        runtime="codex",
+        event="turn-ended",
+        iterm_session_id="iterm-worker",
+        tty="/dev/ttys003",
+        cli_session_id="cli-1",
+        coord_session_id="coord-1",
+        payload={"session_id": "cli-1"},
+    )
+    write_record(hook, tmp_path)
+    session = FakeSession(
+        variables={
+            "tty": "/dev/ttys003",
+            "session.title": "codex worker",
+            "path": "/tmp/disposable",
+            "session.isProcessing": False,
+        },
+        screen="› ",
+        session_id="iterm-worker",
+    )
+
+    record = asyncio.run(
+        daemon.read_session_record(
+            session,
+            window_index=1,
+            tab_index=1,
+            session_index=1,
+            runtime_hook_state_dir=tmp_path,
+        )
+    )
+    asyncio.run(daemon.set_session_variables(session, record))
+    values = dict(session.set_calls)
+
+    assert record.observation_trusted is True
+    assert record.prompt_state == "ready"
+    assert record.input_buffer_state == "unknown"
+    assert record.prompt_ready is False
+    assert values["user.workerRuntime"] == "codex"
+    assert values["user.workerObservationProfile"] == "codex-cli"
+    assert values["user.workerInputBufferState"] == "unknown"
+    assert values["user.cliSessionId"] == "cli-1"
+
+
+def test_missing_or_wrong_iterm_hook_cache_clears_action_variables(tmp_path):
+    wrong_runtime = RuntimeHookRecord.from_hook(
+        runtime="claude",
+        event="stop",
+        iterm_session_id="new-iterm-worker",
+        tty="/dev/ttys003",
+        cli_session_id="cli-claude",
+        coord_session_id="coord-claude",
+        payload={"session_id": "cli-claude"},
+    )
+    write_record(wrong_runtime, tmp_path)
+    session = FakeSession(
+        variables={
+            "tty": "/dev/ttys003",
+            "session.title": "codex worker",
+            "path": "/tmp/disposable",
+            "session.isProcessing": False,
+            "user.workerObservationProfile": "stale-profile",
+            "user.workerPromptState": "ready",
+            "user.workerInputBufferState": "empty",
+            "user.cliSessionId": "stale-cli",
+            "user.coordSessionId": "stale-coord",
+        },
+        screen="› ",
+        session_id="new-iterm-worker",
+    )
+
+    record = asyncio.run(
+        daemon.read_session_record(
+            session,
+            window_index=1,
+            tab_index=1,
+            session_index=1,
+            runtime_hook_state_dir=tmp_path,
+        )
+    )
+    asyncio.run(daemon.set_session_variables(session, record))
+    values = dict(session.set_calls)
+
+    assert record.observation_trusted is False
+    assert record.prompt_ready is False
+    assert values["user.workerObservationProfile"] == ""
+    assert values["user.workerPromptState"] == ""
+    assert values["user.workerInputBufferState"] == ""
+    assert values["user.cliSessionId"] == ""
+    assert values["user.coordSessionId"] == ""
+
+
+def test_failed_best_effort_clear_does_not_create_trusted_record(tmp_path):
+    session = FakeSession(
+        variables={
+            "tty": "/dev/ttys003",
+            "session.title": "codex worker",
+            "path": "/tmp/disposable",
+            "session.isProcessing": False,
+            "user.workerRuntime": "codex",
+            "user.workerObservationProfile": "codex-cli",
+            "user.workerObservationProfileVersion": "1",
+            "user.workerPromptState": "ready",
+            "user.workerInputBufferState": "empty",
+            "user.cliSessionId": "stale-cli",
+            "user.coordSessionId": "stale-coord",
+        },
+        screen="› ",
+        session_id="iterm-worker",
+        fail_set=True,
+    )
+
+    record = asyncio.run(
+        daemon.read_session_record(
+            session,
+            window_index=1,
+            tab_index=1,
+            session_index=1,
+            runtime_hook_state_dir=tmp_path,
+        )
+    )
+    asyncio.run(daemon.set_session_variables(session, record))
+
+    assert record.observation_trusted is False
+    assert record.prompt_ready is False
+    assert session.set_calls == []
 
 
 def test_set_session_variables_sets_status_surface():

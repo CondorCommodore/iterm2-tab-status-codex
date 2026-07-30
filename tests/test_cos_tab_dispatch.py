@@ -7,6 +7,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -152,6 +153,29 @@ def _install_fake_iterm(monkeypatch, sessions):
 
     fake_iterm2 = type("Iterm2", (), {"async_get_app": fake_get_app})
     monkeypatch.setitem(sys.modules, "iterm2", fake_iterm2)
+
+    def trusted_hook_record(_state_dir, *, iterm_session_id, tty):
+        target = next(
+            (
+                session
+                for session in sessions
+                if session.session_id == iterm_session_id and session.tty == tty
+            ),
+            None,
+        )
+        if target is None:
+            return None
+        return SimpleNamespace(
+            runtime=target.runtime,
+            profile_id=target.profile_id,
+            profile_version=target.profile_version,
+            prompt_state=target.prompt_state,
+            input_buffer_state=target.input_buffer_state,
+            cli_session_id=target.cli_session_id,
+            coord_session_id=target.coord_session_id,
+        )
+
+    monkeypatch.setattr(dispatch, "load_runtime_hook_record", trusted_hook_record)
 
 
 def test_dispatch_rejects_shell_like_target(monkeypatch):
@@ -427,11 +451,11 @@ def test_unacknowledged_visual_decision_fails_closed(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("session_kwargs", "error"),
     [
-        ({"runtime": ""}, "missing or unsupported"),
-        ({"profile_version": 2}, "missing or unsupported"),
-        ({"input_buffer_state": "nonempty"}, "changed since visual capture"),
-        ({"cli_session_id": "reused-cli"}, "stale cli session identity"),
-        ({"coord_session_id": "reused-coord"}, "stale coord session identity"),
+        ({"runtime": ""}, "runtime hook record is missing or unsupported"),
+        ({"profile_version": 2}, "runtime hook record is missing or unsupported"),
+        ({"input_buffer_state": "nonempty"}, "does not match visual observation"),
+        ({"cli_session_id": "reused-cli"}, "does not match visual observation"),
+        ({"coord_session_id": "reused-coord"}, "does not match visual observation"),
     ],
 )
 def test_visual_action_rejects_live_profile_buffer_or_identity_drift(
@@ -464,6 +488,42 @@ def test_visual_action_rejects_live_profile_buffer_or_identity_drift(
 
     assert result["ok"] is False
     assert error in result["error"]
+    assert target.sent == []
+    assert verified == []
+
+
+def test_visual_action_rejects_stale_mirrored_vars_when_authoritative_cache_is_absent(
+    monkeypatch, tmp_path
+):
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="ready",
+        input_buffer_state="empty",
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    monkeypatch.setattr(dispatch, "load_runtime_hook_record", lambda *_args, **_kwargs: None)
+    observation = _visual_observation()
+    verified = []
+
+    result = asyncio.run(
+        dispatch.execute_visual_decision(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=_visual_decision(observation),
+            verify_epoch=lambda *args: verified.append(args),
+            receipts=ReceiptStore(tmp_path / "stale-mirror.jsonl"),
+            ack_attempts=1,
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "fresh exact runtime hook record is required"
     assert target.sent == []
     assert verified == []
 

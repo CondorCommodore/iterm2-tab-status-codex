@@ -29,6 +29,8 @@ from c2_contract import (
     load_envelope,
     load_manifest,
 )
+from c2_runtime_hook import DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR
+from c2_runtime_hook import load_record as load_runtime_hook_record
 from c2_runtime_observation import RuntimeObservation
 from c2_visual_decision import VisualDecision, VisualObservation
 from cos_iterm_edge_client import dispatch_envelope as dispatch_envelope_via_iterm_api
@@ -578,6 +580,41 @@ async def execute_visual_decision(
     before = await session_variables(session)
     if before.get("tty") != worker.tty:
         return {"ok": False, "error": "registered tty mismatch", "session": before}
+    hook_record = load_runtime_hook_record(
+        DEFAULT_RUNTIME_HOOK_STATE_DIR,
+        iterm_session_id=worker.iterm_session_id,
+        tty=worker.tty,
+    )
+    if hook_record is None:
+        return {
+            "ok": False,
+            "error": "fresh exact runtime hook record is required",
+            "session": before,
+        }
+    try:
+        hook_observation = RuntimeObservation.from_dict(
+            {
+                "runtime": hook_record.runtime,
+                "profile_id": hook_record.profile_id,
+                "profile_version": hook_record.profile_version,
+                "prompt_state": hook_record.prompt_state,
+                "input_buffer_state": hook_record.input_buffer_state,
+                "cli_session_id": hook_record.cli_session_id,
+                "coord_session_id": hook_record.coord_session_id,
+            }
+        )
+    except ContractError as exc:
+        return {
+            "ok": False,
+            "error": f"runtime hook record is missing or unsupported: {exc}",
+            "session": before,
+        }
+    if hook_observation != observation.runtime_observation:
+        return {
+            "ok": False,
+            "error": "fresh runtime hook record does not match visual observation",
+            "session": before,
+        }
     foreground_owned = foreground_matches_runtime(
         before, worker.runtime
     ) or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)

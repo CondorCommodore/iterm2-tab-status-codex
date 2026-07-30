@@ -98,7 +98,10 @@ def build_envelope_dispatch_plan(
             ok=True,
             tty=worker.tty,
             text=envelope.objective,
-            reason=f"validated envelope assignment={envelope.assignment_id} worker={worker.worker_id}",
+            reason=(
+                f"validated envelope assignment={envelope.assignment_id} "
+                f"worker={worker.worker_id}"
+            ),
             dashboard_action="; ".join(dashboard["recommended_actions"]),
             dry_run_payload=envelope.canonical_json(),
             envelope_digest=envelope.digest(),
@@ -161,7 +164,10 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(
                     {
                         "ok": False,
-                        "error": "live dispatch requires --envelope and --manifest; legacy goal dispatch is dry-run only",
+                        "error": (
+                            "live dispatch requires --envelope and --manifest; "
+                            "legacy goal dispatch is dry-run only"
+                        ),
                         "plan": asdict(plan),
                     },
                     indent=2,

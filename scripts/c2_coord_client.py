@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import urllib.error
@@ -13,6 +14,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+from c2_contract import ContractError
+from c2_runtime_hook import interrupt_challenge_binding_sha256
 
 
 class CoordError(RuntimeError):
@@ -41,6 +45,7 @@ class LeaseLost(CoordError):
 
 RequestFn = Callable[[str, str, dict[str, str], bytes | None, float], tuple[int, Any]]
 SHADOW_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 
 def _request(
@@ -413,6 +418,80 @@ class CoordClient:
         if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:
             raise CoordError("coord receipt POST returned no durable message id")
         return self.verify_receipt_readback(receipt, message_id)
+
+    def create_runtime_interrupt_challenge(self, request: dict[str, Any]) -> dict[str, Any]:
+        idempotency_key = str(request.get("idempotency_key") or "")
+        if not idempotency_key:
+            raise CoordError("runtime interrupt challenge requires idempotency_key")
+        _status, payload = self.call(
+            "POST",
+            "/c2/runtime-observations/challenges",
+            payload=request,
+            write=True,
+            idempotency_key=idempotency_key,
+            allowed=(200, 201),
+        )
+        challenge = payload.get("challenge") if isinstance(payload, dict) else None
+        if not isinstance(challenge, dict):
+            raise CoordError("coord broker returned no runtime interrupt challenge")
+        challenge_id = challenge.get("challenge_id")
+        issued_at = challenge.get("issued_at")
+        if not isinstance(challenge_id, str) or not challenge_id:
+            raise CoordError("coord broker returned invalid runtime challenge identity")
+        if (
+            isinstance(issued_at, bool)
+            or not isinstance(issued_at, (int, float))
+            or not math.isfinite(float(issued_at))
+        ):
+            raise CoordError("coord broker returned invalid runtime challenge timestamp")
+        try:
+            expected_binding = interrupt_challenge_binding_sha256(request)
+        except ContractError as exc:
+            raise CoordError(str(exc)) from exc
+        if challenge.get("binding_sha256") != expected_binding:
+            raise CoordError("coord broker returned a differently bound runtime challenge")
+        return challenge
+
+    def arm_runtime_interrupt_challenge(self, request: dict[str, Any]) -> dict[str, Any]:
+        challenge_id = str(request.get("challenge_id") or "")
+        idempotency_key = str(request.get("idempotency_key") or "")
+        binding_sha256 = str(request.get("binding_sha256") or "")
+        if not challenge_id or not idempotency_key or not SHA256_RE.fullmatch(binding_sha256):
+            raise CoordError(
+                "arming runtime challenge requires challenge, binding, and idempotency identities"
+            )
+        _status, payload = self.call(
+            "POST",
+            "/c2/runtime-observations/challenges/"
+            + urllib.parse.quote(challenge_id, safe="")
+            + "/arm",
+            payload=request,
+            write=True,
+            idempotency_key=idempotency_key,
+            allowed=(200,),
+        )
+        challenge = payload.get("challenge") if isinstance(payload, dict) else None
+        if (
+            not isinstance(challenge, dict)
+            or challenge.get("challenge_id") != challenge_id
+            or challenge.get("armed") is not True
+            or challenge.get("binding_sha256") != binding_sha256
+        ):
+            raise CoordError("coord broker did not arm the exact runtime challenge")
+        return challenge
+
+    def verify_runtime_observation(self, report: dict[str, Any]) -> dict[str, Any]:
+        _status, payload = self.call(
+            "POST",
+            "/c2/runtime-observations/verify",
+            payload={"observation": report},
+            write=True,
+            allowed=(200,),
+        )
+        verification = payload.get("verification") if isinstance(payload, dict) else None
+        if not isinstance(verification, dict):
+            raise CoordError("coord broker returned no runtime observation verification")
+        return verification
 
     def post_message_delivery_shadow_run(self, run: dict[str, Any]) -> dict[str, Any]:
         run_id = run.get("run_id")

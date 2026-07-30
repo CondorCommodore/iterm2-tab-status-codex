@@ -76,6 +76,7 @@ if [[ -z "${ITERM_PYTHON}" || ! -x "${ITERM_PYTHON}" ]]; then
 fi
 
 mkdir -p "${HOME}/Library/LaunchAgents" "${STATE_DIR}" "$(dirname "${SOCKET}")"
+chmod 700 "${STATE_DIR}" "$(dirname "${SOCKET}")"
 "${ITERM_PYTHON}" -c '
 import html
 import pathlib
@@ -96,3 +97,4 @@ launchctl bootstrap "gui/$(id -u)" "${DST}"
 launchctl enable "gui/$(id -u)/${LABEL}"
 launchctl print "gui/$(id -u)/${LABEL}" | sed -n '1,22p'
 echo "[install] persistent iTerm edge loaded for manifest=${MANIFEST} state_dir=${STATE_DIR} socket=${SOCKET}"
+echo "[install] broker observer enrollment remains a separate, explicit source-profile step"

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import re
 import shlex
 import subprocess
@@ -29,14 +30,21 @@ from c2_contract import (
     load_envelope,
     load_manifest,
 )
-from c2_runtime_hook import DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR
-from c2_runtime_hook import load_record as load_runtime_hook_record
+from c2_runtime_hook import (
+    DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR,
+)
+from c2_runtime_hook import (
+    SignedRuntimeHookObservation,
+    interrupt_challenge_binding_sha256,
+)
+from c2_runtime_hook import (
+    load_record as load_runtime_hook_record,
+)
 from c2_runtime_observation import RuntimeObservation
 from c2_visual_decision import VisualDecision, VisualObservation
 from cos_iterm_edge_client import dispatch_envelope as dispatch_envelope_via_iterm_api
 
 TTY_RE = re.compile(r"^/dev/ttys[0-9A-Za-z_.-]+$")
-FORBIDDEN_CONTROL_CHARS = {"\x03", "\x1b"}
 
 
 @dataclass(frozen=True)
@@ -55,10 +63,8 @@ def validate_tty(tty: str) -> str:
 
 
 def validate_text(text: str, *, require_goal: bool = True) -> str:
-    if any(char in text for char in FORBIDDEN_CONTROL_CHARS):
-        raise ValueError("dispatch text must not contain Ctrl-C or Escape")
-    if "\n" in text or "\r" in text:
-        raise ValueError("dispatch text must be exactly one line")
+    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+        raise ValueError("dispatch text must not contain terminal control characters")
     if require_goal and not text.startswith("/goal "):
         raise ValueError("dispatch text must start with '/goal '")
     if not text.strip():
@@ -115,6 +121,13 @@ async def session_variables(session: object) -> dict[str, str]:
         "user.workerObservationProfileVersion",
         "user.workerPromptState",
         "user.workerInputBufferState",
+        "user.workerHookSchemaVersion",
+        "user.workerHookItermSessionId",
+        "user.workerHookSequence",
+        "user.workerHookObservedAt",
+        "user.workerHookEventId",
+        "user.workerHookChallengeId",
+        "user.workerHookSignature",
         "session.isProcessing",
         "session.currentCommand",
     )
@@ -713,6 +726,365 @@ async def execute_visual_decision(
         "receipt": receipt,
         "error": "post-action visual verification required",
     }
+
+
+async def execute_escape_delivery_transaction(
+    connection: object,
+    *,
+    manifest: RunManifest,
+    observation: VisualObservation,
+    decision: VisualDecision,
+    text: str,
+    verify_epoch: Any,
+    receipts: ReceiptStore,
+    create_challenge: Any,
+    arm_challenge: Any,
+    verify_hook_authenticity: Any,
+    post_attempts: int = 8,
+    poll_interval: float = 0.1,
+    hook_clock: Any = time.time,
+) -> dict[str, Any]:
+    """Escape once, then deliver only after a fresh signed prompt-ready hook."""
+    observation.validate_for(manifest)
+    decision.validate_for(observation)
+    if decision.action != "press_escape":
+        raise ContractError("interrupt delivery requires exactly one Escape decision")
+    validate_text(text, require_goal=False)
+    text_sha256 = decision.validate_delivery_text(text)
+    if receipts.has_idempotency_key(decision.idempotency_key):
+        raise ContractError(
+            f"duplicate visual decision idempotency key: {decision.idempotency_key}"
+        )
+    worker = manifest.worker(observation.worker_id)
+    if worker.role != "worker":
+        raise ContractError("interrupt delivery may target only registered workers")
+    collisions = manifest.controller_collides_with_worker(worker)
+    if collisions:
+        raise ContractError(
+            "controller session identities must not also be registered as a worker: "
+            + ", ".join(collisions)
+        )
+    if (
+        manifest.controller_has_visible_terminal()
+        and worker.iterm_session_id == manifest.controller_iterm_session_id
+    ):
+        raise ContractError("self-dispatch is forbidden")
+    session = await find_session_by_id(connection, worker.iterm_session_id)
+    if session is None:
+        return {"ok": False, "error": "registered iTerm session not found"}
+    worker_resource = f"workspace:mikebook:c2-worker:{worker.worker_id}"
+
+    async def exact_session() -> object:
+        current = await find_session_by_id(connection, worker.iterm_session_id)
+        if current is None or current is not session:
+            raise ContractError("registered iTerm target changed during interrupt delivery")
+        return current
+
+    before_values = await session_variables(session)
+    if before_values.get("tty") != worker.tty:
+        return {"ok": False, "error": "registered tty mismatch"}
+    foreground_owned = foreground_matches_runtime(
+        before_values, worker.runtime
+    ) or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    if not foreground_owned:
+        return {
+            "ok": False,
+            "error": "registered agent does not own the terminal foreground",
+            "session": before_values,
+        }
+    initial = SignedRuntimeHookObservation.from_session_variables(before_values)
+    initial.verify(
+        verify_hook_authenticity,
+        runtime=worker.runtime,
+        profile_id=worker.observation_profile_id,
+        profile_version=worker.observation_profile_version,
+        cli_session_id=worker.cli_session_id,
+        coord_session_id=worker.coord_session_id,
+        iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
+    )
+    if initial.runtime_observation != observation.runtime_observation:
+        raise ContractError("signed live hook changed since visual observation")
+    if not observation.runtime_hook_digest:
+        raise ContractError("interrupt observation does not bind a broker runtime hook")
+    if observation.runtime_hook_digest != initial.digest():
+        raise ContractError("visual capture does not bind the live runtime hook event")
+
+    def fence() -> None:
+        verify_epoch(SUPERVISOR_RESOURCE, observation.controller_epoch)
+        verify_epoch(worker_resource, observation.worker_epoch)
+
+    challenge_request = {
+        "worker_id": worker.worker_id,
+        "iterm_session_id": worker.iterm_session_id,
+        "cli_session_id": worker.cli_session_id,
+        "coord_session_id": worker.coord_session_id,
+        "controller_epoch": observation.controller_epoch,
+        "worker_epoch": observation.worker_epoch,
+        "initial_hook_digest": initial.digest(),
+        "observation_digest": observation.digest(),
+        "delivery_text_sha256": text_sha256,
+        "idempotency_key": f"{decision.idempotency_key}:challenge",
+    }
+    challenge_binding_sha256 = interrupt_challenge_binding_sha256(challenge_request)
+    challenge = create_challenge(challenge_request)
+    if not isinstance(challenge, dict):
+        raise ContractError("coord broker returned no interrupt challenge")
+    challenge_id = str(challenge.get("challenge_id") or "")
+    challenge_issued_at = challenge.get("issued_at")
+    if (
+        not challenge_id
+        or isinstance(challenge_issued_at, bool)
+        or not isinstance(challenge_issued_at, (int, float))
+        or not math.isfinite(float(challenge_issued_at))
+        or challenge.get("binding_sha256") != challenge_binding_sha256
+    ):
+        raise ContractError(
+            "coord broker returned an invalid or differently bound interrupt challenge"
+        )
+
+    # Re-baseline after challenge creation and immediately before the Escape.
+    baseline_session = await exact_session()
+    baseline_values = await session_variables(baseline_session)
+    if baseline_values.get("tty") != worker.tty:
+        return {"ok": False, "error": "registered tty changed before Escape"}
+    foreground_owned = foreground_matches_runtime(
+        baseline_values, worker.runtime
+    ) or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    if not foreground_owned:
+        return {"ok": False, "error": "registered agent lost foreground before Escape"}
+    baseline = SignedRuntimeHookObservation.from_session_variables(baseline_values)
+    baseline.verify(
+        verify_hook_authenticity,
+        runtime=worker.runtime,
+        profile_id=worker.observation_profile_id,
+        profile_version=worker.observation_profile_version,
+        cli_session_id=worker.cli_session_id,
+        coord_session_id=worker.coord_session_id,
+        iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
+    )
+    if baseline.runtime_observation != observation.runtime_observation:
+        raise ContractError("signed runtime state changed before Escape")
+    if baseline.digest() != observation.runtime_hook_digest:
+        raise ContractError("runtime hook event changed after visual capture")
+
+    reservation = {
+        "receipt_version": 1,
+        "kind": "interrupt-delivery-reservation",
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "worker_id": worker.worker_id,
+        "target_iterm_session_id": worker.iterm_session_id,
+        "controller_epoch": observation.controller_epoch,
+        "worker_epoch": observation.worker_epoch,
+        "initial_hook_digest": initial.digest(),
+        "baseline_hook_digest": baseline.digest(),
+        "challenge_id": challenge_id,
+        "challenge_binding_sha256": challenge_binding_sha256,
+        "observation_digest": observation.digest(),
+        "delivery_text_sha256": text_sha256,
+        "idempotency_key": decision.idempotency_key,
+        "escape_writes": 0,
+        "text_bytes": 0,
+        "verification_state": "escape-pending",
+    }
+    receipts.append(reservation)
+    arm_requested_at = hook_clock()
+    armed = arm_challenge(
+        {
+            "challenge_id": challenge_id,
+            "arm_requested_at": arm_requested_at,
+            "controller_epoch": observation.controller_epoch,
+            "worker_epoch": observation.worker_epoch,
+            "binding_sha256": challenge_binding_sha256,
+            "idempotency_key": f"{decision.idempotency_key}:challenge-arm",
+        }
+    )
+    if (
+        not isinstance(armed, dict)
+        or armed.get("challenge_id") != challenge_id
+        or armed.get("armed") is not True
+        or armed.get("binding_sha256") != challenge_binding_sha256
+    ):
+        raise ContractError("coord broker did not arm the exact interrupt challenge")
+    receipts.append(
+        {
+            **reservation,
+            "kind": "interrupt-delivery-challenge-armed",
+            "idempotency_key": f"{decision.idempotency_key}:challenge-armed",
+            "arm_requested_at": arm_requested_at,
+            "verification_state": "escape-pending",
+        }
+    )
+
+    # Authenticate the exact state once more after potentially slow receipt and
+    # broker I/O, then fence authority. The post-fence check is local and must
+    # match the already broker-verified object byte-for-byte before Escape.
+    pre_fence_session = await exact_session()
+    pre_fence_values = await session_variables(pre_fence_session)
+    if pre_fence_values.get("tty") != worker.tty:
+        raise ContractError("registered tty changed before Escape fence")
+    if not (
+        foreground_matches_runtime(pre_fence_values, worker.runtime)
+        or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    ):
+        raise ContractError("registered agent lost foreground before Escape fence")
+    pre_fence_hook = SignedRuntimeHookObservation.from_session_variables(pre_fence_values)
+    pre_fence_hook.verify(
+        verify_hook_authenticity,
+        runtime=worker.runtime,
+        profile_id=worker.observation_profile_id,
+        profile_version=worker.observation_profile_version,
+        cli_session_id=worker.cli_session_id,
+        coord_session_id=worker.coord_session_id,
+        iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
+    )
+    if pre_fence_hook != baseline:
+        raise ContractError("runtime hook event changed before Escape fence")
+
+    fence()
+    escape_session = await exact_session()
+    post_fence_values = await session_variables(escape_session)
+    if post_fence_values.get("tty") != worker.tty:
+        raise ContractError("registered tty changed after Escape fence")
+    if not (
+        foreground_matches_runtime(post_fence_values, worker.runtime)
+        or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    ):
+        raise ContractError("registered agent lost foreground after Escape fence")
+    post_fence_hook = SignedRuntimeHookObservation.from_session_variables(post_fence_values)
+    if post_fence_hook != pre_fence_hook:
+        raise ContractError("runtime hook event changed after Escape fence")
+
+    escape_write_started_at = hook_clock()
+    await escape_session.async_send_text("\x1b")  # type: ignore[attr-defined]
+    escape_write_completed_at = hook_clock()
+    escape_receipt = {
+        **reservation,
+        "kind": "interrupt-delivery-escape-write",
+        "idempotency_key": f"{decision.idempotency_key}:escape",
+        "escape_writes": 1,
+        "escape_write_started_at": escape_write_started_at,
+        "escape_write_completed_at": escape_write_completed_at,
+        "verification_state": "post-escape-pending",
+    }
+    receipts.append(escape_receipt)
+
+    after = None
+    last_error = "no fresh signed post-Escape hook observation"
+    for attempt in range(max(1, post_attempts)):
+        candidate_session = await exact_session()
+        values = await session_variables(candidate_session)
+        try:
+            candidate = SignedRuntimeHookObservation.from_session_variables(values)
+            candidate.verify(
+                verify_hook_authenticity,
+                runtime=worker.runtime,
+                profile_id=worker.observation_profile_id,
+                profile_version=worker.observation_profile_version,
+                cli_session_id=worker.cli_session_id,
+                coord_session_id=worker.coord_session_id,
+                iterm_session_id=worker.iterm_session_id,
+                now_ts=hook_clock(),
+                after_sequence=baseline.sequence,
+                min_observed_at=escape_write_started_at,
+                expected_challenge_id=challenge_id,
+                expected_challenge_binding_sha256=challenge_binding_sha256,
+            )
+            if values.get("tty") != worker.tty:
+                last_error = "registered tty changed after Escape"
+                break
+            foreground_owned = foreground_matches_runtime(
+                values, worker.runtime
+            ) or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+            if not foreground_owned:
+                last_error = "registered agent lost terminal foreground after Escape"
+                break
+            if candidate.runtime_observation.input_buffer_state != "empty":
+                last_error = "post-Escape input buffer is not verified empty"
+                break
+            if not candidate.runtime_observation.prompt_ready:
+                last_error = "post-Escape runtime is not verified prompt-ready"
+            else:
+                after = candidate
+                break
+        except ContractError as exc:
+            last_error = str(exc)
+        if attempt + 1 < post_attempts:
+            await asyncio.sleep(poll_interval)
+    if after is None:
+        blocked = {
+            **escape_receipt,
+            "kind": "interrupt-delivery-blocked",
+            "idempotency_key": f"{decision.idempotency_key}:blocked",
+            "verification_state": "blocked",
+            "error": last_error,
+        }
+        receipts.append(blocked)
+        return {"ok": False, "error": last_error, "receipt": blocked}
+
+    # Re-resolve all target state immediately before the one atomic command write.
+    final_session = await exact_session()
+    final_values = await session_variables(final_session)
+    if final_values.get("tty") != worker.tty:
+        raise ContractError("registered tty changed before command write")
+    final_foreground_owned = foreground_matches_runtime(
+        final_values, worker.runtime
+    ) or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    if not final_foreground_owned:
+        raise ContractError("registered agent lost terminal foreground before command write")
+    final_hook = SignedRuntimeHookObservation.from_session_variables(final_values)
+    final_hook.verify(
+        verify_hook_authenticity,
+        runtime=worker.runtime,
+        profile_id=worker.observation_profile_id,
+        profile_version=worker.observation_profile_version,
+        cli_session_id=worker.cli_session_id,
+        coord_session_id=worker.coord_session_id,
+        iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
+        after_sequence=baseline.sequence,
+        min_observed_at=escape_write_started_at,
+        expected_challenge_id=challenge_id,
+        expected_challenge_binding_sha256=challenge_binding_sha256,
+    )
+    if final_hook.runtime_observation.input_buffer_state != "empty":
+        raise ContractError("input buffer changed before atomic command write")
+    if not final_hook.runtime_observation.prompt_ready:
+        raise ContractError("runtime left prompt-ready state before atomic command write")
+
+    # Fence first, then repeat the complete local target/state comparison so a
+    # slow epoch verification cannot hide a foreground or session transition.
+    fence()
+    write_session = await exact_session()
+    write_values = await session_variables(write_session)
+    if write_values.get("tty") != worker.tty:
+        raise ContractError("registered tty changed after final epoch fence")
+    write_foreground_owned = foreground_matches_runtime(
+        write_values, worker.runtime
+    ) or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    if not write_foreground_owned:
+        raise ContractError("registered agent lost foreground after final epoch fence")
+    write_hook = SignedRuntimeHookObservation.from_session_variables(write_values)
+    if write_hook.digest() != final_hook.digest():
+        raise ContractError("signed runtime observation changed after final epoch fence")
+    if write_hook.runtime_observation.input_buffer_state != "empty":
+        raise ContractError("input buffer changed after final epoch fence")
+    if not write_hook.runtime_observation.prompt_ready:
+        raise ContractError("runtime left prompt-ready state after final epoch fence")
+    await write_session.async_send_text(f"{text}\r\n")  # type: ignore[attr-defined]
+    receipt = {
+        **escape_receipt,
+        "kind": "interrupt-delivery-submitted",
+        "idempotency_key": f"{decision.idempotency_key}:submitted",
+        "post_hook_digest": final_hook.digest(),
+        "text_sha256": text_sha256,
+        "text_bytes": len(text.encode()),
+        "verification_state": "submitted-unacknowledged",
+    }
+    receipts.append(receipt)
+    return {"ok": False, "error": "recipient acknowledgement required", "receipt": receipt}
 
 
 def headless_command(worker: WorkerRegistration, prompt: str) -> list[str]:

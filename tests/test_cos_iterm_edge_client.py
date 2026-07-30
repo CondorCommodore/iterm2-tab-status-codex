@@ -35,6 +35,30 @@ def test_visual_action_client_uses_bounded_protocol(monkeypatch):
     }
 
 
+def test_interrupt_delivery_client_uses_bounded_protocol(monkeypatch):
+    captured = {}
+
+    def fake_request(request, **kwargs):
+        captured.update(request)
+        return {"ok": False, "error": "recipient acknowledgement required"}
+
+    monkeypatch.setattr(edge, "request_edge", fake_request)
+    result = edge.execute_interrupt_delivery(
+        {"worker_id": "worker"},
+        {"action": "press_escape"},
+        "FLASH synthetic message M-test",
+    )
+
+    assert result["ok"] is False
+    assert captured == {
+        "protocol": "cos-c2-iterm-edge-v1",
+        "op": "interrupt_delivery",
+        "observation": {"worker_id": "worker"},
+        "decision": {"action": "press_escape"},
+        "text": "FLASH synthetic message M-test",
+    }
+
+
 def test_unix_socket_edge_protocol_round_trip(tmp_path):
     socket_path = Path("/private/tmp") / f"cos-edge-test-{os.getpid()}.sock"
     socket_path.unlink(missing_ok=True)

@@ -80,6 +80,25 @@ def execute_visual_action(
     )
 
 
+def execute_interrupt_delivery(
+    observation: dict[str, Any],
+    decision: dict[str, Any],
+    text: str,
+    *,
+    socket_path: Path | None = None,
+) -> dict[str, Any]:
+    return request_edge(
+        {
+            "protocol": "cos-c2-iterm-edge-v1",
+            "op": "interrupt_delivery",
+            "observation": observation,
+            "decision": decision,
+            "text": text,
+        },
+        socket_path=socket_path,
+    )
+
+
 def dispatch_envelope(
     envelope: dict[str, Any],
     *,

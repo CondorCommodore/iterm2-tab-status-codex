@@ -36,6 +36,7 @@ from cos_iterm_edge_client import DEFAULT_SOCKET_PATH, MAX_RESPONSE_BYTES  # noq
 from cos_tab_dispatch import (  # noqa: E402
     dispatch_registered,
     dispatch_registered_headless,
+    execute_escape_delivery_transaction,
     execute_visual_decision,
     send_controller_poke,
 )
@@ -134,7 +135,7 @@ class EdgeDaemon:
             return {"ok": False, "error": "unsupported edge protocol"}
         operation = request.get("op")
         disk_manifest_sha256 = self.disk_manifest_sha256()
-        if operation in {"dispatch", "poke", "visual_action"} and (
+        if operation in {"dispatch", "poke", "visual_action", "interrupt_delivery"} and (
             disk_manifest_sha256 != self.manifest_sha256
         ):
             return {
@@ -143,7 +144,7 @@ class EdgeDaemon:
                 "loaded_manifest_sha256": self.manifest_sha256,
                 "disk_manifest_sha256": disk_manifest_sha256,
             }
-        if operation in {"dispatch", "poke", "visual_action"} and not (
+        if operation in {"dispatch", "poke", "visual_action", "interrupt_delivery"} and not (
             self.manifest.terminal_actions_enabled
         ):
             return {
@@ -359,6 +360,45 @@ class EdgeDaemon:
             finally:
                 async with self.dispatch_guard:
                     self.dispatch_inflight.discard(decision.idempotency_key)
+        if operation == "interrupt_delivery":
+            raw_observation = request.get("observation")
+            raw_decision = request.get("decision")
+            text = str(request.get("text") or "")
+            if not isinstance(raw_observation, dict) or not isinstance(raw_decision, dict):
+                return {"ok": False, "error": "interrupt observation and decision must be objects"}
+            observation = VisualObservation.from_dict(raw_observation)
+            decision = VisualDecision.from_dict(raw_decision)
+            key = decision.idempotency_key
+            async with self.dispatch_guard:
+                if self.dispatch_receipts.has_idempotency_key(key):
+                    return {"ok": False, "error": f"duplicate visual action idempotency key: {key}"}
+                if key in self.dispatch_inflight:
+                    return {
+                        "ok": False,
+                        "error": f"interrupt delivery already in flight: {key}",
+                        "in_flight": True,
+                    }
+                self.dispatch_inflight.add(key)
+            try:
+                async with self.target_lock(observation.iterm_session_id):
+                    result = await execute_escape_delivery_transaction(
+                        self.connection,
+                        manifest=self.manifest,
+                        observation=observation,
+                        decision=decision,
+                        text=text,
+                        verify_epoch=self.client.verify_live_epoch,
+                        receipts=self.dispatch_receipts,
+                        create_challenge=self.client.create_runtime_interrupt_challenge,
+                        arm_challenge=self.client.arm_runtime_interrupt_challenge,
+                        verify_hook_authenticity=self.client.verify_runtime_observation,
+                    )
+                if isinstance(result.get("receipt"), dict):
+                    await self.audit_receipt(result, result["receipt"])
+                return result
+            finally:
+                async with self.dispatch_guard:
+                    self.dispatch_inflight.discard(key)
         if operation == "health":
             manifest_current = disk_manifest_sha256 == self.manifest_sha256
             return {

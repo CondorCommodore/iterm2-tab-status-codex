@@ -937,16 +937,37 @@ ignored, and the daemon clears prior action variables when no valid record is
 present. The publisher has no input-buffer override: every record is `unknown`,
 so even a `ready` lifecycle event remains non-actionable.
 
+The interrupt-delivery source contract adds a separate broker-authenticated
+observation envelope; the inert lifecycle publisher cannot satisfy it. No
+signing secret is stored beside the worker: coord-api must verify a report from
+an independently enrolled observer. The transaction binds the exact delivery
+text digest and captured broker-hook event into the LLM decision and durable
+reservation, obtains a one-use broker challenge, rejects any hook-event drift
+before one Escape, and rejects a replayed challenge unless its canonical
+binding digest covers the exact worker/iTerm/CLI/coord identities, controller
+and worker epochs, initial-hook and visual-observation digests, and delivery-text
+digest. The broker arms that exact binding before the action. After the final
+network fence, the edge re-reads the exact object, TTY, foreground process, and
+already broker-verified hook with no intervening network operation before one
+Escape. The transaction then requires a
+newer challenge-bound report that the broker attests was observed only after it
+armed the challenge and whose observation timestamp does not predate the
+Escape write. It revalidates exact
+runtime/profile/CLI/coord/iTerm identity, TTY, foreground, prompt readiness, and
+an empty input buffer immediately before one atomic text-plus-CR/LF API write.
+A submitted transport receipt remains unacknowledged until a distinct recipient
+receipt arrives.
+
 Test 2 remains blocked before execution because this publisher is not installed
 in either runtime's hook configuration and deliberately supplies no real trusted
 empty/non-empty input-buffer observation. Installed Codex/Claude hooks and
 settings remain unchanged and require separate operator authorization. The
-atomic Escape-to-freshly-reverified-prompt-ready transaction before text and a
-distinct recipient receipt beyond transport acknowledgement also remain
-unimplemented. Soft-queue parity and the full dual-runtime fault matrix remain
-unimplemented. The default-deny gate and observation schema are source
-prerequisites only; neither activates terminal actions nor counts toward a Test
-2 acceptance criterion.
+required coord-api challenge and verification endpoints are contract consumers
+here but are not yet implemented in the broker, and no independent observer is
+enrolled. Recipient receipt handling, soft-queue parity, and the full
+dual-runtime fault matrix also remain incomplete. The default-deny gate,
+observation schemas, and atomic source transaction are prerequisites only; none
+activates terminal actions or counts toward a Test 2 acceptance criterion.
 
 **Unanswered decisions.** Exact prompt-ready signals by runtime version; whether
 Priority ever uses safe STEER while running; policy for known versus unknown

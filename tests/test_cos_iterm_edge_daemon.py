@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import sys
 import threading
@@ -138,6 +139,18 @@ class FakeCoordClient:
     def post_receipt(self, receipt):
         self.events.append(("post", receipt))
 
+    def create_runtime_interrupt_challenge(self, request):
+        self.events.append(("challenge", request))
+        return {"challenge_id": "challenge-1", "issued_at": 1001.0}
+
+    def arm_runtime_interrupt_challenge(self, request):
+        self.events.append(("challenge-arm", request))
+        return {"challenge_id": request["challenge_id"], "armed": True}
+
+    def verify_runtime_observation(self, report):
+        self.events.append(("runtime-verify", report))
+        return {"verified": True, "observation_digest": "a" * 64}
+
     def release_resource(self, handle):
         self.events.append(("release", handle.resource))
 
@@ -183,7 +196,7 @@ def test_default_deny_gate_refuses_every_terminal_operation_without_side_effects
     daemon = make_daemon(tmp_path)
     daemon.manifest = manifest(terminal_actions_enabled=False)
 
-    for operation in ("dispatch", "poke", "visual_action"):
+    for operation in ("dispatch", "poke", "visual_action", "interrupt_delivery"):
         result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation}))
         assert result == {
             "ok": False,
@@ -207,7 +220,7 @@ def test_manifest_drift_fails_closed_before_any_terminal_operation(tmp_path):
     manifest_path.write_text("changed\n", encoding="utf-8")
     daemon.manifest_path = manifest_path
 
-    for operation in ("dispatch", "poke", "visual_action"):
+    for operation in ("dispatch", "poke", "visual_action", "interrupt_delivery"):
         result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation}))
         assert result["ok"] is False
         assert "reload required" in result["error"]
@@ -455,6 +468,86 @@ def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):
     )
     assert duplicate["ok"] is False
     assert "duplicate visual action" in duplicate["error"]
+
+
+def test_interrupt_delivery_uses_broker_callbacks_and_audits_result(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    raw_observation = {**visual_observation(), "prompt_state": "running"}
+    parsed = edge_daemon.VisualObservation.from_dict(raw_observation)
+    delivery_text = "URGENT synthetic reference"
+    raw_decision = {
+        "observation_digest": parsed.digest(),
+        "action": "press_escape",
+        "text": "",
+        "rationale": "Synthetic urgent interrupt",
+        "decided_by": "llm:test-supervisor",
+        "idempotency_key": "interrupt-edge-1",
+        "delivery_text_sha256": hashlib.sha256(delivery_text.encode()).hexdigest(),
+    }
+
+    async def fake_execute(_connection, **kwargs):
+        assert kwargs["create_challenge"] == daemon.client.create_runtime_interrupt_challenge
+        assert kwargs["arm_challenge"] == daemon.client.arm_runtime_interrupt_challenge
+        assert kwargs["verify_hook_authenticity"] == daemon.client.verify_runtime_observation
+        assert kwargs["text"] == delivery_text
+        receipt = {"idempotency_key": "interrupt-edge-1:submitted"}
+        kwargs["receipts"].append(receipt)
+        return {"ok": False, "error": "recipient acknowledgement required", "receipt": receipt}
+
+    monkeypatch.setattr(edge_daemon, "execute_escape_delivery_transaction", fake_execute)
+    result = asyncio.run(
+        daemon.handle(
+            {
+                "protocol": "cos-c2-iterm-edge-v1",
+                "op": "interrupt_delivery",
+                "observation": raw_observation,
+                "decision": raw_decision,
+                "text": delivery_text,
+            }
+        )
+    )
+    assert result["ok"] is False
+    assert daemon.client.events[-1] == ("post", result["receipt"])
+
+
+def test_interrupt_delivery_broker_failure_fails_before_terminal_call(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    terminal_called = False
+
+    async def fake_execute(*args, **kwargs):
+        nonlocal terminal_called
+        kwargs["create_challenge"]({"idempotency_key": "challenge"})
+        terminal_called = True
+
+    def reject_challenge(_request):
+        raise c2.ContractError("coord broker unavailable")
+
+    monkeypatch.setattr(edge_daemon, "execute_escape_delivery_transaction", fake_execute)
+    daemon.client.create_runtime_interrupt_challenge = reject_challenge
+    raw_observation = {**visual_observation(), "prompt_state": "running"}
+    parsed = edge_daemon.VisualObservation.from_dict(raw_observation)
+    delivery_text = "must-not-send"
+    with pytest.raises(c2.ContractError, match="broker unavailable"):
+        asyncio.run(
+            daemon.handle(
+                {
+                    "protocol": "cos-c2-iterm-edge-v1",
+                    "op": "interrupt_delivery",
+                    "observation": raw_observation,
+                    "decision": {
+                        "observation_digest": parsed.digest(),
+                        "action": "press_escape",
+                        "text": "",
+                        "rationale": "Synthetic urgent interrupt",
+                        "decided_by": "llm:test",
+                        "idempotency_key": "interrupt-missing-key",
+                        "delivery_text_sha256": hashlib.sha256(delivery_text.encode()).hexdigest(),
+                    },
+                    "text": delivery_text,
+                }
+            )
+        )
+    assert terminal_called is False
 
 
 def test_concurrent_duplicate_visual_action_only_injects_once(monkeypatch, tmp_path):

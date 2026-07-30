@@ -22,6 +22,8 @@ work-item database, or competing authority.
    issue one complete bounded assignment with objective, repository/worktree,
    acceptance tests, stopping condition, report destination, and authorization
    limits.
+   Live delivery must use the validated `DispatchEnvelope` path; legacy goal
+   dispatch is a dry-run/compatibility experiment only.
 4. Bind the assignment to the verified logical agent, coord session, CLI
    session, terminal identity, worktree, task/attempt, and supervisor epoch.
 5. Record delivery and acknowledgement evidence without creating a numbered

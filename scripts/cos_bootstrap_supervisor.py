@@ -769,6 +769,7 @@ def status(
     readiness: dict[str, Any] | None = None,
     manifest: RunManifest | None = None,
     manifest_sha256: str | None = None,
+    live_state_path: Path = DEFAULT_LIVE_STATE,
 ) -> dict[str, Any]:
     paths = state_paths(state_dir)
     state = _load_json(paths["state"])
@@ -783,6 +784,8 @@ def status(
     armed = paths["armed"].exists()
     observed_readiness = readiness if readiness is not None else service_readiness()
     marker = None
+    fleet_snapshot: dict[str, Any] | None = None
+    fleet_error: str | None = None
     if manifest is not None:
         effective_manifest_sha256 = manifest_sha256 or manifest_contract_sha256(manifest)
         marker = _marker_status(
@@ -790,6 +793,25 @@ def status(
             manifest=manifest,
             manifest_sha256=effective_manifest_sha256,
         )
+        actionable: dict[str, Any] = {"items": []}
+        if client is not None:
+            try:
+                actionable = client.actionable(manifest.controller_coord_agent_id)
+            except CoordError as exc:
+                fleet_error = str(exc)
+        fleet_decision = reconcile(
+            manifest=manifest,
+            actionable=actionable,
+            live_state=_load_json(live_state_path),
+        )
+        fleet_snapshot = {
+            "decision_digest": decision_digest(fleet_decision),
+            "workers": fleet_decision["workers"],
+            "actionable_items": fleet_decision["actionable_items"],
+            "wake_required": fleet_decision["wake_required"],
+            "wake_reasons": fleet_decision["wake_reasons"],
+            "error": fleet_error,
+        }
     return {
         "armed": armed,
         "service_readiness": observed_readiness,
@@ -815,6 +837,7 @@ def status(
         "recovery_hold": _load_json(paths["recovery_hold"]),
         "live_lease": lease,
         "coord_error": error,
+        "fleet_snapshot": fleet_snapshot,
     }
 
 
@@ -893,6 +916,7 @@ def main(argv: list[str] | None = None) -> int:
                     state_dir=args.state_dir,
                     manifest=manifest,
                     manifest_sha256=selected_manifest_sha256,
+                    live_state_path=args.live_state,
                 ),
                 indent=2,
                 sort_keys=True,

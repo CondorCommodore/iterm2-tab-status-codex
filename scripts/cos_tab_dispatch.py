@@ -30,10 +30,12 @@ from c2_contract import (
     load_envelope,
     load_manifest,
 )
-from c2_runtime_hook import DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR
-from c2_runtime_hook import SignedRuntimeHookObservation
-from c2_runtime_hook import interrupt_challenge_binding_sha256
-from c2_runtime_hook import load_record as load_runtime_hook_record
+from c2_runtime_hook import (
+    DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR,
+    SignedRuntimeHookObservation,
+    interrupt_challenge_binding_sha256,
+    load_record as load_runtime_hook_record,
+)
 from c2_runtime_observation import RuntimeObservation
 from c2_visual_decision import VisualDecision, VisualObservation
 from cos_iterm_edge_client import dispatch_envelope as dispatch_envelope_via_iterm_api

@@ -284,6 +284,41 @@ def test_status_reports_armed_but_unserviced_without_mutating_state(tmp_path):
     assert (tmp_path / "ARMED").read_bytes() == marker_before
 
 
+def test_status_includes_read_only_fleet_snapshot(tmp_path):
+    supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
+    live_state = tmp_path / "live.json"
+    live_state.write_text(
+        json.dumps(
+            {
+                "generated_ts": time.time(),
+                "sessions": [
+                    {
+                        "iterm_session_id": "iterm-worker",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "readiness": "idle",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = supervisor.status(
+        client=FakeClient(),
+        state_dir=tmp_path,
+        manifest=manifest(),
+        readiness=readiness(watchdog=True, edge=True),
+        live_state_path=live_state,
+    )
+
+    snapshot = result["fleet_snapshot"]
+    assert snapshot["error"] is None
+    assert snapshot["workers"][0]["worker_id"] == "worker"
+    assert snapshot["workers"][0]["state"] == "idle"
+    assert snapshot["wake_required"] is False
+
+
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     m = manifest()
     client = FakeClient()

@@ -20,6 +20,8 @@
       "cli_session_id": "replace-with-worker-codex-session-uuid",
       "coord_session_id": "replace-with-worker-coord-session-uuid",
       "coord_agent_id": "mikebook_codex",
+      "observation_profile_id": "codex-cli",
+      "observation_profile_version": 1,
       "capabilities": ["repo-build", "test", "pr-repair"],
       "repositories": ["CondorCommodore/home-lab"],
       "role": "worker"

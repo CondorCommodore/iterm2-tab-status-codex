@@ -7,10 +7,11 @@ import hashlib
 import json
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from c2_contract import ContractError, RunManifest
+from c2_runtime_observation import OBSERVATION_SCHEMA_VERSION, RuntimeObservation
 
 ALLOWED_VISUAL_ACTIONS = {
     "send_text",
@@ -31,8 +32,10 @@ def _required(value: object, name: str) -> str:
 
 @dataclass(frozen=True)
 class VisualObservation:
+    observation_schema_version: int
     worker_id: str
     iterm_session_id: str
+    runtime_observation: RuntimeObservation
     screenshot_sha256: str
     captured_ts: float
     summary: str
@@ -41,6 +44,9 @@ class VisualObservation:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "VisualObservation":
+        schema_version = value.get("observation_schema_version")
+        if schema_version != OBSERVATION_SCHEMA_VERSION:
+            raise ContractError(f"unsupported observation_schema_version: {schema_version!r}")
         digest = _required(value.get("screenshot_sha256"), "screenshot_sha256")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ContractError("screenshot_sha256 must be lowercase SHA-256")
@@ -54,8 +60,20 @@ class VisualObservation:
         if isinstance(worker_epoch, bool) or not isinstance(worker_epoch, int) or worker_epoch < 1:
             raise ContractError("worker_epoch must be a positive integer")
         return cls(
+            observation_schema_version=schema_version,
             worker_id=_required(value.get("worker_id"), "worker_id"),
             iterm_session_id=_required(value.get("iterm_session_id"), "iterm_session_id"),
+            runtime_observation=RuntimeObservation.from_dict(
+                {
+                    "runtime": value.get("runtime"),
+                    "profile_id": value.get("profile_id"),
+                    "profile_version": value.get("profile_version"),
+                    "prompt_state": value.get("prompt_state"),
+                    "input_buffer_state": value.get("input_buffer_state"),
+                    "cli_session_id": value.get("cli_session_id"),
+                    "coord_session_id": value.get("coord_session_id"),
+                }
+            ),
             screenshot_sha256=digest,
             captured_ts=float(captured),
             summary=_required(value.get("summary"), "summary"),
@@ -65,13 +83,22 @@ class VisualObservation:
 
     def digest(self) -> str:
         return hashlib.sha256(
-            json.dumps(self.__dict__, sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(asdict(self), sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
 
     def validate_for(self, manifest: RunManifest, *, now_ts: float | None = None) -> None:
         worker = manifest.worker(self.worker_id)
         if worker.iterm_session_id != self.iterm_session_id:
             raise ContractError("visual observation targets stale iTerm identity")
+        if not worker.observation_profile_id or worker.observation_profile_version < 1:
+            raise ContractError("worker has no enrolled runtime observation profile")
+        self.runtime_observation.validate_registration(
+            runtime=worker.runtime,
+            profile_id=worker.observation_profile_id,
+            profile_version=worker.observation_profile_version,
+            cli_session_id=worker.cli_session_id,
+            coord_session_id=worker.coord_session_id,
+        )
         if self.controller_epoch < 1:
             raise ContractError("invalid controller epoch")
         age = (time.time() if now_ts is None else now_ts) - self.captured_ts
@@ -115,6 +142,7 @@ class VisualDecision:
     def validate_for(self, observation: VisualObservation) -> None:
         if self.observation_digest != observation.digest():
             raise ContractError("visual decision does not bind the observation")
+        observation.runtime_observation.permits_action(self.action)
 
     def terminal_text(self) -> str:
         if self.action == "press_enter":

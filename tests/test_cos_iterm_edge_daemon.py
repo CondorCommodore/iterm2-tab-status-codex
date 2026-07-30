@@ -49,6 +49,8 @@ def manifest(
                     "cli_session_id": "cli-worker",
                     "coord_session_id": "coord-worker",
                     "coord_agent_id": "mikebook_codex",
+                    "observation_profile_id": "codex-cli",
+                    "observation_profile_version": 1,
                     "repositories": ["Condor/repo"],
                 }
             ],
@@ -86,8 +88,16 @@ def envelope() -> dict[str, object]:
 
 def visual_observation() -> dict[str, object]:
     return {
+        "observation_schema_version": 1,
         "worker_id": "worker-codex",
         "iterm_session_id": "iterm-worker",
+        "runtime": "codex",
+        "profile_id": "codex-cli",
+        "profile_version": 1,
+        "prompt_state": "ready",
+        "input_buffer_state": "empty",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
         "screenshot_sha256": "a" * 64,
         "captured_ts": 1_800_000_000.0,
         "summary": "Interactive choice blocks the worker",

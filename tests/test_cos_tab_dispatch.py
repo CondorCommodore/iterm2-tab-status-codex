@@ -70,6 +70,10 @@ class FakeSession:
         coord_session_id="",
         processing=False,
         snapshots=None,
+        profile_id="codex-cli",
+        profile_version=1,
+        prompt_state="ready",
+        input_buffer_state="empty",
     ):
         self.tty = tty
         self.runtime = runtime
@@ -79,6 +83,10 @@ class FakeSession:
         self.coord_session_id = coord_session_id
         self.processing = processing
         self.snapshots = list(snapshots or [])
+        self.profile_id = profile_id
+        self.profile_version = profile_version
+        self.prompt_state = prompt_state
+        self.input_buffer_state = input_buffer_state
         self.snapshot_index = 0
         self.sent = []
 
@@ -88,6 +96,10 @@ class FakeSession:
             "user.workerRuntime": self.runtime,
             "user.cliSessionId": self.cli_session_id,
             "user.coordSessionId": self.coord_session_id,
+            "user.workerObservationProfile": self.profile_id,
+            "user.workerObservationProfileVersion": self.profile_version,
+            "user.workerPromptState": self.prompt_state,
+            "user.workerInputBufferState": self.input_buffer_state,
             "session.isProcessing": self.processing,
             "jobName": self.job,
             "foregroundJobName": self.job,
@@ -212,6 +224,8 @@ def _manifest(transport="tab", controller_visible: bool = True):
                     "cli_session_id": "cli-worker",
                     "coord_session_id": "coord-worker",
                     "coord_agent_id": "mikebook_codex",
+                    "observation_profile_id": "codex-cli",
+                    "observation_profile_version": 1,
                     "repositories": ["Condor/repo"],
                 }
             ],
@@ -259,8 +273,16 @@ def _envelope():
 def _visual_observation():
     return VisualObservation.from_dict(
         {
+            "observation_schema_version": 1,
             "worker_id": "worker",
             "iterm_session_id": "iterm-worker",
+            "runtime": "codex",
+            "profile_id": "codex-cli",
+            "profile_version": 1,
+            "prompt_state": "ready",
+            "input_buffer_state": "empty",
+            "cli_session_id": "cli-worker",
+            "coord_session_id": "coord-worker",
             "screenshot_sha256": "a" * 64,
             "captured_ts": time.time(),
             "summary": "The worker is blocked on an interactive choice",
@@ -400,6 +422,50 @@ def test_unacknowledged_visual_decision_fails_closed(monkeypatch, tmp_path):
     assert target.sent == ["\r"]
     assert result["receipt"]["post_visual_verification_required"] is True
     assert result["receipt"]["verification_state"] == "pending"
+
+
+@pytest.mark.parametrize(
+    ("session_kwargs", "error"),
+    [
+        ({"runtime": ""}, "missing or unsupported"),
+        ({"profile_version": 2}, "missing or unsupported"),
+        ({"input_buffer_state": "nonempty"}, "changed since visual capture"),
+        ({"cli_session_id": "reused-cli"}, "stale cli session identity"),
+        ({"coord_session_id": "reused-coord"}, "stale coord session identity"),
+    ],
+)
+def test_visual_action_rejects_live_profile_buffer_or_identity_drift(
+    monkeypatch, tmp_path, session_kwargs, error
+):
+    params = {
+        "runtime": "codex",
+        "job": "codex",
+        "session_id": "iterm-worker",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
+    }
+    params.update(session_kwargs)
+    target = FakeSession("/dev/ttys003", **params)
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _visual_observation()
+    verified = []
+
+    result = asyncio.run(
+        dispatch.execute_visual_decision(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=_visual_decision(observation),
+            verify_epoch=lambda *args: verified.append(args),
+            receipts=ReceiptStore(tmp_path / "visual-drift.jsonl"),
+            ack_attempts=1,
+        )
+    )
+
+    assert result["ok"] is False
+    assert error in result["error"]
+    assert target.sent == []
+    assert verified == []
 
 
 def test_visual_decision_reservation_prevents_replay_after_key_write_crash(monkeypatch, tmp_path):

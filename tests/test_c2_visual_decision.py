@@ -15,8 +15,16 @@ from test_c2_contract import manifest_dict  # noqa: E402
 
 def observation(**overrides):
     value = {
+        "observation_schema_version": 1,
         "worker_id": "worker-codex",
         "iterm_session_id": "iterm-worker",
+        "runtime": "codex",
+        "profile_id": "codex-cli",
+        "profile_version": 1,
+        "prompt_state": "ready",
+        "input_buffer_state": "empty",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
         "screenshot_sha256": "a" * 64,
         "captured_ts": 1000.0,
         "summary": "Interactive runtime choice is blocking the worker",
@@ -58,9 +66,48 @@ def test_visual_observation_rejects_stale_or_wrong_target():
         observation(iterm_session_id="reused-session").validate_for(manifest, now_ts=1050.0)
 
 
+def test_visual_observation_rejects_legacy_unprofiled_registration():
+    value = manifest_dict()
+    value["workers"][0].pop("observation_profile_id")
+    value["workers"][0].pop("observation_profile_version")
+    manifest = RunManifest.from_dict(value)
+    with pytest.raises(ContractError, match="no enrolled runtime observation profile"):
+        observation().validate_for(manifest, now_ts=1050.0)
+
+
 def test_visual_observation_requires_worker_fencing_epoch():
     with pytest.raises(ContractError, match="worker_epoch"):
         observation(worker_epoch=0)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("runtime", "claude", "unsupported runtime observation profile"),
+        ("profile_version", 2, "unsupported runtime observation profile"),
+        ("cli_session_id", "wrong-cli", "stale cli"),
+        ("coord_session_id", "wrong-coord", "stale coord"),
+    ],
+)
+def test_visual_observation_rejects_profile_or_identity_mismatch(field, value, error):
+    manifest = RunManifest.from_dict(manifest_dict())
+    with pytest.raises(ContractError, match=error):
+        observation(**{field: value}).validate_for(manifest, now_ts=1050.0)
+
+
+@pytest.mark.parametrize("input_buffer_state", ["unknown", "nonempty"])
+def test_visual_decision_blocks_unverified_or_nonempty_input(input_buffer_state):
+    seen = observation(input_buffer_state=input_buffer_state)
+    with pytest.raises(ContractError, match="verified empty input buffer"):
+        decision(seen).validate_for(seen)
+
+
+def test_escape_requires_running_profile_and_empty_buffer():
+    ready = observation(prompt_state="ready")
+    with pytest.raises(ContractError, match="verified running"):
+        decision(ready, action="press_escape").validate_for(ready)
+    running = observation(prompt_state="running")
+    decision(running, action="press_escape").validate_for(running)
 
 
 @pytest.mark.parametrize("captured_ts", [float("nan"), float("inf"), float("-inf")])

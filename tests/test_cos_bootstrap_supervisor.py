@@ -319,6 +319,46 @@ def test_status_includes_read_only_fleet_snapshot(tmp_path):
     assert snapshot["wake_required"] is False
 
 
+def test_preflight_fails_closed_when_terminal_actions_are_disabled(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    plan = tmp_path / "plan.md"
+    plan.write_text("# plan\n", encoding="utf-8")
+    m = manifest(plan_paths=[str(plan)])
+
+    result = supervisor.preflight(
+        manifest=m,
+        manifest_path=manifest_path,
+        readiness=readiness(watchdog=True, edge=True),
+        edge_probe=lambda *_args, **_kwargs: {"ok": True},
+    )
+
+    assert result["ready"] is False
+    assert result["edge"]["reason"] == "terminal_actions_disabled_in_manifest"
+
+
+def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
+    plan = tmp_path / "plan.md"
+    plan.write_text("# plan\n", encoding="utf-8")
+    m = manifest(plan_paths=[str(plan)])
+    m = type(m)(**{**m.__dict__, "terminal_actions_enabled": True})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("manifest-bytes\n", encoding="utf-8")
+    digest = supervisor.manifest_file_sha256(manifest_path)
+
+    result = supervisor.preflight(
+        manifest=m,
+        manifest_path=manifest_path,
+        readiness=readiness(watchdog=True, edge=True),
+        edge_probe=lambda *_args, **_kwargs: {
+            "ok": True,
+            "manifest_sha256": digest,
+        },
+    )
+
+    assert result["ready"] is True
+
+
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     m = manifest()
     client = FakeClient()

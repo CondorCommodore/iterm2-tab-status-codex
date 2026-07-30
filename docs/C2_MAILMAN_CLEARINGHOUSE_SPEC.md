@@ -767,6 +767,31 @@ producer, reconstruct it through the supported read route, and compare live
 control/treatment behavior. Those claims cannot be inferred from this pure
 model.
 
+**Phase 2 implementation state (not live acceptance).** The isolated coord-api
+slice `feat/c2-mailman-phase2` adds an append-only
+`coord_message_delivery_shadow_runs` ledger through migration 117 (renumbered
+from the original 115 draft after current main allocated migrations 115–116) and
+principal-scoped POST/GET routes.
+It stores immutable input snapshots, unnumbered events, control/treatment
+projections, and server-validated canonical digests outside `coord_messages`, so
+experiment receipts do not allocate `M-####` identity. The separate
+`cos_message_delivery_phase2.py produce` and `readback` commands share no
+in-memory producer state: readback fetches the durable bundle, recomputes the
+pure projection, and requires byte-identical control and treatment evidence.
+Forged artifact, fixture, or projection digests fail closed. Local contract
+proof passes 14 focused and 2,439 full coord-api tests (59 integration-only
+skips), plus the 396-test consumer repository suite. An opt-in real-PostgreSQL
+test also passes without skipping on an isolated fully migrated database. A
+separate-process loopback run recorded artifact
+`ca0aca13fd4d68ed17f0a276c7aea337d9ed065c45d1e34caec0b42be92603b0`,
+then reconstructed projection
+`c254b011fdb84957b54a92a41670f69b91e97710e244c301316c7fb3c1673938`
+byte-identically after the producer exited. The semantic message count remained
+zero and `coord_messages_id_seq` remained uncalled. This proves the disposable
+producer-stop path, not the running coord-api: publication, independent review,
+deployment, and an authorized running-edge probe remain required before Test 1
+can claim live durable reconstruction.
+
 **Pre-protocol diagnostics only, 2026-07-29.** In one operator-authorized
 bounded review, the local edge returned `observed_ack=false`; the prompt was
 nevertheless visibly queued and work began, proving byte submission is not a
@@ -872,6 +897,20 @@ records, runtime/profile versions, fixture envelopes, before/after observation
 digests, physical-action receipts, recipient receipts, fault schedule, per-runtime
 matrix, latency/error metrics, and a redacted transcript or screenshot hash for
 every Escape transition.
+
+**Autonomous Test 2 readiness audit (no terminal execution).** Existing code
+already binds iTerm, TTY, runtime, CLI, and coord identities; rejects self-target
+and stale identity; checks controller and worker epochs before terminal bytes;
+normalizes idle/needs-input/stale/lost states; submits prompt, CR, and LF as
+separate writes; bounds submission recovery; and makes visual actions
+idempotent with post-action verification still pending. Test 2 remains blocked
+before execution because there is no separate default-deny terminal-action kill
+switch, no versioned per-runtime prompt-ready observation profile, no trusted
+non-empty input-buffer observation, no atomic Escape-to-reverified-prompt-ready
+transaction before text, and no distinct recipient receipt beyond transport
+acknowledgement. Soft-queue parity and the full dual-runtime fault matrix also
+remain unimplemented. These are readiness findings only and count toward no
+Test 2 acceptance criterion.
 
 **Unanswered decisions.** Exact prompt-ready signals by runtime version; whether
 Elevated ever uses safe STEER while running; policy for known versus unknown

@@ -174,3 +174,33 @@ def test_post_receipt_uses_coord_supported_activity_message_type():
         ),
         ("GET", "http://coord/messages/42", None),
     ]
+
+
+def test_message_delivery_shadow_uses_dedicated_supported_routes():
+    calls = []
+    run = {"run_id": "phase2:run-1", "artifact_sha256": "a" * 64}
+
+    def request(method, url, headers, body, timeout):
+        calls.append((method, url, headers, json.loads(body) if body else None))
+        return (201 if method == "POST" else 200), {"item": run, "shadow": True}
+
+    client = coord.CoordClient(config(), request=request)
+    assert client.post_message_delivery_shadow_run(run) == run
+    assert client.message_delivery_shadow_run("phase2:run-1") == run
+
+    assert calls[0][0:2] == ("POST", "http://coord/message-delivery-shadow/runs")
+    assert calls[0][2]["Idempotency-Key"] == "phase2:run-1"
+    assert calls[1][0:2] == (
+        "GET",
+        "http://coord/message-delivery-shadow/runs/phase2%3Arun-1",
+    )
+    assert calls[1][2]["X-Principal-Id"] == "mikebook_codex"
+
+
+@pytest.mark.parametrize("run_id", ["", ":leading", "space is invalid", "x" * 129])
+def test_message_delivery_shadow_read_rejects_invalid_run_id(run_id):
+    client = coord.CoordClient(config(), request=lambda *_args: (500, {}))
+    with pytest.raises(coord.CoordError, match="invalid syntax"):
+        client.message_delivery_shadow_run(run_id)
+    with pytest.raises(coord.CoordError, match="invalid syntax"):
+        client.post_message_delivery_shadow_run({"run_id": run_id})

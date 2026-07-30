@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import os
 import sys
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest

@@ -60,14 +60,18 @@ def render_packet(experiment: Mapping[str, Any]) -> dict[str, Any]:
         raise LanguageTrialError(str(exc)) from exc
     candidates = experiment.get("candidates")
     questions = experiment.get("questions")
+    for question in questions:
+        scenario = question.get("scenario")
+        if not isinstance(scenario, str) or not scenario.strip():
+            raise LanguageTrialError("language questions require a non-empty scenario")
     experiment_sha256 = content_digest(experiment)
 
     packet = {
         "schema": PACKET_SCHEMA,
         "experiment_sha256": experiment_sha256,
         "notice": (
-            "This is a wording-comprehension experiment. No candidate is active "
-            "product terminology and completing it does not enable message delivery."
+            "This experiment measures wording comprehension only. Completing it "
+            "does not change the selected terminology or enable message delivery."
         ),
         "instructions": (
             "For every scenario, select the one label in each candidate set that "

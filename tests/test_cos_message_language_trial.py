@@ -45,7 +45,8 @@ def test_packet_is_deterministic_and_hides_answer_and_reference_metadata():
     assert "expected_rank" not in serialized
     assert "experimental_reference_only" not in serialized
     assert "historical reference" not in serialized
-    assert "does not enable message delivery" in packet["notice"]
+    assert "does not change the selected terminology" in packet["notice"]
+    assert "enable message delivery" in packet["notice"]
     source_labels = {row["candidate_id"]: row["labels"] for row in source["candidates"]}
     for candidate in packet["candidate_sets"]:
         assert candidate["labels"] != source_labels[candidate["candidate_id"]]
@@ -59,6 +60,14 @@ def test_packet_rejects_malformed_experiment_instead_of_rendering_it():
     source["candidates"][0]["labels"] = ["only-one"]
 
     with pytest.raises(trial.LanguageTrialError, match="four unique ordered labels"):
+        trial.render_packet(source)
+
+
+def test_packet_rejects_missing_render_fields_without_a_traceback():
+    source = experiment()
+    del source["questions"][0]["scenario"]
+
+    with pytest.raises(trial.LanguageTrialError, match="non-empty scenario"):
         trial.render_packet(source)
 
 

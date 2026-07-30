@@ -31,6 +31,7 @@
   ],
   "permitted_repositories": ["CondorCommodore/home-lab"],
   "permitted_actions": ["inspect", "edit", "test", "commit", "push-branch", "open-pr", "repair-pr", "merge-policy-gated"],
+  "terminal_actions_enabled": false,
   "dispatch_transport": "ab",
   "recovery_transport": "ab",
   "ci_policy": {

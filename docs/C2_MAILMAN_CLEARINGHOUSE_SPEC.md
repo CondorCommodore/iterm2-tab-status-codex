@@ -910,14 +910,18 @@ already binds iTerm, TTY, runtime, CLI, and coord identities; rejects self-targe
 and stale identity; checks controller and worker epochs before terminal bytes;
 normalizes idle/needs-input/stale/lost states; submits prompt, CR, and LF as
 separate writes; bounds submission recovery; and makes visual actions
-idempotent with post-action verification still pending. Test 2 remains blocked
-before execution because there is no separate default-deny terminal-action kill
-switch, no versioned per-runtime prompt-ready observation profile, no trusted
-non-empty input-buffer observation, no atomic Escape-to-reverified-prompt-ready
-transaction before text, and no distinct recipient receipt beyond transport
-acknowledgement. Soft-queue parity and the full dual-runtime fault matrix also
-remain unimplemented. These are readiness findings only and count toward no
-Test 2 acceptance criterion.
+idempotent with post-action verification still pending. The run manifest now
+contains a strict boolean `terminal_actions_enabled` gate that defaults false;
+the edge refuses dispatch, poke, and visual actions before lease, reservation,
+receipt, or terminal effects while health remains readable and reports the gate.
+This closes only the default-deny kill-switch source prerequisite; it does not
+activate the edge or authorize Test 2. Test 2 remains blocked before execution
+because there is no versioned per-runtime prompt-ready observation profile, no
+trusted non-empty input-buffer observation, no atomic
+Escape-to-reverified-prompt-ready transaction before text, and no distinct
+recipient receipt beyond transport acknowledgement. Soft-queue parity and the
+full dual-runtime fault matrix also remain unimplemented. These are readiness
+findings only and count toward no Test 2 acceptance criterion.
 
 **Unanswered decisions.** Exact prompt-ready signals by runtime version; whether
 Priority ever uses safe STEER while running; policy for known versus unknown

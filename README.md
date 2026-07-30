@@ -260,6 +260,11 @@ classification, actionable coord feed, wake reasons, and a deterministic
 decision digest. It does not reserve workers, dispatch prompts, or change
 coord-api state.
 
+Before a terminal experiment, run `bash scripts/cosctl preflight --manifest
+<path>`. It checks the exact manifest digest, plan paths, required launchd
+registrations, and the iTerm edge health without enabling services or sending
+input. A nonzero result is a hard stop for delivery.
+
 When `iterm-live-state.json` exists, `cos_dashboard.py` prefers it over the
 older signal-file snapshot so COS sees API-derived readiness (`ready`,
 `running`, `queued`, `needs_input`, `idle`, `unknown`) without screen-scraping

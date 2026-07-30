@@ -162,10 +162,17 @@ class FakeClient:
         self.config = type("Config", (), {"principal_id": "mikebook_codex"})()
         self.released = []
         self.claimed = 0
+        self.claim_producers = []
 
     def claim_resource(self, resource, **kwargs):
         self.claimed += 1
-        lease = {"holder": "mikebook_codex", "epoch": 7, "expires_at": "2099-01-01T00:00:00Z"}
+        self.claim_producers.append(kwargs["producer"])
+        lease = {
+            "holder": "mikebook_codex",
+            "epoch": 7,
+            "expires_at": "2099-01-01T00:00:00Z",
+            "producer": kwargs["producer"],
+        }
         return LeaseHandle(resource, "mikebook_codex", 7, lease["expires_at"], lease)
 
     def renew_resource(self, handle):
@@ -207,6 +214,61 @@ def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     assert tick["authority"] is True and tick["controller_epoch"] == 7
     assert standby["mode"] == "bootstrap-standby" and standby["released"] is True
     assert stopped["armed"] is False
+
+
+@pytest.mark.parametrize("ownership", ["visible", "headless"])
+def test_run_tick_claims_coord_compatible_controller_producer(tmp_path, ownership):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+
+    tick = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership=ownership,
+        wake=False,
+    )
+
+    assert tick["authority"] is True
+    assert client.claim_producers == [m.controller_producer(ownership)]
+
+
+@pytest.mark.parametrize(
+    ("first_ownership", "successor_ownership"),
+    [("visible", "headless"), ("headless", "visible")],
+)
+def test_run_tick_rejects_stored_lease_from_other_presentation(
+    tmp_path, first_ownership, successor_ownership
+):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership=first_ownership,
+        wake=False,
+    )
+
+    with pytest.raises(ContractError, match="does not match requested ownership"):
+        supervisor.run_tick(
+            manifest=m,
+            client=client,
+            state_dir=tmp_path,
+            live_state_path=live,
+            ownership=successor_ownership,
+            wake=False,
+        )
+
+    assert client.claimed == 1
 
 
 def test_run_tick_rejects_manifest_changed_after_arm(tmp_path):

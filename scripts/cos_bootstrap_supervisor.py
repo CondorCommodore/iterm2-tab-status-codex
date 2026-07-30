@@ -152,7 +152,13 @@ def ensure_authority(
     if client.config.principal_id != manifest.controller_coord_agent_id:
         raise ContractError("coord principal does not match the registered controller identity")
     handle = _handle_from_state(state)
+    expected_producer = manifest.controller_producer(ownership)
     if handle is not None:
+        stored_producer = handle.lease.get("producer")
+        if not manifest.controller_producer_matches(stored_producer, ownership):
+            raise ContractError(
+                "stored controller lease binding does not match requested ownership"
+            )
         last_renewed_ts = state.get("last_renewed_ts")
         if isinstance(last_renewed_ts, (int, float)) and (
             time.time() - float(last_renewed_ts) < SUPERVISOR_RENEW_SECONDS
@@ -169,14 +175,7 @@ def ensure_authority(
     handle = client.claim_resource(
         SUPERVISOR_RESOURCE,
         ttl_seconds=SUPERVISOR_TTL_SECONDS,
-        producer={
-            "kind": "c2-supervisor",
-            "manifest_id": manifest.manifest_id,
-            "controller_id": manifest.controller_id,
-            "controller_runtime": manifest.controller_runtime,
-            "controller_session_id": manifest.controller_cli_session_id,
-            "ownership": ownership,
-        },
+        producer=expected_producer,
     )
     return _save_authority(paths=paths, state=state, handle=handle, ownership=ownership), handle
 

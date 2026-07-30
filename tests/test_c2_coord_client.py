@@ -95,6 +95,71 @@ def test_claim_and_renew_preserve_epoch_and_principal_headers():
     assert "%3A" in calls[0][1]
 
 
+def test_c2_claim_renew_and_release_preserve_instance_expectation():
+    calls = []
+    producer = {
+        "kind": "c2-supervisor",
+        "manifest_id": "fleet-v1",
+        "controller_id": "cos",
+        "controller_host": "mikebook",
+        "controller_runtime": "codex",
+        "controller_cli_session_id": "cli-a",
+        "controller_coord_session_id": "coord-a",
+        "controller_presentation": "headless",
+        "ownership": "headless",
+    }
+
+    def request(method, url, headers, body, timeout):
+        request_payload = json.loads(body) if body else None
+        calls.append((method, url, request_payload))
+        if url.endswith("/renew") and request_payload.get("expected_epoch") != 9:
+            return 409, {"reason": "controller_instance_expectation_required"}
+        return 200, {
+            "status": "ok",
+            "lease": {
+                "holder": "mikebook_codex",
+                "epoch": 9,
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+        }
+
+    client = coord.CoordClient(config(), request=request)
+    handle = client.claim_resource(
+        "workspace:mikebook:c2-supervisor", ttl_seconds=180, producer=producer
+    )
+    renewed = client.renew_resource(handle)
+    assert client.release_resource(renewed) is True
+
+    expected = {key: value for key, value in producer.items() if key != "kind"}
+    assert calls[1][2]["expected_controller_instance"] == expected
+    assert calls[1][2]["expected_epoch"] == 9
+    assert calls[2][2]["expected_controller_instance"] == expected
+    assert calls[2][2]["expected_epoch"] == 9
+
+
+def test_generic_renew_and_release_omit_controller_expectation():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        calls.append(json.loads(body) if body else None)
+        return 200, {
+            "status": "ok",
+            "lease": {
+                "holder": "mikebook_codex",
+                "epoch": 9,
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+        }
+
+    client = coord.CoordClient(config(), request=request)
+    handle = client.claim_resource("generic", ttl_seconds=180, producer={"kind": "generic"})
+    renewed = client.renew_resource(handle)
+    assert client.release_resource(renewed) is True
+
+    assert "expected_controller_instance" not in calls[1]
+    assert "expected_controller_instance" not in calls[2]
+
+
 def test_renew_rejects_successor_epoch():
     def request(method, url, headers, body, timeout):
         return 200, {"status": "renewed", "lease": {"holder": "mikebook_codex", "epoch": 10}}

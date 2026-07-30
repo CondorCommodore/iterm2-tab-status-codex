@@ -119,6 +119,7 @@ class RunManifest:
     plan_paths: tuple[str, ...]
     permitted_repositories: tuple[str, ...]
     permitted_actions: tuple[str, ...]
+    terminal_actions_enabled: bool = False
     dispatch_transport: str = "ab"
     recovery_transport: str = "ab"
     ci_policy: dict[str, Any] = field(default_factory=dict)
@@ -159,6 +160,9 @@ class RunManifest:
         recovery_transport = str(value.get("recovery_transport") or "ab").strip().lower()
         if recovery_transport not in DISPATCH_TRANSPORTS:
             raise ContractError(f"unsupported recovery_transport: {recovery_transport}")
+        terminal_actions_enabled = value.get("terminal_actions_enabled", False)
+        if not isinstance(terminal_actions_enabled, bool):
+            raise ContractError("terminal_actions_enabled must be a boolean")
         manifest = cls(
             manifest_id=_required(value.get("manifest_id"), "manifest_id"),
             controller_id=_required(controller.get("controller_id"), "controller.controller_id"),
@@ -181,6 +185,7 @@ class RunManifest:
                 value.get("permitted_repositories"), "permitted_repositories"
             ),
             permitted_actions=_strings(value.get("permitted_actions"), "permitted_actions"),
+            terminal_actions_enabled=terminal_actions_enabled,
             dispatch_transport=dispatch_transport,
             recovery_transport=recovery_transport,
             ci_policy=dict(value.get("ci_policy") or {}),

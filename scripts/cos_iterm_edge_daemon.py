@@ -143,6 +143,15 @@ class EdgeDaemon:
                 "loaded_manifest_sha256": self.manifest_sha256,
                 "disk_manifest_sha256": disk_manifest_sha256,
             }
+        if operation in {"dispatch", "poke", "visual_action"} and not (
+            self.manifest.terminal_actions_enabled
+        ):
+            return {
+                "ok": False,
+                "error": "terminal actions are disabled by the run manifest",
+                "reason": "terminal_actions_disabled",
+                "terminal_actions_enabled": False,
+            }
         if operation == "dispatch":
             raw = request.get("envelope")
             if not isinstance(raw, dict):
@@ -359,6 +368,7 @@ class EdgeDaemon:
                 "manifest_sha256": self.manifest_sha256,
                 "disk_manifest_sha256": disk_manifest_sha256,
                 "pid": os.getpid(),
+                "terminal_actions_enabled": self.manifest.terminal_actions_enabled,
                 **(
                     {}
                     if manifest_current

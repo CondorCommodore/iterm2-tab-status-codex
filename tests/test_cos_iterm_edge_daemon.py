@@ -17,7 +17,11 @@ import cos_iterm_edge_daemon as edge_daemon  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
-def manifest(*, controller_visible: bool = True) -> c2.RunManifest:
+def manifest(
+    *,
+    controller_visible: bool = True,
+    terminal_actions_enabled: bool = True,
+) -> c2.RunManifest:
     controller = {
         "controller_id": "cos",
         "host": "macbook",
@@ -51,6 +55,7 @@ def manifest(*, controller_visible: bool = True) -> c2.RunManifest:
             "plan_paths": ["/plans/master.md"],
             "permitted_repositories": ["Condor/repo"],
             "permitted_actions": ["inspect", "test"],
+            "terminal_actions_enabled": terminal_actions_enabled,
             "dispatch_transport": "headless",
             "recovery_transport": "ab",
         }
@@ -161,6 +166,29 @@ def test_health_reports_loaded_manifest_digest_and_process_identity(tmp_path):
     assert result["manifest_sha256"] == "a" * 64
     assert result["disk_manifest_sha256"] == "a" * 64
     assert result["pid"] == os.getpid()
+    assert result["terminal_actions_enabled"] is True
+
+
+def test_default_deny_gate_refuses_every_terminal_operation_without_side_effects(tmp_path):
+    daemon = make_daemon(tmp_path)
+    daemon.manifest = manifest(terminal_actions_enabled=False)
+
+    for operation in ("dispatch", "poke", "visual_action"):
+        result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation}))
+        assert result == {
+            "ok": False,
+            "error": "terminal actions are disabled by the run manifest",
+            "reason": "terminal_actions_disabled",
+            "terminal_actions_enabled": False,
+        }
+
+    health = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": "health"}))
+    assert health["ok"] is True
+    assert health["terminal_actions_enabled"] is False
+    assert daemon.client.events == []
+    assert daemon.dispatch_receipts.records() == []
+    assert daemon.poke_receipts.records() == []
+    assert daemon.dispatch_inflight == set()
 
 
 def test_manifest_drift_fails_closed_before_any_terminal_operation(tmp_path):

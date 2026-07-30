@@ -94,6 +94,26 @@ def test_manifest_registers_mixed_runtimes_and_ab_is_deterministic():
     assert manifest.transport_for("assignment-1") in {"tab", "headless"}
     assert manifest.recovery_for(0) == "tab"
     assert manifest.recovery_for(1) == "headless"
+    assert manifest.terminal_actions_enabled is False
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "false", [], {}])
+def test_manifest_rejects_non_boolean_terminal_action_gate(value):
+    with pytest.raises(c2.ContractError, match="terminal_actions_enabled must be a boolean"):
+        c2.RunManifest.from_dict(manifest_dict(terminal_actions_enabled=value))
+
+
+def test_manifest_explicitly_enables_terminal_actions():
+    manifest = c2.RunManifest.from_dict(manifest_dict(terminal_actions_enabled=True))
+
+    assert manifest.terminal_actions_enabled is True
+
+
+def test_shipped_manifest_example_keeps_terminal_actions_disabled():
+    example = Path(__file__).resolve().parent.parent / "config" / "run-manifest.example.json"
+    manifest = c2.load_manifest(example)
+
+    assert manifest.terminal_actions_enabled is False
 
 
 def test_manifest_rejects_controller_worker_session_collision():

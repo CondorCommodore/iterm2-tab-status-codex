@@ -390,6 +390,7 @@ class EdgeDaemon:
                         verify_epoch=self.client.verify_live_epoch,
                         receipts=self.dispatch_receipts,
                         create_challenge=self.client.create_runtime_interrupt_challenge,
+                        arm_challenge=self.client.arm_runtime_interrupt_challenge,
                         verify_hook_authenticity=self.client.verify_runtime_observation,
                     )
                 if isinstance(result.get("receipt"), dict):

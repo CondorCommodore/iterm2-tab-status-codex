@@ -941,9 +941,11 @@ The interrupt-delivery source contract adds a separate broker-authenticated
 observation envelope; the inert lifecycle publisher cannot satisfy it. No
 signing secret is stored beside the worker: coord-api must verify a report from
 an independently enrolled observer. The transaction binds the exact delivery
-text digest into the LLM decision and durable reservation, obtains a one-use
-broker challenge, re-baselines immediately before one Escape, and requires a
-newer challenge-bound broker report after the Escape. It revalidates exact
+text digest and captured broker-hook event into the LLM decision and durable
+reservation, obtains a one-use broker challenge, rejects any hook-event drift
+before one Escape, and requires a
+newer challenge-bound report that the broker attests was observed only after it
+armed the challenge at the Escape boundary. It revalidates exact
 runtime/profile/CLI/coord/iTerm identity, TTY, foreground, prompt readiness, and
 an empty input buffer immediately before one atomic text-plus-CR/LF API write.
 A submitted transport receipt remains unacknowledged until a distinct recipient

@@ -217,6 +217,8 @@ def test_runtime_observation_challenge_and_verification_use_broker_endpoints():
         calls.append((method, url, headers, payload, timeout))
         if url.endswith("/challenges"):
             return 201, {"challenge": {"challenge_id": "challenge-1", "issued_at": 1001.0}}
+        if url.endswith("/arm"):
+            return 200, {"challenge": {"challenge_id": "challenge-1", "armed": True}}
         return 200, {
             "verification": {
                 "verified": True,
@@ -228,16 +230,24 @@ def test_runtime_observation_challenge_and_verification_use_broker_endpoints():
     challenge = client.create_runtime_interrupt_challenge(
         {"idempotency_key": "interrupt-1:challenge", "worker_id": "worker"}
     )
+    armed = client.arm_runtime_interrupt_challenge(
+        {
+            "challenge_id": "challenge-1",
+            "idempotency_key": "interrupt-1:challenge-arm",
+        }
+    )
     verification = client.verify_runtime_observation(
         {"event_id": "event-1", "signature": "broker-signature"}
     )
 
     assert challenge["challenge_id"] == "challenge-1"
+    assert armed["armed"] is True
     assert verification["verified"] is True
     assert calls[0][1].endswith("/c2/runtime-observations/challenges")
     assert calls[0][2]["Idempotency-Key"] == "interrupt-1:challenge"
-    assert calls[1][1].endswith("/c2/runtime-observations/verify")
-    assert calls[1][3]["observation"]["event_id"] == "event-1"
+    assert calls[1][1].endswith("/c2/runtime-observations/challenges/challenge-1/arm")
+    assert calls[2][1].endswith("/c2/runtime-observations/verify")
+    assert calls[2][3]["observation"]["event_id"] == "event-1"
 
 
 @pytest.mark.parametrize(

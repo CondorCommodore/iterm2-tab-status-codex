@@ -442,6 +442,32 @@ class CoordClient:
             raise CoordError("coord broker returned invalid runtime challenge timestamp")
         return challenge
 
+    def arm_runtime_interrupt_challenge(self, request: dict[str, Any]) -> dict[str, Any]:
+        challenge_id = str(request.get("challenge_id") or "")
+        idempotency_key = str(request.get("idempotency_key") or "")
+        if not challenge_id or not idempotency_key:
+            raise CoordError(
+                "arming runtime challenge requires challenge and idempotency identities"
+            )
+        _status, payload = self.call(
+            "POST",
+            "/c2/runtime-observations/challenges/"
+            + urllib.parse.quote(challenge_id, safe="")
+            + "/arm",
+            payload=request,
+            write=True,
+            idempotency_key=idempotency_key,
+            allowed=(200,),
+        )
+        challenge = payload.get("challenge") if isinstance(payload, dict) else None
+        if (
+            not isinstance(challenge, dict)
+            or challenge.get("challenge_id") != challenge_id
+            or challenge.get("armed") is not True
+        ):
+            raise CoordError("coord broker did not arm the exact runtime challenge")
+        return challenge
+
     def verify_runtime_observation(self, report: dict[str, Any]) -> dict[str, Any]:
         _status, payload = self.call(
             "POST",

@@ -376,6 +376,11 @@ class SignedRuntimeHookObservation:
             raise ContractError("coord broker rejected runtime hook authenticity")
         if verification.get("observation_digest") != self.digest():
             raise ContractError("coord broker verified a different runtime hook observation")
+        if expected_challenge_id is not None and (
+            verification.get("challenge_id") != expected_challenge_id
+            or verification.get("observed_after_arm") is not True
+        ):
+            raise ContractError("coord broker lacks post-Escape challenge causality")
 
 
 def session_variable_values(

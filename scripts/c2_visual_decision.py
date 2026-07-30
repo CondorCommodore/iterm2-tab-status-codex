@@ -37,6 +37,7 @@ class VisualObservation:
     iterm_session_id: str
     runtime_observation: RuntimeObservation
     screenshot_sha256: str
+    runtime_hook_digest: str
     captured_ts: float
     summary: str
     controller_epoch: int
@@ -50,6 +51,11 @@ class VisualObservation:
         digest = _required(value.get("screenshot_sha256"), "screenshot_sha256")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ContractError("screenshot_sha256 must be lowercase SHA-256")
+        hook_digest = str(value.get("runtime_hook_digest") or "").strip()
+        if hook_digest and (
+            len(hook_digest) != 64 or any(char not in "0123456789abcdef" for char in hook_digest)
+        ):
+            raise ContractError("runtime_hook_digest must be lowercase SHA-256")
         captured = value.get("captured_ts")
         epoch = value.get("controller_epoch")
         worker_epoch = value.get("worker_epoch")
@@ -75,6 +81,7 @@ class VisualObservation:
                 }
             ),
             screenshot_sha256=digest,
+            runtime_hook_digest=hook_digest,
             captured_ts=float(captured),
             summary=_required(value.get("summary"), "summary"),
             controller_epoch=epoch,

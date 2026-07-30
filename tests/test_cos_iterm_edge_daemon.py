@@ -143,6 +143,10 @@ class FakeCoordClient:
         self.events.append(("challenge", request))
         return {"challenge_id": "challenge-1", "issued_at": 1001.0}
 
+    def arm_runtime_interrupt_challenge(self, request):
+        self.events.append(("challenge-arm", request))
+        return {"challenge_id": request["challenge_id"], "armed": True}
+
     def verify_runtime_observation(self, report):
         self.events.append(("runtime-verify", report))
         return {"verified": True, "observation_digest": "a" * 64}
@@ -483,6 +487,7 @@ def test_interrupt_delivery_uses_broker_callbacks_and_audits_result(monkeypatch,
 
     async def fake_execute(_connection, **kwargs):
         assert kwargs["create_challenge"] == daemon.client.create_runtime_interrupt_challenge
+        assert kwargs["arm_challenge"] == daemon.client.arm_runtime_interrupt_challenge
         assert kwargs["verify_hook_authenticity"] == daemon.client.verify_runtime_observation
         assert kwargs["text"] == delivery_text
         receipt = {"idempotency_key": "interrupt-edge-1:submitted"}

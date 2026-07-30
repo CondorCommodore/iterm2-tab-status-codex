@@ -108,6 +108,10 @@ def _signed_hook(
     return {f"user.{key}": value for key, value in session_variable_values(signed).items()}
 
 
+def _hook_digest(values):
+    return SignedRuntimeHookObservation.from_session_variables(values).digest()
+
+
 def test_payload_for_goal_dispatch_appends_enter():
     request = dispatch.DispatchRequest(tty="/dev/ttys003", text="/goal work item 59")
 
@@ -425,6 +429,7 @@ def _visual_decision(observation):
 
 
 def _escape_observation():
+    captured_hook = _signed_hook(sequence=4, prompt_state="running")
     return replace(
         _visual_observation(),
         runtime_observation=RuntimeObservation.from_dict(
@@ -438,6 +443,7 @@ def _escape_observation():
                 "coord_session_id": "coord-worker",
             }
         ),
+        runtime_hook_digest=_hook_digest(captured_hook),
     )
 
 
@@ -525,6 +531,37 @@ def test_escape_transaction_rejects_payload_not_bound_to_decision_before_effect(
                 text="substituted",
                 verify_epoch=lambda *_: None,
                 receipts=ReceiptStore(tmp_path / "interrupt-payload-mismatch.jsonl"),
+                **_broker_args(),
+            )
+        )
+    assert target.sent == []
+
+
+def test_escape_transaction_rejects_new_same_state_hook_after_visual_capture(monkeypatch, tmp_path):
+    captured = _signed_hook(sequence=4, prompt_state="running")
+    changed = _signed_hook(sequence=5, prompt_state="running")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[captured, changed],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _escape_observation()
+    with pytest.raises(ContractError, match="changed after visual capture"):
+        asyncio.run(
+            dispatch.execute_escape_delivery_transaction(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=_escape_decision(observation),
+                text="must-not-send",
+                verify_epoch=lambda *_: None,
+                receipts=ReceiptStore(tmp_path / "interrupt-hook-drift.jsonl"),
                 **_broker_args(),
             )
         )

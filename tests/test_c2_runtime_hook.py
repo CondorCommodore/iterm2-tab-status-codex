@@ -37,6 +37,8 @@ def broker_verifier(report):
     return {
         "verified": valid,
         "observation_digest": hashlib.sha256(canonical).hexdigest(),
+        "challenge_id": claimed.get("challenge_id"),
+        "observed_after_arm": bool(claimed.get("challenge_id")),
     }
 
 
@@ -172,6 +174,21 @@ def test_hook_requires_causal_challenge_and_action_timestamp():
             iterm_session_id="iterm-worker",
             now_ts=1003.0,
             expected_challenge_id="different",
+        )
+    with pytest.raises(ContractError, match="post-Escape"):
+        proof.verify(
+            lambda report: {
+                **broker_verifier(report),
+                "observed_after_arm": False,
+            },
+            runtime="codex",
+            profile_id="codex-cli",
+            profile_version=1,
+            cli_session_id="cli-worker",
+            coord_session_id="coord-worker",
+            iterm_session_id="iterm-worker",
+            now_ts=1003.0,
+            expected_challenge_id="challenge-1",
         )
 
 

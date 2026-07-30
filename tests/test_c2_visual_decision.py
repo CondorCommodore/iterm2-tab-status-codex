@@ -81,6 +81,12 @@ def test_visual_observation_requires_worker_fencing_epoch():
         observation(worker_epoch=0)
 
 
+def test_visual_observation_validates_optional_runtime_hook_digest():
+    assert observation(runtime_hook_digest="a" * 64).runtime_hook_digest == "a" * 64
+    with pytest.raises(ContractError, match="runtime_hook_digest"):
+        observation(runtime_hook_digest="not-a-digest")
+
+
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [

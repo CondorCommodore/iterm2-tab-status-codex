@@ -48,6 +48,14 @@ def test_packet_is_deterministic_and_hides_answer_and_reference_metadata():
     assert "does not enable message delivery" in packet["notice"]
 
 
+def test_packet_rejects_malformed_experiment_instead_of_rendering_it():
+    source = experiment()
+    source["candidates"][0]["labels"] = ["only-one"]
+
+    with pytest.raises(trial.LanguageTrialError, match="four unique ordered labels"):
+        trial.render_packet(source)
+
+
 def test_response_template_contains_every_coordinate_without_answers():
     packet = trial.render_packet(experiment())
     template = trial.response_template(packet)

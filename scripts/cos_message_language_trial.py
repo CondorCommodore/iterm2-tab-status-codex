@@ -40,10 +40,12 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def render_packet(experiment: Mapping[str, Any]) -> dict[str, Any]:
     """Return the deterministic operator packet without answer-key metadata."""
+    try:
+        score_language_comprehension(experiment, [])
+    except DeliveryPolicyError as exc:
+        raise LanguageTrialError(str(exc)) from exc
     candidates = experiment.get("candidates")
     questions = experiment.get("questions")
-    if not isinstance(candidates, list) or not isinstance(questions, list):
-        raise LanguageTrialError("language fixture requires candidates and questions")
 
     packet = {
         "schema": PACKET_SCHEMA,

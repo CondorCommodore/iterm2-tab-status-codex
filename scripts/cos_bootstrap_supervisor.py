@@ -916,6 +916,69 @@ def preflight(
     }
 
 
+def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str, Any]:
+    """Build a non-authoritative expected/observed roster reconciliation."""
+    live_state = _load_json(live_state_path)
+    sessions = [
+        session
+        for session in live_state.get("sessions", [])
+        if isinstance(session, dict) and session.get("iterm_session_id")
+    ]
+    expected_sessions = {worker.iterm_session_id for worker in manifest.workers}
+    workers: list[dict[str, Any]] = []
+    for worker in manifest.workers:
+        candidates = [session for session in sessions if session.get("tty") == worker.tty]
+        expected = next(
+            (
+                session
+                for session in candidates
+                if session.get("iterm_session_id") == worker.iterm_session_id
+            ),
+            None,
+        )
+        workers.append(
+            {
+                "worker_id": worker.worker_id,
+                "expected": {
+                    "iterm_session_id": worker.iterm_session_id,
+                    "tty": worker.tty,
+                    "runtime": worker.runtime,
+                },
+                "observed_on_expected_tty": [
+                    {
+                        "iterm_session_id": str(session.get("iterm_session_id")),
+                        "runtime": str(session.get("runtime") or "unknown"),
+                        "readiness": str(session.get("readiness") or "unknown"),
+                    }
+                    for session in candidates
+                ],
+                "status": (
+                    "unchanged"
+                    if expected is not None
+                    else "replacement-on-tty"
+                    if candidates
+                    else "missing"
+                ),
+            }
+        )
+    unregistered = [
+        {
+            "iterm_session_id": str(session.get("iterm_session_id")),
+            "tty": str(session.get("tty") or ""),
+            "runtime": str(session.get("runtime") or "unknown"),
+            "readiness": str(session.get("readiness") or "unknown"),
+        }
+        for session in sessions
+        if session.get("iterm_session_id") not in expected_sessions
+    ]
+    return {
+        "manifest_id": manifest.manifest_id,
+        "requires_explicit_rearm": True,
+        "workers": workers,
+        "unregistered_live_sessions": unregistered,
+    }
+
+
 def _status_actions(path: Path):
     try:
         return parse_actions(path)
@@ -931,6 +994,7 @@ def build_parser() -> argparse.ArgumentParser:
             "arm",
             "status",
             "preflight",
+            "roster-proposal",
             "run",
             "poke",
             "standby",
@@ -971,6 +1035,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["ready"] else 1
+    if args.command == "roster-proposal":
+        print(
+            json.dumps(
+                roster_proposal(manifest=manifest, live_state_path=args.live_state),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "arm":
         print(
             json.dumps(

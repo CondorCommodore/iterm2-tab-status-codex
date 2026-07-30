@@ -421,6 +421,53 @@ def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_pa
     ]
 
 
+def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "iterm_session_id": "replacement-session",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "readiness": "idle",
+                    },
+                    {
+                        "iterm_session_id": "unregistered-session",
+                        "tty": "/dev/ttys099",
+                        "runtime": "codex",
+                        "readiness": "running",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = supervisor.roster_proposal(
+        manifest=manifest(),
+        live_state_path=live_state_path,
+    )
+
+    assert result["requires_explicit_rearm"] is True
+    assert result["workers"][0]["status"] == "replacement-on-tty"
+    assert result["unregistered_live_sessions"] == [
+        {
+            "iterm_session_id": "replacement-session",
+            "tty": "/dev/ttys003",
+            "runtime": "codex",
+            "readiness": "idle",
+        },
+        {
+            "iterm_session_id": "unregistered-session",
+            "tty": "/dev/ttys099",
+            "runtime": "codex",
+            "readiness": "running",
+        },
+    ]
+
+
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     m = manifest()
     client = FakeClient()

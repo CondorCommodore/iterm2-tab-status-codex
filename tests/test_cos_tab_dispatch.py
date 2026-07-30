@@ -472,7 +472,7 @@ def test_escape_transaction_reobserves_signed_prompt_and_fences_every_byte(monke
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, after, after],
+        snapshots=[before, before, before, before, after, after, after],
     )
     _install_fake_iterm(monkeypatch, [target])
     observation = _escape_observation()
@@ -582,7 +582,7 @@ def test_escape_transaction_never_sends_text_for_unverified_post_buffer(
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, after, after],
+        snapshots=[before, before, before, before, after, after],
     )
     _install_fake_iterm(monkeypatch, [target])
     observation = _escape_observation()
@@ -605,7 +605,7 @@ def test_escape_transaction_never_sends_text_for_unverified_post_buffer(
     assert target.sent == ["\x1b"]
 
 
-def test_escape_transaction_rejects_hook_that_predates_escape(monkeypatch, tmp_path):
+def test_escape_transaction_rejects_report_without_post_arm_attestation(monkeypatch, tmp_path):
     before = _signed_hook(sequence=4, prompt_state="running")
     pre_escape = _signed_hook(sequence=5, prompt_state="ready", observed_at=1001.5)
     target = FakeSession(
@@ -616,18 +616,18 @@ def test_escape_transaction_rejects_hook_that_predates_escape(monkeypatch, tmp_p
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, pre_escape, pre_escape],
+        snapshots=[before, before, before, before, pre_escape, pre_escape],
     )
     _install_fake_iterm(monkeypatch, [target])
     observation = _escape_observation()
     broker_args = _broker_args()
 
-    def broker_lies_about_causality(report):
+    def broker_rejects_causality(report):
         verification = _broker_verifier(report)
-        verification["observed_after_arm"] = True
+        verification["observed_after_arm"] = False
         return verification
 
-    broker_args["verify_hook_authenticity"] = broker_lies_about_causality
+    broker_args["verify_hook_authenticity"] = broker_rejects_causality
     result = asyncio.run(
         dispatch.execute_escape_delivery_transaction(
             object(),
@@ -643,11 +643,11 @@ def test_escape_transaction_rejects_hook_that_predates_escape(monkeypatch, tmp_p
         )
     )
     assert result["ok"] is False
-    assert "predates terminal action" in result["error"]
+    assert "post-Escape challenge causality" in result["error"]
     assert target.sent == ["\x1b"]
 
 
-def test_escape_transaction_records_escape_before_broker_arm_failure(monkeypatch, tmp_path):
+def test_escape_transaction_broker_arm_failure_prevents_escape(monkeypatch, tmp_path):
     before = _signed_hook(sequence=4, prompt_state="running")
     target = FakeSession(
         "/dev/ttys003",
@@ -681,9 +681,40 @@ def test_escape_transaction_records_escape_before_broker_arm_failure(monkeypatch
                 **broker_args,
             )
         )
-    assert target.sent == ["\x1b"]
-    assert receipts.records()[-1]["kind"] == "interrupt-delivery-escape-write"
-    assert receipts.records()[-1]["escape_writes"] == 1
+    assert target.sent == []
+    assert receipts.records()[-1]["kind"] == "interrupt-delivery-reservation"
+    assert receipts.records()[-1]["escape_writes"] == 0
+
+
+def test_escape_transaction_hook_change_after_epoch_fence_prevents_escape(monkeypatch, tmp_path):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    changed = _signed_hook(sequence=5, prompt_state="running")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before, before, before, changed],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _escape_observation()
+    with pytest.raises(ContractError, match="changed after Escape fence"):
+        asyncio.run(
+            dispatch.execute_escape_delivery_transaction(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=_escape_decision(observation),
+                text="must-not-send",
+                verify_epoch=lambda *_: None,
+                receipts=ReceiptStore(tmp_path / "interrupt-post-fence-drift.jsonl"),
+                **_broker_args(),
+            )
+        )
+    assert target.sent == []
 
 
 def test_escape_transaction_reordered_or_duplicate_request_never_repeats_escape(
@@ -699,7 +730,7 @@ def test_escape_transaction_reordered_or_duplicate_request_never_repeats_escape(
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, reordered, reordered],
+        snapshots=[before, before, before, before, reordered, reordered],
     )
     _install_fake_iterm(monkeypatch, [target])
     observation = _escape_observation()
@@ -807,7 +838,7 @@ def test_escape_transaction_lease_loss_after_escape_prevents_next_byte(monkeypat
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, after, after],
+        snapshots=[before, before, before, before, after, after],
     )
     _install_fake_iterm(monkeypatch, [target])
     calls = 0
@@ -852,7 +883,7 @@ def test_escape_transaction_foreground_loss_after_escape_prevents_text(monkeypat
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, after, after],
+        snapshots=[before, before, before, before, after, after],
     )
     _install_fake_iterm(monkeypatch, [target])
     monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_: False)
@@ -888,7 +919,7 @@ def test_escape_transaction_final_foreground_switch_prevents_atomic_command(monk
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, after, final],
+        snapshots=[before, before, before, before, after, final],
     )
     _install_fake_iterm(monkeypatch, [target])
     monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_: False)
@@ -924,7 +955,7 @@ def test_escape_transaction_foreground_switch_during_final_fence_prevents_comman
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         prompt_state="running",
-        snapshots=[before, before, after, after, after],
+        snapshots=[before, before, before, before, after, after, after],
     )
     _install_fake_iterm(monkeypatch, [target])
     monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_: False)
@@ -1018,7 +1049,7 @@ def test_escape_transaction_rejects_exact_uuid_object_switch_before_command(monk
         runtime="codex",
         job="codex",
         session_id="iterm-worker",
-        snapshots=[before, before, after],
+        snapshots=[before, before, before, before, after],
     )
     replacement = FakeSession(
         "/dev/ttys003",

@@ -878,23 +878,11 @@ async def execute_escape_delivery_transaction(
         "verification_state": "escape-pending",
     }
     receipts.append(reservation)
-    escape_session = await exact_session()
-    fence()
-    await escape_session.async_send_text("\x1b")  # type: ignore[attr-defined]
-    escape_written_at = hook_clock()
-    escape_receipt = {
-        **reservation,
-        "kind": "interrupt-delivery-escape-write",
-        "idempotency_key": f"{decision.idempotency_key}:escape",
-        "escape_writes": 1,
-        "escape_written_at": escape_written_at,
-        "verification_state": "post-escape-pending",
-    }
-    receipts.append(escape_receipt)
+    arm_requested_at = hook_clock()
     armed = arm_challenge(
         {
             "challenge_id": challenge_id,
-            "escape_written_at": escape_written_at,
+            "arm_requested_at": arm_requested_at,
             "controller_epoch": observation.controller_epoch,
             "worker_epoch": observation.worker_epoch,
             "idempotency_key": f"{decision.idempotency_key}:challenge-arm",
@@ -906,6 +894,69 @@ async def execute_escape_delivery_transaction(
         or armed.get("armed") is not True
     ):
         raise ContractError("coord broker did not arm the exact interrupt challenge")
+    receipts.append(
+        {
+            **reservation,
+            "kind": "interrupt-delivery-challenge-armed",
+            "idempotency_key": f"{decision.idempotency_key}:challenge-armed",
+            "arm_requested_at": arm_requested_at,
+            "verification_state": "escape-pending",
+        }
+    )
+
+    # Authenticate the exact state once more after potentially slow receipt and
+    # broker I/O, then fence authority. The post-fence check is local and must
+    # match the already broker-verified object byte-for-byte before Escape.
+    pre_fence_session = await exact_session()
+    pre_fence_values = await session_variables(pre_fence_session)
+    if pre_fence_values.get("tty") != worker.tty:
+        raise ContractError("registered tty changed before Escape fence")
+    if not (
+        foreground_matches_runtime(pre_fence_values, worker.runtime)
+        or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    ):
+        raise ContractError("registered agent lost foreground before Escape fence")
+    pre_fence_hook = SignedRuntimeHookObservation.from_session_variables(pre_fence_values)
+    pre_fence_hook.verify(
+        verify_hook_authenticity,
+        runtime=worker.runtime,
+        profile_id=worker.observation_profile_id,
+        profile_version=worker.observation_profile_version,
+        cli_session_id=worker.cli_session_id,
+        coord_session_id=worker.coord_session_id,
+        iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
+    )
+    if pre_fence_hook != baseline:
+        raise ContractError("runtime hook event changed before Escape fence")
+
+    fence()
+    escape_session = await exact_session()
+    post_fence_values = await session_variables(escape_session)
+    if post_fence_values.get("tty") != worker.tty:
+        raise ContractError("registered tty changed after Escape fence")
+    if not (
+        foreground_matches_runtime(post_fence_values, worker.runtime)
+        or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    ):
+        raise ContractError("registered agent lost foreground after Escape fence")
+    post_fence_hook = SignedRuntimeHookObservation.from_session_variables(post_fence_values)
+    if post_fence_hook != pre_fence_hook:
+        raise ContractError("runtime hook event changed after Escape fence")
+
+    escape_write_started_at = hook_clock()
+    await escape_session.async_send_text("\x1b")  # type: ignore[attr-defined]
+    escape_write_completed_at = hook_clock()
+    escape_receipt = {
+        **reservation,
+        "kind": "interrupt-delivery-escape-write",
+        "idempotency_key": f"{decision.idempotency_key}:escape",
+        "escape_writes": 1,
+        "escape_write_started_at": escape_write_started_at,
+        "escape_write_completed_at": escape_write_completed_at,
+        "verification_state": "post-escape-pending",
+    }
+    receipts.append(escape_receipt)
 
     after = None
     last_error = "no fresh signed post-Escape hook observation"
@@ -924,7 +975,6 @@ async def execute_escape_delivery_transaction(
                 iterm_session_id=worker.iterm_session_id,
                 now_ts=hook_clock(),
                 after_sequence=baseline.sequence,
-                min_observed_at=escape_written_at,
                 expected_challenge_id=challenge_id,
             )
             if values.get("tty") != worker.tty:
@@ -980,7 +1030,6 @@ async def execute_escape_delivery_transaction(
         iterm_session_id=worker.iterm_session_id,
         now_ts=hook_clock(),
         after_sequence=baseline.sequence,
-        min_observed_at=escape_written_at,
         expected_challenge_id=challenge_id,
     )
     if final_hook.runtime_observation.input_buffer_state != "empty":

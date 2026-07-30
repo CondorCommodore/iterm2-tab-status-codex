@@ -183,7 +183,7 @@ def test_default_deny_gate_refuses_every_terminal_operation_without_side_effects
     daemon = make_daemon(tmp_path)
     daemon.manifest = manifest(terminal_actions_enabled=False)
 
-    for operation in ("dispatch", "poke", "visual_action"):
+    for operation in ("dispatch", "poke", "visual_action", "interrupt_delivery"):
         result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation}))
         assert result == {
             "ok": False,
@@ -207,7 +207,7 @@ def test_manifest_drift_fails_closed_before_any_terminal_operation(tmp_path):
     manifest_path.write_text("changed\n", encoding="utf-8")
     daemon.manifest_path = manifest_path
 
-    for operation in ("dispatch", "poke", "visual_action"):
+    for operation in ("dispatch", "poke", "visual_action", "interrupt_delivery"):
         result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation}))
         assert result["ok"] is False
         assert "reload required" in result["error"]
@@ -455,6 +455,80 @@ def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):
     )
     assert duplicate["ok"] is False
     assert "duplicate visual action" in duplicate["error"]
+
+
+def test_interrupt_delivery_loads_private_hook_key_and_audits_result(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    key_path = tmp_path / "runtime-observation.key"
+    key_path.write_bytes(b"k" * 32)
+    os.chmod(key_path, 0o600)
+    daemon.runtime_hook_key_path = key_path
+    raw_observation = {**visual_observation(), "prompt_state": "running"}
+    parsed = edge_daemon.VisualObservation.from_dict(raw_observation)
+    raw_decision = {
+        "observation_digest": parsed.digest(),
+        "action": "press_escape",
+        "text": "",
+        "rationale": "Synthetic urgent interrupt",
+        "decided_by": "llm:test-supervisor",
+        "idempotency_key": "interrupt-edge-1",
+    }
+
+    async def fake_execute(_connection, **kwargs):
+        assert kwargs["hook_key"] == b"k" * 32
+        assert kwargs["text"] == "URGENT synthetic reference"
+        receipt = {"idempotency_key": "interrupt-edge-1:submitted"}
+        kwargs["receipts"].append(receipt)
+        return {"ok": False, "error": "recipient acknowledgement required", "receipt": receipt}
+
+    monkeypatch.setattr(edge_daemon, "execute_escape_delivery_transaction", fake_execute)
+    result = asyncio.run(
+        daemon.handle(
+            {
+                "protocol": "cos-c2-iterm-edge-v1",
+                "op": "interrupt_delivery",
+                "observation": raw_observation,
+                "decision": raw_decision,
+                "text": "URGENT synthetic reference",
+            }
+        )
+    )
+    assert result["ok"] is False
+    assert daemon.client.events[-1] == ("post", result["receipt"])
+
+
+def test_interrupt_delivery_missing_hook_key_fails_before_terminal_call(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    daemon.runtime_hook_key_path = tmp_path / "missing.key"
+    called = False
+
+    async def fake_execute(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(edge_daemon, "execute_escape_delivery_transaction", fake_execute)
+    raw_observation = {**visual_observation(), "prompt_state": "running"}
+    parsed = edge_daemon.VisualObservation.from_dict(raw_observation)
+    with pytest.raises(c2.ContractError, match="key is unavailable"):
+        asyncio.run(
+            daemon.handle(
+                {
+                    "protocol": "cos-c2-iterm-edge-v1",
+                    "op": "interrupt_delivery",
+                    "observation": raw_observation,
+                    "decision": {
+                        "observation_digest": parsed.digest(),
+                        "action": "press_escape",
+                        "text": "",
+                        "rationale": "Synthetic urgent interrupt",
+                        "decided_by": "llm:test",
+                        "idempotency_key": "interrupt-missing-key",
+                    },
+                    "text": "must-not-send",
+                }
+            )
+        )
+    assert called is False
 
 
 def test_concurrent_duplicate_visual_action_only_injects_once(monkeypatch, tmp_path):

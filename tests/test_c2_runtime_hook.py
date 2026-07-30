@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
-import os
-import stat
 import sys
-from dataclasses import asdict
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,176 +13,176 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from c2_contract import ContractError  # noqa: E402
-from c2_runtime_hook import RuntimeHookRecord, load_record, write_record  # noqa: E402
+from c2_runtime_hook import (  # noqa: E402
+    HOOK_SCHEMA_VERSION,
+    SignedRuntimeHookObservation,
+    session_variable_values,
+)
+from c2_runtime_observation import RuntimeObservation  # noqa: E402
+
+
+BROKER_KEY = b"test-only-broker-key" * 2
+
+
+def broker_signature(observation: SignedRuntimeHookObservation) -> str:
+    return hmac.new(BROKER_KEY, observation.canonical_bytes(), hashlib.sha256).hexdigest()
+
+
+def broker_verifier(report):
+    claimed = dict(report)
+    signature = claimed.pop("signature", "")
+    canonical = json.dumps(
+        claimed, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    valid = hmac.compare_digest(
+        signature, hmac.new(BROKER_KEY, canonical, hashlib.sha256).hexdigest()
+    )
+    return {
+        "verified": valid,
+        "observation_digest": hashlib.sha256(canonical).hexdigest(),
+    }
+
+
+def signed(runtime="codex", profile_id="codex-cli", **overrides):
+    observation = SignedRuntimeHookObservation(
+        hook_schema_version=HOOK_SCHEMA_VERSION,
+        runtime_observation=RuntimeObservation.from_dict(
+            {
+                "runtime": runtime,
+                "profile_id": profile_id,
+                "profile_version": 1,
+                "prompt_state": overrides.pop("prompt_state", "ready"),
+                "input_buffer_state": overrides.pop("input_buffer_state", "empty"),
+                "cli_session_id": "cli-worker",
+                "coord_session_id": "coord-worker",
+            }
+        ),
+        iterm_session_id="iterm-worker",
+        sequence=overrides.pop("sequence", 4),
+        observed_at=overrides.pop("observed_at", 1000.0),
+        event_id=overrides.pop("event_id", "event-4"),
+        challenge_id=overrides.pop("challenge_id", ""),
+        signature="",
+    )
+    assert not overrides
+    return replace(observation, signature=broker_signature(observation))
 
 
 @pytest.mark.parametrize(
-    ("runtime", "event", "payload", "profile", "prompt_state"),
-    [
-        ("codex", "turn-ended", {"thread_id": "cli-codex"}, "codex-cli", "ready"),
-        ("claude", "stop", {"session_id": "cli-claude"}, "claude-code", "ready"),
-        ("codex", "session-start", {"sessionId": "cli-codex"}, "codex-cli", "running"),
-    ],
+    ("runtime", "profile"), [("codex", "codex-cli"), ("claude", "claude-code")]
 )
-def test_hook_payloads_publish_inert_runtime_profiles(
-    runtime, event, payload, profile, prompt_state
-):
-    cli_session_id = next(iter(payload.values()))
-    record = RuntimeHookRecord.from_hook(
+def test_broker_authenticated_hook_round_trips_both_runtime_profiles(runtime, profile):
+    proof = signed(runtime, profile)
+    values = {f"user.{key}": value for key, value in session_variable_values(proof).items()}
+    parsed = SignedRuntimeHookObservation.from_session_variables(values)
+    parsed.verify(
+        broker_verifier,
         runtime=runtime,
-        event=event,
-        iterm_session_id=f"iterm-{runtime}",
-        tty="/dev/ttys003",
-        cli_session_id=cli_session_id,
-        coord_session_id=f"coord-{runtime}",
-        payload=payload,
-        observed_ts=1000.0,
+        profile_id=profile,
+        profile_version=1,
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        iterm_session_id="iterm-worker",
+        now_ts=1001.0,
     )
-
-    assert record.profile_id == profile
-    assert record.prompt_state == prompt_state
-    assert record.input_buffer_state == "unknown"
+    assert parsed == proof
 
 
-def test_hook_rejects_missing_or_wrong_payload_session_identity():
-    kwargs = {
-        "runtime": "codex",
-        "event": "turn-ended",
-        "iterm_session_id": "iterm-codex",
-        "tty": "/dev/ttys003",
-        "cli_session_id": "cli-codex",
-        "coord_session_id": "coord-codex",
-        "observed_ts": 1000.0,
+def test_hook_rejects_forgery_stale_identity_and_reordered_sequence():
+    proof = signed()
+    forged = replace(proof, event_id="forged")
+    with pytest.raises(ContractError, match="broker rejected"):
+        forged.verify(
+            broker_verifier,
+            runtime="codex",
+            profile_id="codex-cli",
+            profile_version=1,
+            cli_session_id="cli-worker",
+            coord_session_id="coord-worker",
+            iterm_session_id="iterm-worker",
+            now_ts=1001.0,
+        )
+    with pytest.raises(ContractError, match="stale iTerm"):
+        proof.verify(
+            broker_verifier,
+            runtime="codex",
+            profile_id="codex-cli",
+            profile_version=1,
+            cli_session_id="cli-worker",
+            coord_session_id="coord-worker",
+            iterm_session_id="reused",
+            now_ts=1001.0,
+        )
+    with pytest.raises(ContractError, match="stale"):
+        proof.verify(
+            broker_verifier,
+            runtime="codex",
+            profile_id="codex-cli",
+            profile_version=1,
+            cli_session_id="cli-worker",
+            coord_session_id="coord-worker",
+            iterm_session_id="iterm-worker",
+            now_ts=1100.0,
+        )
+    with pytest.raises(ContractError, match="did not advance"):
+        proof.verify(
+            broker_verifier,
+            runtime="codex",
+            profile_id="codex-cli",
+            profile_version=1,
+            cli_session_id="cli-worker",
+            coord_session_id="coord-worker",
+            iterm_session_id="iterm-worker",
+            now_ts=1001.0,
+            after_sequence=4,
+        )
+
+
+def test_hook_requires_causal_challenge_and_action_timestamp():
+    proof = signed(challenge_id="challenge-1", observed_at=1002.0)
+    proof.verify(
+        broker_verifier,
+        runtime="codex",
+        profile_id="codex-cli",
+        profile_version=1,
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        iterm_session_id="iterm-worker",
+        now_ts=1003.0,
+        min_observed_at=1001.0,
+        expected_challenge_id="challenge-1",
+    )
+    with pytest.raises(ContractError, match="predates"):
+        proof.verify(
+            broker_verifier,
+            runtime="codex",
+            profile_id="codex-cli",
+            profile_version=1,
+            cli_session_id="cli-worker",
+            coord_session_id="coord-worker",
+            iterm_session_id="iterm-worker",
+            now_ts=1003.0,
+            min_observed_at=1002.1,
+        )
+    with pytest.raises(ContractError, match="active challenge"):
+        proof.verify(
+            broker_verifier,
+            runtime="codex",
+            profile_id="codex-cli",
+            profile_version=1,
+            cli_session_id="cli-worker",
+            coord_session_id="coord-worker",
+            iterm_session_id="iterm-worker",
+            now_ts=1003.0,
+            expected_challenge_id="different",
+        )
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_hook_rejects_non_finite_timestamp_before_broker_call(value):
+    values = {
+        f"user.{key}": item for key, item in session_variable_values(signed()).items()
     }
-    with pytest.raises(ContractError, match="no runtime session identity"):
-        RuntimeHookRecord.from_hook(payload={}, **kwargs)
-    with pytest.raises(ContractError, match="different cli session"):
-        RuntimeHookRecord.from_hook(payload={"session_id": "reused-cli"}, **kwargs)
-
-
-def test_hook_contract_cannot_assert_empty_input_buffer():
-    record = RuntimeHookRecord.from_hook(
-        runtime="codex",
-        event="turn-ended",
-        iterm_session_id="iterm-codex",
-        tty="/dev/ttys003",
-        cli_session_id="cli-codex",
-        coord_session_id="coord-codex",
-        payload={"session_id": "cli-codex"},
-        observed_ts=1000.0,
-    )
-    value = asdict(record)
-    value["input_buffer_state"] = "empty"
-    with pytest.raises(ContractError, match="cannot assert"):
-        RuntimeHookRecord.from_dict(value)
-
-
-def test_atomic_cache_is_private_and_exactly_bound(tmp_path):
-    record = RuntimeHookRecord.from_hook(
-        runtime="claude",
-        event="stop",
-        iterm_session_id="iterm-claude",
-        tty="/dev/ttys004",
-        cli_session_id="cli-claude",
-        coord_session_id="coord-claude",
-        payload={"conversation_id": "cli-claude"},
-        observed_ts=1000.0,
-    )
-
-    path = write_record(record, tmp_path)
-
-    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert (
-        load_record(
-            tmp_path,
-            iterm_session_id="iterm-claude",
-            tty="/dev/ttys004",
-            now_ts=1050.0,
-        )
-        == record
-    )
-    assert (
-        load_record(
-            tmp_path,
-            iterm_session_id="iterm-claude",
-            tty="/dev/ttys099",
-            now_ts=1050.0,
-        )
-        is None
-    )
-
-
-def test_stale_corrupt_or_nonprivate_cache_is_ignored(tmp_path):
-    record = RuntimeHookRecord.from_hook(
-        runtime="codex",
-        event="turn-ended",
-        iterm_session_id="iterm-codex",
-        tty="/dev/ttys003",
-        cli_session_id="cli-codex",
-        coord_session_id="coord-codex",
-        payload={"session_id": "cli-codex"},
-        observed_ts=1000.0,
-    )
-    path = write_record(record, tmp_path)
-    assert (
-        load_record(
-            tmp_path,
-            iterm_session_id="iterm-codex",
-            tty="/dev/ttys003",
-            now_ts=1201.0,
-        )
-        is None
-    )
-
-    path.write_text("not json\n", encoding="utf-8")
-    assert (
-        load_record(
-            tmp_path,
-            iterm_session_id="iterm-codex",
-            tty="/dev/ttys003",
-            now_ts=1050.0,
-        )
-        is None
-    )
-
-    path.write_text(json.dumps(asdict(record)), encoding="utf-8")
-    os.chmod(path, 0o644)
-    assert (
-        load_record(
-            tmp_path,
-            iterm_session_id="iterm-codex",
-            tty="/dev/ttys003",
-            now_ts=1050.0,
-        )
-        is None
-    )
-
-
-def test_state_directory_symlink_is_rejected(tmp_path):
-    real = tmp_path / "real"
-    real.mkdir(mode=0o700)
-    link = tmp_path / "linked"
-    link.symlink_to(real, target_is_directory=True)
-    record = RuntimeHookRecord.from_hook(
-        runtime="codex",
-        event="turn-ended",
-        iterm_session_id="iterm-codex",
-        tty="/dev/ttys003",
-        cli_session_id="cli-codex",
-        coord_session_id="coord-codex",
-        payload={"session_id": "cli-codex"},
-        observed_ts=1000.0,
-    )
-
-    with pytest.raises(ContractError, match="real directory"):
-        write_record(record, link)
-    assert (
-        load_record(
-            link,
-            iterm_session_id="iterm-codex",
-            tty="/dev/ttys003",
-            now_ts=1050.0,
-        )
-        is None
-    )
+    values["user.workerHookObservedAt"] = value
+    with pytest.raises(ContractError, match="finite"):
+        SignedRuntimeHookObservation.from_session_variables(values)

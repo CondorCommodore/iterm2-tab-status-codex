@@ -58,7 +58,7 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     )
 
     assert result["ok"] is True
-    assert len(result["installed"]) == 14
+    assert len(result["installed"]) == 16
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_overlay.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_daemon.py").exists()
     assert not legacy_edge.exists()
@@ -68,5 +68,7 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     assert (tmp_path / "iterm" / "Scripts" / "cos_tab_dispatch.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_dashboard.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_contract.py").exists()
+    assert (tmp_path / "iterm" / "Scripts" / "c2_runtime_observation.py").exists()
+    assert (tmp_path / "iterm" / "Scripts" / "c2_runtime_hook.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_visual_decision.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_iterm_edge_daemon.py").exists()

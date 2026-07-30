@@ -21,7 +21,49 @@ from c2_contract import (  # noqa: E402
     ReceiptStore,
     RunManifest,
 )
+from c2_runtime_hook import (  # noqa: E402
+    HOOK_SCHEMA_VERSION,
+    SignedRuntimeHookObservation,
+    session_variable_values,
+    sign_observation,
+)
+from c2_runtime_observation import RuntimeObservation  # noqa: E402
 from c2_visual_decision import VisualDecision, VisualObservation  # noqa: E402
+
+HOOK_KEY = b"h" * 32
+
+
+def _signed_hook(
+    *,
+    sequence,
+    prompt_state,
+    input_buffer_state="empty",
+    observed_at=None,
+    cli_session_id="cli-worker",
+    coord_session_id="coord-worker",
+    iterm_session_id="iterm-worker",
+):
+    proof = SignedRuntimeHookObservation(
+        hook_schema_version=HOOK_SCHEMA_VERSION,
+        runtime_observation=RuntimeObservation.from_dict(
+            {
+                "runtime": "codex",
+                "profile_id": "codex-cli",
+                "profile_version": 1,
+                "prompt_state": prompt_state,
+                "input_buffer_state": input_buffer_state,
+                "cli_session_id": cli_session_id,
+                "coord_session_id": coord_session_id,
+            }
+        ),
+        iterm_session_id=iterm_session_id,
+        sequence=sequence,
+        observed_at=time.time() if observed_at is None else observed_at,
+        event_id=f"event-{sequence}",
+        signature="",
+    )
+    signed = sign_observation(proof, HOOK_KEY)
+    return {f"user.{key}": value for key, value in session_variable_values(signed).items()}
 
 
 def test_payload_for_goal_dispatch_appends_enter():
@@ -327,6 +369,307 @@ def _visual_decision(observation):
             "idempotency_key": "visual-action-1",
         }
     )
+
+
+def _escape_observation():
+    return replace(
+        _visual_observation(),
+        runtime_observation=RuntimeObservation.from_dict(
+            {
+                "runtime": "codex",
+                "profile_id": "codex-cli",
+                "profile_version": 1,
+                "prompt_state": "running",
+                "input_buffer_state": "empty",
+                "cli_session_id": "cli-worker",
+                "coord_session_id": "coord-worker",
+            }
+        ),
+    )
+
+
+def _escape_decision(observation, key="interrupt-1"):
+    return VisualDecision.from_dict(
+        {
+            "observation_digest": observation.digest(),
+            "action": "press_escape",
+            "text": "",
+            "rationale": "Interrupt once for synthetic urgent delivery",
+            "decided_by": "llm:test-supervisor",
+            "idempotency_key": key,
+        }
+    )
+
+
+def test_escape_transaction_reobserves_signed_prompt_and_fences_every_byte(monkeypatch, tmp_path):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    after = _signed_hook(sequence=5, prompt_state="ready")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before, after],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _escape_observation()
+    verified = []
+    result = asyncio.run(
+        dispatch.execute_escape_delivery_transaction(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=_escape_decision(observation),
+            text="URGENT synthetic reference M-test",
+            verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            receipts=ReceiptStore(tmp_path / "interrupt.jsonl"),
+            hook_key=HOOK_KEY,
+            post_attempts=2,
+            poll_interval=0,
+        )
+    )
+    assert result["ok"] is False
+    assert result["error"] == "recipient acknowledgement required"
+    assert target.sent == ["\x1b", "URGENT synthetic reference M-test", "\r", "\n"]
+    assert (
+        verified
+        == [
+            ("workspace:mikebook:c2-supervisor", 7),
+            ("workspace:mikebook:c2-worker:worker", 13),
+        ]
+        * 4
+    )
+    assert result["receipt"]["verification_state"] == "submitted-unacknowledged"
+
+
+@pytest.mark.parametrize("buffer_state", ["unknown", "nonempty"])
+def test_escape_transaction_never_sends_text_for_unverified_post_buffer(
+    monkeypatch, tmp_path, buffer_state
+):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    after = _signed_hook(sequence=5, prompt_state="ready", input_buffer_state=buffer_state)
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before, after],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _escape_observation()
+    result = asyncio.run(
+        dispatch.execute_escape_delivery_transaction(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=_escape_decision(observation),
+            text="must-not-send",
+            verify_epoch=lambda *_: None,
+            receipts=ReceiptStore(tmp_path / f"interrupt-{buffer_state}.jsonl"),
+            hook_key=HOOK_KEY,
+            post_attempts=1,
+            poll_interval=0,
+        )
+    )
+    assert result["ok"] is False
+    assert "buffer" in result["error"]
+    assert target.sent == ["\x1b"]
+
+
+def test_escape_transaction_reordered_or_duplicate_request_never_repeats_escape(
+    monkeypatch, tmp_path
+):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    reordered = _signed_hook(sequence=3, prompt_state="ready")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before, reordered],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _escape_observation()
+    receipts = ReceiptStore(tmp_path / "interrupt-duplicate.jsonl")
+    kwargs = dict(
+        connection=object(),
+        manifest=_manifest(),
+        observation=observation,
+        decision=_escape_decision(observation),
+        text="must-not-send",
+        verify_epoch=lambda *_: None,
+        receipts=receipts,
+        hook_key=HOOK_KEY,
+        post_attempts=1,
+        poll_interval=0,
+    )
+    first = asyncio.run(dispatch.execute_escape_delivery_transaction(**kwargs))
+    assert first["ok"] is False
+    assert target.sent == ["\x1b"]
+    with pytest.raises(ContractError, match="duplicate"):
+        asyncio.run(dispatch.execute_escape_delivery_transaction(**kwargs))
+    assert target.sent == ["\x1b"]
+
+
+def test_escape_transaction_rejects_foreground_mismatch_before_escape(monkeypatch, tmp_path):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="shell",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_: False)
+    observation = _escape_observation()
+    result = asyncio.run(
+        dispatch.execute_escape_delivery_transaction(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=_escape_decision(observation),
+            text="must-not-send",
+            verify_epoch=lambda *_: None,
+            receipts=ReceiptStore(tmp_path / "interrupt-foreground.jsonl"),
+            hook_key=HOOK_KEY,
+        )
+    )
+    assert result["ok"] is False
+    assert "foreground" in result["error"]
+    assert target.sent == []
+
+
+@pytest.mark.parametrize(
+    "hook_overrides",
+    [
+        {"cli_session_id": "stale-cli"},
+        {"coord_session_id": "stale-coord"},
+        {"iterm_session_id": "reused-iterm"},
+    ],
+)
+def test_escape_transaction_rejects_signed_identity_change_before_escape(
+    monkeypatch, tmp_path, hook_overrides
+):
+    before = _signed_hook(sequence=4, prompt_state="running", **hook_overrides)
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _escape_observation()
+    with pytest.raises(ContractError):
+        asyncio.run(
+            dispatch.execute_escape_delivery_transaction(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=_escape_decision(observation),
+                text="must-not-send",
+                verify_epoch=lambda *_: None,
+                receipts=ReceiptStore(tmp_path / "interrupt-stale-identity.jsonl"),
+                hook_key=HOOK_KEY,
+            )
+        )
+    assert target.sent == []
+
+
+def test_escape_transaction_lease_loss_after_escape_prevents_next_byte(monkeypatch, tmp_path):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    after = _signed_hook(sequence=5, prompt_state="ready")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before, after],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    calls = 0
+
+    def lose_controller_lease(_resource, _epoch):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise ContractError("controller lease epoch is no longer live")
+
+    observation = _escape_observation()
+    with pytest.raises(ContractError, match="no longer live"):
+        asyncio.run(
+            dispatch.execute_escape_delivery_transaction(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=_escape_decision(observation),
+                text="must-not-send",
+                verify_epoch=lose_controller_lease,
+                receipts=ReceiptStore(tmp_path / "interrupt-lease-loss.jsonl"),
+                hook_key=HOOK_KEY,
+                post_attempts=1,
+                poll_interval=0,
+            )
+        )
+    assert target.sent == ["\x1b"]
+
+
+def test_escape_transaction_foreground_loss_after_escape_prevents_text(monkeypatch, tmp_path):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    after = {
+        **_signed_hook(sequence=5, prompt_state="ready"),
+        "foregroundJobName": "shell",
+        "jobName": "shell",
+    }
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before, after],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_: False)
+    observation = _escape_observation()
+    result = asyncio.run(
+        dispatch.execute_escape_delivery_transaction(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=_escape_decision(observation),
+            text="must-not-send",
+            verify_epoch=lambda *_: None,
+            receipts=ReceiptStore(tmp_path / "interrupt-post-foreground.jsonl"),
+            hook_key=HOOK_KEY,
+            post_attempts=1,
+            poll_interval=0,
+        )
+    )
+    assert result["ok"] is False
+    assert "lost terminal foreground" in result["error"]
+    assert target.sent == ["\x1b"]
 
 
 def test_visual_decision_requires_controller_and_worker_epochs(monkeypatch, tmp_path):

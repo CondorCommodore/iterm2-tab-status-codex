@@ -72,15 +72,18 @@ def manifest_contract_sha256(manifest: "RunManifest") -> str:
 def render_arm_marker(*, manifest_id: str, manifest_sha256: str) -> str:
     if not SHA256_RE.fullmatch(str(manifest_sha256 or "")):
         raise ContractError("arm marker manifest_sha256 must be lowercase SHA-256")
-    return json.dumps(
-        {
-            "schema": ARM_MARKER_SCHEMA,
-            "manifest_id": _required(manifest_id, "manifest_id"),
-            "manifest_sha256": manifest_sha256,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "schema": ARM_MARKER_SCHEMA,
+                "manifest_id": _required(manifest_id, "manifest_id"),
+                "manifest_sha256": manifest_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
 
 
 def arm_marker_status(

@@ -113,9 +113,7 @@ def state_paths(state_dir: Path) -> dict[str, Path]:
     }
 
 
-def _marker_status(
-    path: Path, *, manifest: RunManifest, manifest_sha256: str
-) -> dict[str, Any]:
+def _marker_status(path: Path, *, manifest: RunManifest, manifest_sha256: str) -> dict[str, Any]:
     try:
         marker_text = path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
@@ -134,9 +132,7 @@ def _marker_status(
 def _require_arm_marker(
     path: Path, *, manifest: RunManifest, manifest_sha256: str
 ) -> dict[str, Any]:
-    observed = _marker_status(
-        path, manifest=manifest, manifest_sha256=manifest_sha256
-    )
+    observed = _marker_status(path, manifest=manifest, manifest_sha256=manifest_sha256)
     if observed.get("valid") is not True:
         raise ContractError(
             f"armed marker is not current ({observed.get('reason')}); explicit re-arm required"
@@ -799,9 +795,7 @@ def status(
         "service_readiness": observed_readiness,
         "armed_but_unserviced": armed and observed_readiness.get("ready") is not True,
         "arm_marker": marker,
-        "requires_explicit_rearm": bool(
-            armed and marker and marker.get("requires_explicit_rearm")
-        ),
+        "requires_explicit_rearm": bool(armed and marker and marker.get("requires_explicit_rearm")),
         "state": state,
         "heartbeat": heartbeat,
         "current_actions": (

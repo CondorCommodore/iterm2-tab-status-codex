@@ -265,6 +265,11 @@ Before a terminal experiment, run `bash scripts/cosctl preflight --manifest
 registrations, and the iTerm edge health without enabling services or sending
 input. A nonzero result is a hard stop for delivery.
 
+When preflight reports identity drift, inspect the non-mutating proposal with
+`bash scripts/cosctl roster-proposal --manifest <path>`. It compares expected
+worker UUID/TTY/runtime bindings with live sessions and lists unregistered
+sessions. It never edits the manifest; adoption requires an explicit re-arm.
+
 When `iterm-live-state.json` exists, `cos_dashboard.py` prefers it over the
 older signal-file snapshot so COS sees API-derived readiness (`ready`,
 `running`, `queued`, `needs_input`, `idle`, `unknown`) without screen-scraping

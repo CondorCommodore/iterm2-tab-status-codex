@@ -73,4 +73,3 @@ def test_missing_hook_variables_never_create_a_trusted_observation():
         )
         is None
     )
-

@@ -105,8 +105,7 @@ class WorkerRegistration:
             )
         if (
             profile_id
-            and (runtime, profile_id, raw_profile_version)
-            not in RUNTIME_OBSERVATION_PROFILES
+            and (runtime, profile_id, raw_profile_version) not in RUNTIME_OBSERVATION_PROFILES
         ):
             raise ContractError(
                 "unsupported worker observation profile: "

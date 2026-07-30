@@ -46,9 +46,7 @@ class VisualObservation:
     def from_dict(cls, value: dict[str, Any]) -> "VisualObservation":
         schema_version = value.get("observation_schema_version")
         if schema_version != OBSERVATION_SCHEMA_VERSION:
-            raise ContractError(
-                f"unsupported observation_schema_version: {schema_version!r}"
-            )
+            raise ContractError(f"unsupported observation_schema_version: {schema_version!r}")
         digest = _required(value.get("screenshot_sha256"), "screenshot_sha256")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ContractError("screenshot_sha256 must be lowercase SHA-256")

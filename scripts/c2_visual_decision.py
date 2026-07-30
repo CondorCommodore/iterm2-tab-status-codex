@@ -114,6 +114,7 @@ class VisualDecision:
     rationale: str
     decided_by: str
     idempotency_key: str
+    delivery_text_sha256: str
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "VisualDecision":
@@ -130,6 +131,14 @@ class VisualDecision:
             raise ContractError("send_text action cannot include terminal control characters")
         if action != "send_text" and text:
             raise ContractError(f"{action} action cannot include text")
+        delivery_digest = str(value.get("delivery_text_sha256") or "").strip()
+        if delivery_digest and (
+            len(delivery_digest) != 64
+            or any(char not in "0123456789abcdef" for char in delivery_digest)
+        ):
+            raise ContractError("delivery_text_sha256 must be lowercase SHA-256")
+        if action != "press_escape" and delivery_digest:
+            raise ContractError("only press_escape may bind interrupt delivery text")
         return cls(
             observation_digest=_required(value.get("observation_digest"), "observation_digest"),
             action=action,
@@ -137,6 +146,7 @@ class VisualDecision:
             rationale=_required(value.get("rationale"), "rationale"),
             decided_by=decided_by,
             idempotency_key=_required(value.get("idempotency_key"), "idempotency_key"),
+            delivery_text_sha256=delivery_digest,
         )
 
     def validate_for(self, observation: VisualObservation) -> None:
@@ -154,3 +164,11 @@ class VisualDecision:
         if self.action == "clear_line":
             return "\x15"
         return self.text
+
+    def validate_delivery_text(self, text: str) -> str:
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        if not self.delivery_text_sha256:
+            raise ContractError("interrupt decision does not bind delivery text")
+        if self.delivery_text_sha256 != digest:
+            raise ContractError("interrupt delivery text differs from the LLM decision")
+        return digest

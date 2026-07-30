@@ -38,7 +38,6 @@ from c2_visual_decision import VisualDecision, VisualObservation
 from cos_iterm_edge_client import dispatch_envelope as dispatch_envelope_via_iterm_api
 
 TTY_RE = re.compile(r"^/dev/ttys[0-9A-Za-z_.-]+$")
-FORBIDDEN_CONTROL_CHARS = {"\x03", "\x1b"}
 
 
 @dataclass(frozen=True)
@@ -57,10 +56,8 @@ def validate_tty(tty: str) -> str:
 
 
 def validate_text(text: str, *, require_goal: bool = True) -> str:
-    if any(char in text for char in FORBIDDEN_CONTROL_CHARS):
-        raise ValueError("dispatch text must not contain Ctrl-C or Escape")
-    if "\n" in text or "\r" in text:
-        raise ValueError("dispatch text must be exactly one line")
+    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+        raise ValueError("dispatch text must not contain terminal control characters")
     if require_goal and not text.startswith("/goal "):
         raise ValueError("dispatch text must start with '/goal '")
     if not text.strip():
@@ -122,6 +119,7 @@ async def session_variables(session: object) -> dict[str, str]:
         "user.workerHookSequence",
         "user.workerHookObservedAt",
         "user.workerHookEventId",
+        "user.workerHookChallengeId",
         "user.workerHookSignature",
         "session.isProcessing",
         "session.currentCommand",
@@ -736,6 +734,7 @@ async def execute_escape_delivery_transaction(
     verify_hook_authenticity: Any,
     post_attempts: int = 8,
     poll_interval: float = 0.1,
+    hook_clock: Any = time.time,
 ) -> dict[str, Any]:
     """Escape once, then deliver only after a fresh signed prompt-ready hook."""
     observation.validate_for(manifest)
@@ -767,6 +766,12 @@ async def execute_escape_delivery_transaction(
         return {"ok": False, "error": "registered iTerm session not found"}
     worker_resource = f"workspace:mikebook:c2-worker:{worker.worker_id}"
 
+    async def exact_session() -> object:
+        current = await find_session_by_id(connection, worker.iterm_session_id)
+        if current is None or current is not session:
+            raise ContractError("registered iTerm target changed during interrupt delivery")
+        return current
+
     before_values = await session_variables(session)
     if before_values.get("tty") != worker.tty:
         return {"ok": False, "error": "registered tty mismatch"}
@@ -788,6 +793,7 @@ async def execute_escape_delivery_transaction(
         cli_session_id=worker.cli_session_id,
         coord_session_id=worker.coord_session_id,
         iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
     )
     if initial.runtime_observation != observation.runtime_observation:
         raise ContractError("signed live hook changed since visual observation")
@@ -804,6 +810,8 @@ async def execute_escape_delivery_transaction(
             "coord_session_id": worker.coord_session_id,
             "controller_epoch": observation.controller_epoch,
             "worker_epoch": observation.worker_epoch,
+            "initial_hook_digest": initial.digest(),
+            "observation_digest": observation.digest(),
             "delivery_text_sha256": text_sha256,
             "idempotency_key": f"{decision.idempotency_key}:challenge",
         }
@@ -812,13 +820,17 @@ async def execute_escape_delivery_transaction(
         raise ContractError("coord broker returned no interrupt challenge")
     challenge_id = str(challenge.get("challenge_id") or "")
     challenge_issued_at = challenge.get("issued_at")
-    if not challenge_id or isinstance(challenge_issued_at, bool) or not isinstance(
-        challenge_issued_at, (int, float)
-    ) or not math.isfinite(float(challenge_issued_at)):
+    if (
+        not challenge_id
+        or isinstance(challenge_issued_at, bool)
+        or not isinstance(challenge_issued_at, (int, float))
+        or not math.isfinite(float(challenge_issued_at))
+    ):
         raise ContractError("coord broker returned an invalid interrupt challenge")
 
     # Re-baseline after challenge creation and immediately before the Escape.
-    baseline_values = await session_variables(session)
+    baseline_session = await exact_session()
+    baseline_values = await session_variables(baseline_session)
     if baseline_values.get("tty") != worker.tty:
         return {"ok": False, "error": "registered tty changed before Escape"}
     foreground_owned = foreground_matches_runtime(
@@ -835,6 +847,7 @@ async def execute_escape_delivery_transaction(
         cli_session_id=worker.cli_session_id,
         coord_session_id=worker.coord_session_id,
         iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
     )
     if baseline.runtime_observation != observation.runtime_observation:
         raise ContractError("signed runtime state changed before Escape")
@@ -859,8 +872,9 @@ async def execute_escape_delivery_transaction(
     }
     receipts.append(reservation)
     fence()
-    await session.async_send_text("\x1b")  # type: ignore[attr-defined]
-    escape_written_at = time.time()
+    escape_session = await exact_session()
+    await escape_session.async_send_text("\x1b")  # type: ignore[attr-defined]
+    escape_written_at = hook_clock()
     escape_receipt = {
         **reservation,
         "kind": "interrupt-delivery-escape-write",
@@ -874,7 +888,8 @@ async def execute_escape_delivery_transaction(
     after = None
     last_error = "no fresh signed post-Escape hook observation"
     for attempt in range(max(1, post_attempts)):
-        values = await session_variables(session)
+        candidate_session = await exact_session()
+        values = await session_variables(candidate_session)
         try:
             candidate = SignedRuntimeHookObservation.from_session_variables(values)
             candidate.verify(
@@ -885,6 +900,7 @@ async def execute_escape_delivery_transaction(
                 cli_session_id=worker.cli_session_id,
                 coord_session_id=worker.coord_session_id,
                 iterm_session_id=worker.iterm_session_id,
+                now_ts=hook_clock(),
                 after_sequence=baseline.sequence,
                 min_observed_at=max(escape_written_at, float(challenge_issued_at)),
                 expected_challenge_id=challenge_id,
@@ -922,7 +938,8 @@ async def execute_escape_delivery_transaction(
         return {"ok": False, "error": last_error, "receipt": blocked}
 
     # Re-resolve all target state immediately before the one atomic command write.
-    final_values = await session_variables(session)
+    final_session = await exact_session()
+    final_values = await session_variables(final_session)
     if final_values.get("tty") != worker.tty:
         raise ContractError("registered tty changed before command write")
     final_foreground_owned = foreground_matches_runtime(
@@ -939,6 +956,7 @@ async def execute_escape_delivery_transaction(
         cli_session_id=worker.cli_session_id,
         coord_session_id=worker.coord_session_id,
         iterm_session_id=worker.iterm_session_id,
+        now_ts=hook_clock(),
         after_sequence=baseline.sequence,
         min_observed_at=max(escape_written_at, float(challenge_issued_at)),
         expected_challenge_id=challenge_id,
@@ -950,7 +968,8 @@ async def execute_escape_delivery_transaction(
 
     # One revalidated API write prevents a lease/identity gap between text and submit.
     fence()
-    await session.async_send_text(f"{text}\r\n")  # type: ignore[attr-defined]
+    final_session = await exact_session()
+    await final_session.async_send_text(f"{text}\r\n")  # type: ignore[attr-defined]
     receipt = {
         **escape_receipt,
         "kind": "interrupt-delivery-submitted",

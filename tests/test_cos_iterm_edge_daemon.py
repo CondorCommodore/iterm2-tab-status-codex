@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import sys
 import threading
@@ -137,6 +138,14 @@ class FakeCoordClient:
 
     def post_receipt(self, receipt):
         self.events.append(("post", receipt))
+
+    def create_runtime_interrupt_challenge(self, request):
+        self.events.append(("challenge", request))
+        return {"challenge_id": "challenge-1", "issued_at": 1001.0}
+
+    def verify_runtime_observation(self, report):
+        self.events.append(("runtime-verify", report))
+        return {"verified": True, "observation_digest": "a" * 64}
 
     def release_resource(self, handle):
         self.events.append(("release", handle.resource))
@@ -457,14 +466,11 @@ def test_visual_action_is_parsed_executed_and_audited(monkeypatch, tmp_path):
     assert "duplicate visual action" in duplicate["error"]
 
 
-def test_interrupt_delivery_loads_private_hook_key_and_audits_result(monkeypatch, tmp_path):
+def test_interrupt_delivery_uses_broker_callbacks_and_audits_result(monkeypatch, tmp_path):
     daemon = make_daemon(tmp_path)
-    key_path = tmp_path / "runtime-observation.key"
-    key_path.write_bytes(b"k" * 32)
-    os.chmod(key_path, 0o600)
-    daemon.runtime_hook_key_path = key_path
     raw_observation = {**visual_observation(), "prompt_state": "running"}
     parsed = edge_daemon.VisualObservation.from_dict(raw_observation)
+    delivery_text = "URGENT synthetic reference"
     raw_decision = {
         "observation_digest": parsed.digest(),
         "action": "press_escape",
@@ -472,11 +478,13 @@ def test_interrupt_delivery_loads_private_hook_key_and_audits_result(monkeypatch
         "rationale": "Synthetic urgent interrupt",
         "decided_by": "llm:test-supervisor",
         "idempotency_key": "interrupt-edge-1",
+        "delivery_text_sha256": hashlib.sha256(delivery_text.encode()).hexdigest(),
     }
 
     async def fake_execute(_connection, **kwargs):
-        assert kwargs["hook_key"] == b"k" * 32
-        assert kwargs["text"] == "URGENT synthetic reference"
+        assert kwargs["create_challenge"] == daemon.client.create_runtime_interrupt_challenge
+        assert kwargs["verify_hook_authenticity"] == daemon.client.verify_runtime_observation
+        assert kwargs["text"] == delivery_text
         receipt = {"idempotency_key": "interrupt-edge-1:submitted"}
         kwargs["receipts"].append(receipt)
         return {"ok": False, "error": "recipient acknowledgement required", "receipt": receipt}
@@ -489,7 +497,7 @@ def test_interrupt_delivery_loads_private_hook_key_and_audits_result(monkeypatch
                 "op": "interrupt_delivery",
                 "observation": raw_observation,
                 "decision": raw_decision,
-                "text": "URGENT synthetic reference",
+                "text": delivery_text,
             }
         )
     )
@@ -497,19 +505,24 @@ def test_interrupt_delivery_loads_private_hook_key_and_audits_result(monkeypatch
     assert daemon.client.events[-1] == ("post", result["receipt"])
 
 
-def test_interrupt_delivery_missing_hook_key_fails_before_terminal_call(monkeypatch, tmp_path):
+def test_interrupt_delivery_broker_failure_fails_before_terminal_call(monkeypatch, tmp_path):
     daemon = make_daemon(tmp_path)
-    daemon.runtime_hook_key_path = tmp_path / "missing.key"
-    called = False
+    terminal_called = False
 
     async def fake_execute(*args, **kwargs):
-        nonlocal called
-        called = True
+        nonlocal terminal_called
+        kwargs["create_challenge"]({"idempotency_key": "challenge"})
+        terminal_called = True
+
+    def reject_challenge(_request):
+        raise c2.ContractError("coord broker unavailable")
 
     monkeypatch.setattr(edge_daemon, "execute_escape_delivery_transaction", fake_execute)
+    daemon.client.create_runtime_interrupt_challenge = reject_challenge
     raw_observation = {**visual_observation(), "prompt_state": "running"}
     parsed = edge_daemon.VisualObservation.from_dict(raw_observation)
-    with pytest.raises(c2.ContractError, match="key is unavailable"):
+    delivery_text = "must-not-send"
+    with pytest.raises(c2.ContractError, match="broker unavailable"):
         asyncio.run(
             daemon.handle(
                 {
@@ -523,12 +536,13 @@ def test_interrupt_delivery_missing_hook_key_fails_before_terminal_call(monkeypa
                         "rationale": "Synthetic urgent interrupt",
                         "decided_by": "llm:test",
                         "idempotency_key": "interrupt-missing-key",
+                        "delivery_text_sha256": hashlib.sha256(delivery_text.encode()).hexdigest(),
                     },
-                    "text": "must-not-send",
+                    "text": delivery_text,
                 }
             )
         )
-    assert called is False
+    assert terminal_called is False
 
 
 def test_concurrent_duplicate_visual_action_only_injects_once(monkeypatch, tmp_path):

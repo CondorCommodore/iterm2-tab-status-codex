@@ -9,6 +9,7 @@ is empty; all published records use ``input_buffer_state=unknown``.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -18,9 +19,10 @@ import stat
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from c2_contract import RUNTIME_OBSERVATION_PROFILES, TTY_RE, ContractError
+from c2_runtime_observation import RuntimeObservation
 
 RUNTIME_HOOK_SCHEMA_VERSION = 1
 DEFAULT_STATE_DIR = Path.home() / ".local/state/cos-c2/runtime-observations"
@@ -36,6 +38,10 @@ PROFILE_BY_RUNTIME = {
     "codex": ("codex-cli", 1),
     "claude": ("claude-code", 1),
 }
+
+HOOK_SCHEMA_VERSION = 1
+MAX_HOOK_AGE_SECONDS = 15.0
+BrokerVerifier = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 def _required(value: object, name: str) -> str:
@@ -256,6 +262,150 @@ def load_record(
     if record.iterm_session_id != iterm_session_id or record.tty != tty:
         return None
     return record if record.is_fresh(now_ts=now_ts, max_age=max_age) else None
+
+
+@dataclass(frozen=True)
+class SignedRuntimeHookObservation:
+    """An observer-authored report verified by the coord broker.
+
+    This is deliberately separate from ``RuntimeHookRecord``. The local hook
+    record is useful presentation evidence but is never sufficient authority
+    for an interrupt delivery transaction.
+    """
+
+    hook_schema_version: int
+    runtime_observation: RuntimeObservation
+    iterm_session_id: str
+    sequence: int
+    observed_at: float
+    event_id: str
+    challenge_id: str
+    signature: str
+
+    @classmethod
+    def from_session_variables(cls, values: dict[str, str]) -> "SignedRuntimeHookObservation":
+        observed = RuntimeObservation.from_session_variables(values)
+        if observed is None:
+            raise ContractError("trusted runtime observation variables are missing or unsupported")
+        try:
+            schema = int(values.get("user.workerHookSchemaVersion") or "")
+            sequence = int(values.get("user.workerHookSequence") or "")
+            observed_at = float(values.get("user.workerHookObservedAt") or "")
+        except ValueError as exc:
+            raise ContractError("runtime hook coordinates are malformed") from exc
+        if schema != HOOK_SCHEMA_VERSION:
+            raise ContractError(f"unsupported runtime hook schema: {schema}")
+        if sequence < 1:
+            raise ContractError("runtime hook sequence must be positive")
+        if not math.isfinite(observed_at):
+            raise ContractError("runtime hook observed_at must be finite")
+        event_id = str(values.get("user.workerHookEventId") or "").strip()
+        challenge_id = str(values.get("user.workerHookChallengeId") or "").strip()
+        signature = str(values.get("user.workerHookSignature") or "").strip()
+        iterm_session_id = str(values.get("user.workerHookItermSessionId") or "").strip()
+        if not event_id or not signature or not iterm_session_id:
+            raise ContractError("runtime hook identity/signature is incomplete")
+        return cls(
+            schema,
+            observed,
+            iterm_session_id,
+            sequence,
+            observed_at,
+            event_id,
+            challenge_id,
+            signature,
+        )
+
+    def canonical_dict(self) -> dict[str, Any]:
+        return {
+            "hook_schema_version": self.hook_schema_version,
+            "runtime_observation": asdict(self.runtime_observation),
+            "iterm_session_id": self.iterm_session_id,
+            "sequence": self.sequence,
+            "observed_at": self.observed_at,
+            "event_id": self.event_id,
+            "challenge_id": self.challenge_id,
+        }
+
+    def canonical_bytes(self) -> bytes:
+        return json.dumps(
+            self.canonical_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+
+    def digest(self) -> str:
+        return hashlib.sha256(self.canonical_bytes()).hexdigest()
+
+    def verify(
+        self,
+        verify_authenticity: BrokerVerifier,
+        *,
+        runtime: str,
+        profile_id: str,
+        profile_version: int,
+        cli_session_id: str,
+        coord_session_id: str,
+        iterm_session_id: str,
+        now_ts: float | None = None,
+        after_sequence: int | None = None,
+        min_observed_at: float | None = None,
+        expected_challenge_id: str | None = None,
+    ) -> None:
+        self.runtime_observation.validate_registration(
+            runtime=runtime,
+            profile_id=profile_id,
+            profile_version=profile_version,
+            cli_session_id=cli_session_id,
+            coord_session_id=coord_session_id,
+        )
+        if self.iterm_session_id != iterm_session_id:
+            raise ContractError("runtime hook targets stale iTerm identity")
+        age = (time.time() if now_ts is None else now_ts) - self.observed_at
+        if age < 0 or age > MAX_HOOK_AGE_SECONDS:
+            raise ContractError("runtime hook observation is stale")
+        if after_sequence is not None and self.sequence <= after_sequence:
+            raise ContractError("runtime hook observation did not advance")
+        if min_observed_at is not None and self.observed_at < min_observed_at:
+            raise ContractError("runtime hook observation predates terminal action")
+        if expected_challenge_id is not None and self.challenge_id != expected_challenge_id:
+            raise ContractError("runtime hook observation does not bind the active challenge")
+        verification = verify_authenticity({**self.canonical_dict(), "signature": self.signature})
+        if not isinstance(verification, dict) or verification.get("verified") is not True:
+            raise ContractError("coord broker rejected runtime hook authenticity")
+        if verification.get("observation_digest") != self.digest():
+            raise ContractError("coord broker verified a different runtime hook observation")
+
+
+def session_variable_values(
+    observation: SignedRuntimeHookObservation,
+) -> dict[str, str]:
+    runtime = observation.runtime_observation
+    return {
+        "workerRuntime": runtime.runtime,
+        "workerObservationProfile": runtime.profile_id,
+        "workerObservationProfileVersion": str(runtime.profile_version),
+        "workerPromptState": runtime.prompt_state,
+        "workerInputBufferState": runtime.input_buffer_state,
+        "cliSessionId": runtime.cli_session_id,
+        "coordSessionId": runtime.coord_session_id,
+        "workerHookSchemaVersion": str(observation.hook_schema_version),
+        "workerHookItermSessionId": observation.iterm_session_id,
+        "workerHookSequence": str(observation.sequence),
+        "workerHookObservedAt": str(observation.observed_at),
+        "workerHookEventId": observation.event_id,
+        "workerHookChallengeId": observation.challenge_id,
+        "workerHookSignature": observation.signature,
+    }
+
+
+def render_iterm_user_variables(observation: SignedRuntimeHookObservation) -> str:
+    chunks = []
+    for name, value in session_variable_values(observation).items():
+        encoded = base64.b64encode(value.encode()).decode()
+        chunks.append(f"\033]1337;SetUserVar={name}={encoded}\007")
+    return "".join(chunks)
 
 
 def main(argv: list[str] | None = None) -> int:

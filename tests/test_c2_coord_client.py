@@ -209,6 +209,51 @@ def test_generic_renew_and_release_omit_controller_expectation():
     assert "expected_controller_instance" not in calls[2]
 
 
+def test_runtime_observation_challenge_and_verification_use_broker_endpoints():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        payload = json.loads(body) if body else None
+        calls.append((method, url, headers, payload, timeout))
+        if url.endswith("/challenges"):
+            return 201, {"challenge": {"challenge_id": "challenge-1", "issued_at": 1001.0}}
+        return 200, {
+            "verification": {
+                "verified": True,
+                "observation_digest": "a" * 64,
+            }
+        }
+
+    client = coord.CoordClient(config(), request=request)
+    challenge = client.create_runtime_interrupt_challenge(
+        {"idempotency_key": "interrupt-1:challenge", "worker_id": "worker"}
+    )
+    verification = client.verify_runtime_observation(
+        {"event_id": "event-1", "signature": "broker-signature"}
+    )
+
+    assert challenge["challenge_id"] == "challenge-1"
+    assert verification["verified"] is True
+    assert calls[0][1].endswith("/c2/runtime-observations/challenges")
+    assert calls[0][2]["Idempotency-Key"] == "interrupt-1:challenge"
+    assert calls[1][1].endswith("/c2/runtime-observations/verify")
+    assert calls[1][3]["observation"]["event_id"] == "event-1"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"challenge": {"challenge_id": "", "issued_at": 1001.0}},
+        {"challenge": {"challenge_id": "challenge-1", "issued_at": float("nan")}},
+        {},
+    ],
+)
+def test_runtime_interrupt_challenge_rejects_invalid_broker_response(response):
+    client = coord.CoordClient(config(), request=lambda *_args: (200, response))
+    with pytest.raises(coord.CoordError, match="challenge"):
+        client.create_runtime_interrupt_challenge({"idempotency_key": "challenge-1"})
+
+
 def test_renew_rejects_successor_epoch():
     def request(method, url, headers, body, timeout):
         return 200, {"status": "renewed", "lease": {"holder": "mikebook_codex", "epoch": 10}}

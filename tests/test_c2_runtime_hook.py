@@ -20,7 +20,6 @@ from c2_runtime_hook import (  # noqa: E402
 )
 from c2_runtime_observation import RuntimeObservation  # noqa: E402
 
-
 BROKER_KEY = b"test-only-broker-key" * 2
 
 
@@ -31,9 +30,7 @@ def broker_signature(observation: SignedRuntimeHookObservation) -> str:
 def broker_verifier(report):
     claimed = dict(report)
     signature = claimed.pop("signature", "")
-    canonical = json.dumps(
-        claimed, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode()
+    canonical = json.dumps(claimed, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     valid = hmac.compare_digest(
         signature, hmac.new(BROKER_KEY, canonical, hashlib.sha256).hexdigest()
     )
@@ -180,9 +177,7 @@ def test_hook_requires_causal_challenge_and_action_timestamp():
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
 def test_hook_rejects_non_finite_timestamp_before_broker_call(value):
-    values = {
-        f"user.{key}": item for key, item in session_variable_values(signed()).items()
-    }
+    values = {f"user.{key}": item for key, item in session_variable_values(signed()).items()}
     values["user.workerHookObservedAt"] = value
     with pytest.raises(ContractError, match="finite"):
         SignedRuntimeHookObservation.from_session_variables(values)

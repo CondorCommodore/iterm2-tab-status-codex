@@ -77,20 +77,6 @@ fi
 
 mkdir -p "${HOME}/Library/LaunchAgents" "${STATE_DIR}" "$(dirname "${SOCKET}")"
 chmod 700 "${STATE_DIR}" "$(dirname "${SOCKET}")"
-HOOK_KEY="${STATE_DIR}/runtime-observation.key"
-if [[ ! -e "${HOOK_KEY}" ]]; then
-  umask 077
-  dd if=/dev/urandom of="${HOOK_KEY}" bs=32 count=1 2>/dev/null
-fi
-if [[ -L "${HOOK_KEY}" || ! -f "${HOOK_KEY}" ]]; then
-  echo "[install] runtime observation key must be a regular non-symlink file: ${HOOK_KEY}" >&2
-  exit 1
-fi
-chmod 600 "${HOOK_KEY}"
-if [[ "$(wc -c < "${HOOK_KEY}" | tr -d ' ')" -lt 32 ]]; then
-  echo "[install] runtime observation key must contain at least 32 bytes: ${HOOK_KEY}" >&2
-  exit 1
-fi
 "${ITERM_PYTHON}" -c '
 import html
 import pathlib
@@ -111,4 +97,4 @@ launchctl bootstrap "gui/$(id -u)" "${DST}"
 launchctl enable "gui/$(id -u)/${LABEL}"
 launchctl print "gui/$(id -u)/${LABEL}" | sed -n '1,22p'
 echo "[install] persistent iTerm edge loaded for manifest=${MANIFEST} state_dir=${STATE_DIR} socket=${SOCKET}"
-echo "[install] runtime hook enrollment remains a separate, explicit source-profile step"
+echo "[install] broker observer enrollment remains a separate, explicit source-profile step"

@@ -937,16 +937,28 @@ ignored, and the daemon clears prior action variables when no valid record is
 present. The publisher has no input-buffer override: every record is `unknown`,
 so even a `ready` lifecycle event remains non-actionable.
 
+The interrupt-delivery source contract adds a separate broker-authenticated
+observation envelope; the inert lifecycle publisher cannot satisfy it. No
+signing secret is stored beside the worker: coord-api must verify a report from
+an independently enrolled observer. The transaction binds the exact delivery
+text digest into the LLM decision and durable reservation, obtains a one-use
+broker challenge, re-baselines immediately before one Escape, and requires a
+newer challenge-bound broker report after the Escape. It revalidates exact
+runtime/profile/CLI/coord/iTerm identity, TTY, foreground, prompt readiness, and
+an empty input buffer immediately before one atomic text-plus-CR/LF API write.
+A submitted transport receipt remains unacknowledged until a distinct recipient
+receipt arrives.
+
 Test 2 remains blocked before execution because this publisher is not installed
 in either runtime's hook configuration and deliberately supplies no real trusted
 empty/non-empty input-buffer observation. Installed Codex/Claude hooks and
 settings remain unchanged and require separate operator authorization. The
-atomic Escape-to-freshly-reverified-prompt-ready transaction before text and a
-distinct recipient receipt beyond transport acknowledgement also remain
-unimplemented. Soft-queue parity and the full dual-runtime fault matrix remain
-unimplemented. The default-deny gate and observation schema are source
-prerequisites only; neither activates terminal actions nor counts toward a Test
-2 acceptance criterion.
+required coord-api challenge and verification endpoints are contract consumers
+here but are not yet implemented in the broker, and no independent observer is
+enrolled. Recipient receipt handling, soft-queue parity, and the full
+dual-runtime fault matrix also remain incomplete. The default-deny gate,
+observation schemas, and atomic source transaction are prerequisites only; none
+activates terminal actions or counts toward a Test 2 acceptance criterion.
 
 **Unanswered decisions.** Exact prompt-ready signals by runtime version; whether
 Priority ever uses safe STEER while running; policy for known versus unknown

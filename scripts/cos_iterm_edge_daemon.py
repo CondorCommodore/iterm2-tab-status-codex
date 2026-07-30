@@ -31,7 +31,6 @@ from c2_contract import (  # noqa: E402
     load_manifest,
 )
 from c2_coord_client import CoordClient, CoordConfig, LeaseBlocked  # noqa: E402
-from c2_runtime_hook import load_hook_key  # noqa: E402
 from c2_visual_decision import VisualDecision, VisualObservation  # noqa: E402
 from cos_iterm_edge_client import DEFAULT_SOCKET_PATH, MAX_RESPONSE_BYTES  # noqa: E402
 from cos_tab_dispatch import (  # noqa: E402
@@ -80,7 +79,6 @@ class EdgeDaemon:
         self.dispatch_inflight: set[str] = set()
         self.dispatch_guard = asyncio.Lock()
         self.target_locks: dict[str, asyncio.Lock] = {}
-        self.runtime_hook_key_path = state_dir / "runtime-observation.key"
 
     def target_lock(self, iterm_session_id: str) -> asyncio.Lock:
         lock = self.target_locks.get(iterm_session_id)
@@ -382,7 +380,6 @@ class EdgeDaemon:
                     }
                 self.dispatch_inflight.add(key)
             try:
-                hook_key = load_hook_key(self.runtime_hook_key_path)
                 async with self.target_lock(observation.iterm_session_id):
                     result = await execute_escape_delivery_transaction(
                         self.connection,
@@ -392,7 +389,8 @@ class EdgeDaemon:
                         text=text,
                         verify_epoch=self.client.verify_live_epoch,
                         receipts=self.dispatch_receipts,
-                        hook_key=hook_key,
+                        create_challenge=self.client.create_runtime_interrupt_challenge,
+                        verify_hook_authenticity=self.client.verify_runtime_observation,
                     )
                 if isinstance(result.get("receipt"), dict):
                     await self.audit_receipt(result, result["receipt"])
@@ -410,9 +408,6 @@ class EdgeDaemon:
                 "disk_manifest_sha256": disk_manifest_sha256,
                 "pid": os.getpid(),
                 "terminal_actions_enabled": self.manifest.terminal_actions_enabled,
-                "runtime_hook_key_available": (
-                    getattr(self, "runtime_hook_key_path", Path("/nonexistent")).is_file()
-                ),
                 **(
                     {}
                     if manifest_current

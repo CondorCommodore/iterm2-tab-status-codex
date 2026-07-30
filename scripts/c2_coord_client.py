@@ -31,6 +31,7 @@ class LeaseLost(CoordError):
 
 
 RequestFn = Callable[[str, str, dict[str, str], bytes | None, float], tuple[int, Any]]
+SHADOW_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 def _request(
@@ -372,6 +373,38 @@ class CoordClient:
         if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:
             raise CoordError("coord receipt POST returned no durable message id")
         return self.verify_receipt_readback(receipt, message_id)
+
+    def post_message_delivery_shadow_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        run_id = run.get("run_id")
+        if not isinstance(run_id, str) or not SHADOW_RUN_ID_RE.fullmatch(run_id):
+            raise CoordError("coord shadow run_id has invalid syntax")
+        _status, payload = self.call(
+            "POST",
+            "/message-delivery-shadow/runs",
+            payload=run,
+            write=True,
+            idempotency_key=run_id,
+            allowed=(200, 201),
+        )
+        response = payload if isinstance(payload, dict) else {}
+        item = response.get("item")
+        if not isinstance(item, dict) or item.get("run_id") != run.get("run_id"):
+            raise CoordError("coord shadow-run POST returned no matching durable item")
+        return item
+
+    def message_delivery_shadow_run(self, run_id: str) -> dict[str, Any]:
+        if not SHADOW_RUN_ID_RE.fullmatch(run_id):
+            raise CoordError("coord shadow run_id has invalid syntax")
+        _status, payload = self.call(
+            "GET",
+            "/message-delivery-shadow/runs/" + urllib.parse.quote(run_id, safe=""),
+            write=True,
+        )
+        response = payload if isinstance(payload, dict) else {}
+        item = response.get("item")
+        if not isinstance(item, dict) or item.get("run_id") != run_id:
+            raise CoordError("coord shadow-run readback returned no matching item")
+        return item
 
     def _handle(self, resource: str, raw: object) -> LeaseHandle:
         lease = raw if isinstance(raw, dict) else {}

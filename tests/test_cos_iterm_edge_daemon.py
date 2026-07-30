@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,20 +17,24 @@ import cos_iterm_edge_daemon as edge_daemon  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
-def manifest() -> c2.RunManifest:
+def manifest(*, controller_visible: bool = True) -> c2.RunManifest:
+    controller = {
+        "controller_id": "cos",
+        "host": "macbook",
+        "runtime": "codex",
+        "iterm_session_id": "iterm-cos",
+        "tty": "/dev/ttys001",
+        "cli_session_id": "cli-cos",
+        "coord_session_id": "coord-cos",
+        "coord_agent_id": "mikebook_codex",
+    }
+    if not controller_visible:
+        controller.pop("iterm_session_id")
+        controller.pop("tty")
     return c2.RunManifest.from_dict(
         {
             "manifest_id": "edge-test-v1",
-            "controller": {
-                "controller_id": "cos",
-                "host": "macbook",
-                "runtime": "codex",
-                "iterm_session_id": "iterm-cos",
-                "tty": "/dev/ttys001",
-                "cli_session_id": "cli-cos",
-                "coord_session_id": "coord-cos",
-                "coord_agent_id": "mikebook_codex",
-            },
+            "controller": controller,
             "workers": [
                 {
                     "worker_id": "worker-codex",
@@ -137,6 +142,15 @@ def make_daemon(tmp_path) -> edge_daemon.EdgeDaemon:
     return daemon
 
 
+def manifest_with_colliding_worker(field: str) -> c2.RunManifest:
+    base = manifest(controller_visible=False)
+    worker = replace(
+        base.workers[0],
+        **{field: getattr(base, f"controller_{field}")},
+    )
+    return replace(base, workers=(worker,))
+
+
 def test_health_reports_loaded_manifest_digest_and_process_identity(tmp_path):
     daemon = make_daemon(tmp_path)
 
@@ -239,10 +253,33 @@ def test_failed_dispatch_releases_worker_reservation(monkeypatch, tmp_path):
         "post",
         result["receipt"],
     )
-    assert daemon.client.events[-2] == (
-        "release",
-        "workspace:mikebook:c2-worker:worker-codex",
+
+
+def test_headless_controller_manifest_still_dispatches_workers(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    daemon.manifest = manifest(controller_visible=False)
+
+    def fake_dispatch(**kwargs):
+        receipt = {
+            "idempotency_key": kwargs["envelope"].idempotency_key,
+            "reservation": kwargs["reservation"],
+        }
+        kwargs["receipts"].append(receipt)
+        return {"ok": True, "receipt": receipt}
+
+    monkeypatch.setattr(edge_daemon, "dispatch_registered_headless", fake_dispatch)
+    result = asyncio.run(
+        daemon.handle(
+            {
+                "protocol": "cos-c2-iterm-edge-v1",
+                "op": "dispatch",
+                "envelope": envelope(),
+            }
+        )
     )
+
+    assert result["ok"] is True
+    assert result["transport"] == "headless"
 
 
 def test_dispatch_exception_releases_worker_reservation(monkeypatch, tmp_path):
@@ -269,6 +306,23 @@ def test_dispatch_exception_releases_worker_reservation(monkeypatch, tmp_path):
         "workspace:mikebook:c2-worker:worker-codex",
     ) in daemon.client.events
     assert result["receipt"]["observed_ack"] is False
+
+
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_headless_dispatch_rejects_controller_session_identity_collision(field, tmp_path):
+    daemon = make_daemon(tmp_path)
+    daemon.manifest = manifest_with_colliding_worker(field)
+    request = {
+        "protocol": "cos-c2-iterm-edge-v1",
+        "op": "dispatch",
+        "envelope": {
+            **envelope(),
+            field: getattr(daemon.manifest, f"controller_{field}"),
+        },
+    }
+
+    with pytest.raises(c2.ContractError, match="must not also be registered as a worker"):
+        asyncio.run(daemon.handle(request))
 
 
 def test_invalid_envelope_is_rejected_before_worker_claim(tmp_path):

@@ -4,6 +4,7 @@ import asyncio
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -178,20 +179,24 @@ def test_looks_like_agent_session_uses_job_or_runtime():
     assert not dispatch.looks_like_agent_session({"jobName": "zsh", "user.workerRuntime": ""})
 
 
-def _manifest(transport="tab"):
+def _manifest(transport="tab", controller_visible: bool = True):
+    controller = {
+        "controller_id": "cos",
+        "host": "macbook",
+        "runtime": "codex",
+        "iterm_session_id": "iterm-cos",
+        "tty": "/dev/ttys001",
+        "cli_session_id": "cli-cos",
+        "coord_session_id": "coord-cos",
+        "coord_agent_id": "mikebook_codex",
+    }
+    if not controller_visible:
+        controller.pop("iterm_session_id")
+        controller.pop("tty")
     return RunManifest.from_dict(
         {
             "manifest_id": "test",
-            "controller": {
-                "controller_id": "cos",
-                "host": "macbook",
-                "runtime": "codex",
-                "iterm_session_id": "iterm-cos",
-                "tty": "/dev/ttys001",
-                "cli_session_id": "cli-cos",
-                "coord_session_id": "coord-cos",
-                "coord_agent_id": "mikebook_codex",
-            },
+            "controller": controller,
             "workers": [
                 {
                     "worker_id": "worker",
@@ -211,6 +216,15 @@ def _manifest(transport="tab"):
             "dispatch_transport": transport,
         }
     )
+
+
+def _manifest_with_colliding_worker(field: str, *, controller_visible: bool = True):
+    manifest = _manifest(controller_visible=controller_visible)
+    worker = replace(
+        manifest.workers[0],
+        **{field: getattr(manifest, f"controller_{field}")},
+    )
+    return replace(manifest, workers=(worker,))
 
 
 def _envelope():
@@ -397,6 +411,24 @@ def test_registered_dispatch_uses_exact_session_epoch_and_crlf(monkeypatch, tmp_
     assert result["receipt"]["observed_ack"] is True
     assert result["receipt"]["submit_method"] == "iterm2-python-api-crlf"
     assert result["receipt"]["metrics"] == {"recovery_submitted": False}
+
+
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_headless_registered_dispatch_rejects_controller_session_identity_collision(
+    field, tmp_path
+):
+    manifest = _manifest_with_colliding_worker(field, controller_visible=False)
+    envelope = replace(_envelope(), **{field: getattr(manifest, f"controller_{field}")})
+
+    with pytest.raises(dispatch.ContractError, match="must not also be registered as a worker"):
+        asyncio.run(
+            dispatch.dispatch_registered_headless(
+                manifest=manifest,
+                envelope=envelope,
+                verify_epoch=lambda *_args: None,
+                receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+            )
+        )
 
 
 def test_registered_dispatch_accepts_exact_foreground_runtime_when_iterm_name_drifts(
@@ -854,6 +886,20 @@ def test_headless_commands_resume_same_uuid_for_codex_and_claude():
         "claude-session",
         "--print",
     ]
+
+
+def test_controller_poke_applescript_rejects_headless_controller():
+    result = dispatch.send_controller_poke_applescript(
+        manifest=_manifest(controller_visible=False),
+        text="/goal wake up",
+        controller_epoch=7,
+        idempotency_key="poke-1",
+        verify_epoch=lambda *_args, **_kwargs: None,
+        run=lambda *_args, **_kwargs: None,
+    )
+
+    assert result["ok"] is False
+    assert "headless controller has no iTerm session" in result["error"]
 
 
 def test_applescript_write_without_ack_fails_closed(tmp_path):

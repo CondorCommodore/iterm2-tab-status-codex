@@ -11,7 +11,7 @@ sys.path.insert(0, str(SCRIPTS))
 import c2_contract as c2  # noqa: E402
 
 
-def manifest_dict(**overrides):
+def manifest_dict(*, controller_visible: bool = True, **overrides):
     value = {
         "manifest_id": "test-v1",
         "controller": {
@@ -54,6 +54,9 @@ def manifest_dict(**overrides):
         "dispatch_transport": "ab",
         "recovery_transport": "ab",
     }
+    if not controller_visible:
+        value["controller"].pop("iterm_session_id")
+        value["controller"].pop("tty")
     value.update(overrides)
     return value
 
@@ -97,6 +100,41 @@ def test_manifest_rejects_controller_worker_session_collision():
     value["workers"][0]["iterm_session_id"] = "iterm-cos"
 
     with pytest.raises(c2.ContractError, match="controller session"):
+        c2.RunManifest.from_dict(value)
+
+
+def test_manifest_accepts_headless_controller_without_terminal_identity():
+    manifest = c2.RunManifest.from_dict(manifest_dict(controller_visible=False))
+
+    assert manifest.controller_iterm_session_id == ""
+    assert manifest.controller_tty == ""
+    assert manifest.controller_has_visible_terminal() is False
+    assert manifest.controller_presentation == "headless"
+
+
+def test_manifest_rejects_partially_visible_controller_identity():
+    value = manifest_dict(controller_visible=False)
+    value["controller"]["tty"] = "/dev/ttys001"
+
+    with pytest.raises(c2.ContractError, match="both be present or both be omitted"):
+        c2.RunManifest.from_dict(value)
+
+
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_manifest_rejects_controller_session_identity_collision(field):
+    value = manifest_dict()
+    value["workers"][0][field] = value["controller"][field]
+
+    with pytest.raises(c2.ContractError, match="must not also be registered as a worker"):
+        c2.RunManifest.from_dict(value)
+
+
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_manifest_rejects_headless_controller_session_identity_collision(field):
+    value = manifest_dict(controller_visible=False)
+    value["workers"][0][field] = value["controller"][field]
+
+    with pytest.raises(c2.ContractError, match="must not also be registered as a worker"):
         c2.RunManifest.from_dict(value)
 
 

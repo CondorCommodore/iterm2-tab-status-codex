@@ -262,9 +262,12 @@ def _validate_authoritative_target(
     worker = envelope.validate_for(manifest)
     if worker.role != "worker":
         raise ContractError("assignments may target only registered worker roles")
-    if worker.iterm_session_id == manifest.controller_iterm_session_id:
+    if (
+        manifest.controller_has_visible_terminal()
+        and worker.iterm_session_id == manifest.controller_iterm_session_id
+    ):
         raise ContractError("self-dispatch is forbidden")
-    if worker.tty == manifest.controller_tty:
+    if manifest.controller_has_visible_terminal() and worker.tty == manifest.controller_tty:
         raise ContractError("self-dispatch tty is forbidden")
     if receipts.has_idempotency_key(envelope.idempotency_key):
         raise ContractError(f"duplicate dispatch idempotency key: {envelope.idempotency_key}")
@@ -547,7 +550,16 @@ async def execute_visual_decision(
     worker = manifest.worker(observation.worker_id)
     if worker.role != "worker":
         raise ContractError("visual decisions may target only registered workers")
-    if worker.iterm_session_id == manifest.controller_iterm_session_id:
+    collisions = manifest.controller_collides_with_worker(worker)
+    if collisions:
+        raise ContractError(
+            "controller session identities must not also be registered as a worker: "
+            + ", ".join(collisions)
+        )
+    if (
+        manifest.controller_has_visible_terminal()
+        and worker.iterm_session_id == manifest.controller_iterm_session_id
+    ):
         raise ContractError("self-dispatch is forbidden")
 
     session = await find_session_by_id(connection, worker.iterm_session_id)
@@ -721,6 +733,12 @@ def send_controller_poke_applescript(
     run: Any = subprocess.run,
 ) -> dict[str, Any]:
     """Wake the registered COS session; this is not a worker assignment."""
+    if not manifest.controller_has_visible_terminal():
+        return {
+            "ok": False,
+            "error": "headless controller has no iTerm session",
+            "controller_mode": manifest.controller_presentation,
+        }
     controller = WorkerRegistration(
         worker_id=manifest.controller_id,
         host=manifest.controller_host,

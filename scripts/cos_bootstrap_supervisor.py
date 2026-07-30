@@ -433,7 +433,12 @@ def run_tick(
     already_delivered = (
         previous.get("decision_digest") == digest and previous.get("wake_delivered") is True
     )
-    if wake and decision["wake_required"] and not already_delivered:
+    if (
+        wake
+        and decision["wake_required"]
+        and not already_delivered
+        and manifest.controller_has_visible_terminal()
+    ):
         prompt = (
             f"/goal C2_CONTINUE actions={paths['actions']} sha256={current_actions.digest} "
             f"generation={current_actions.generation} decision={digest} epoch={handle.epoch}. "

@@ -33,16 +33,20 @@ class FakeSession:
         variables: dict[str, object],
         screen: object = "",
         session_id: str = "",
+        fail_set: bool = False,
     ):
         self.variables = dict(variables)
         self.screen = screen
         self.session_id = session_id
+        self.fail_set = fail_set
         self.set_calls: list[tuple[str, str]] = []
 
     async def async_get_variable(self, name: str):
         return self.variables.get(name)
 
     async def async_set_variable(self, name: str, value: str):
+        if self.fail_set:
+            raise RuntimeError("simulated iTerm variable write failure")
         self.set_calls.append((name, value))
 
     async def async_get_screen_contents(self):
@@ -289,6 +293,42 @@ def test_missing_or_wrong_iterm_hook_cache_clears_action_variables(tmp_path):
     assert values["user.workerInputBufferState"] == ""
     assert values["user.cliSessionId"] == ""
     assert values["user.coordSessionId"] == ""
+
+
+def test_failed_best_effort_clear_does_not_create_trusted_record(tmp_path):
+    session = FakeSession(
+        variables={
+            "tty": "/dev/ttys003",
+            "session.title": "codex worker",
+            "path": "/tmp/disposable",
+            "session.isProcessing": False,
+            "user.workerRuntime": "codex",
+            "user.workerObservationProfile": "codex-cli",
+            "user.workerObservationProfileVersion": "1",
+            "user.workerPromptState": "ready",
+            "user.workerInputBufferState": "empty",
+            "user.cliSessionId": "stale-cli",
+            "user.coordSessionId": "stale-coord",
+        },
+        screen="› ",
+        session_id="iterm-worker",
+        fail_set=True,
+    )
+
+    record = asyncio.run(
+        daemon.read_session_record(
+            session,
+            window_index=1,
+            tab_index=1,
+            session_index=1,
+            runtime_hook_state_dir=tmp_path,
+        )
+    )
+    asyncio.run(daemon.set_session_variables(session, record))
+
+    assert record.observation_trusted is False
+    assert record.prompt_ready is False
+    assert session.set_calls == []
 
 
 def test_set_session_variables_sets_status_surface():

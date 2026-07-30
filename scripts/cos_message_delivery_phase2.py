@@ -141,9 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--coord-config", type=Path)
     parser.add_argument("--coord-secrets", type=Path)
     args = parser.parse_args(argv)
-    client = CoordClient(
-        CoordConfig.load(args.coord_config, secrets_path=args.coord_secrets)
-    )
+    client = CoordClient(CoordConfig.load(args.coord_config, secrets_path=args.coord_secrets))
     if args.mode == "produce":
         if args.fixture is None:
             parser.error("produce requires --fixture")

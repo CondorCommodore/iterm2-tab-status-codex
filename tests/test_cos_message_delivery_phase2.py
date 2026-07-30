@@ -14,9 +14,7 @@ import cos_message_delivery_phase2 as phase2  # noqa: E402
 
 
 def fixture():
-    return json.loads(
-        (ROOT / "tests/fixtures/message_delivery_shadow_v1.json").read_text()
-    )
+    return json.loads((ROOT / "tests/fixtures/message_delivery_shadow_v1.json").read_text())
 
 
 def test_durable_readback_reconstructs_byte_identically():
@@ -110,9 +108,7 @@ def test_matching_self_asserted_digest_cannot_hide_wrong_projection():
     item = phase2.build_run(fixture(), "phase2-forged-projection-1")
     item["treatment_projection"] = copy.deepcopy(item["treatment_projection"])
     item["treatment_projection"]["proposed_action"] = {"action": "HOLD"}
-    item["producer_projection_sha256"] = phase2.policy.content_digest(
-        item["treatment_projection"]
-    )
+    item["producer_projection_sha256"] = phase2.policy.content_digest(item["treatment_projection"])
     unsigned = {key: value for key, value in item.items() if key != "artifact_sha256"}
     item["artifact_sha256"] = phase2.policy.content_digest(unsigned)
 

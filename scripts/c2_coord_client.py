@@ -397,8 +397,7 @@ class CoordClient:
             raise CoordError("coord shadow run_id has invalid syntax")
         _status, payload = self.call(
             "GET",
-            "/message-delivery-shadow/runs/"
-            + urllib.parse.quote(run_id, safe=""),
+            "/message-delivery-shadow/runs/" + urllib.parse.quote(run_id, safe=""),
             write=True,
         )
         response = payload if isinstance(payload, dict) else {}

@@ -8,6 +8,7 @@ network, persistence, or policy-selection authority.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -28,6 +29,19 @@ class LanguageTrialError(ValueError):
     """Raised when a trial artifact is incomplete or not bound to its fixture."""
 
 
+def _blinded_order(values: list[Any], experiment_sha256: str, domain: str) -> list[Any]:
+    """Deterministically permute unique values without exposing source rank order."""
+    ordered = sorted(
+        values,
+        key=lambda value: hashlib.sha256(
+            f"{experiment_sha256}:{domain}:{json.dumps(value, sort_keys=True)}".encode()
+        ).digest(),
+    )
+    if len(ordered) > 1 and ordered == values:
+        ordered = ordered[1:] + ordered[:1]
+    return ordered
+
+
 def load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -46,10 +60,11 @@ def render_packet(experiment: Mapping[str, Any]) -> dict[str, Any]:
         raise LanguageTrialError(str(exc)) from exc
     candidates = experiment.get("candidates")
     questions = experiment.get("questions")
+    experiment_sha256 = content_digest(experiment)
 
     packet = {
         "schema": PACKET_SCHEMA,
-        "experiment_sha256": content_digest(experiment),
+        "experiment_sha256": experiment_sha256,
         "notice": (
             "This is a wording-comprehension experiment. No candidate is active "
             "product terminology and completing it does not enable message delivery."
@@ -61,7 +76,11 @@ def render_packet(experiment: Mapping[str, Any]) -> dict[str, Any]:
         "candidate_sets": [
             {
                 "candidate_id": str(candidate["candidate_id"]),
-                "labels": [str(label) for label in candidate["labels"]],
+                "labels": _blinded_order(
+                    [str(label) for label in candidate["labels"]],
+                    experiment_sha256,
+                    f"candidate:{candidate['candidate_id']}",
+                ),
             }
             for candidate in candidates
         ],
@@ -70,7 +89,7 @@ def render_packet(experiment: Mapping[str, Any]) -> dict[str, Any]:
                 "question_id": str(question["question_id"]),
                 "scenario": str(question["scenario"]),
             }
-            for question in questions
+            for question in _blinded_order(questions, experiment_sha256, "scenarios")
         ],
     }
     return packet

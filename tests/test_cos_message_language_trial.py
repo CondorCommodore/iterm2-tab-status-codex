@@ -17,9 +17,9 @@ def experiment():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-def complete_response(packet):
-    labels = {row["candidate_id"]: row["labels"] for row in packet["candidate_sets"]}
-    expected = {row["question_id"]: index for index, row in enumerate(packet["scenarios"])}
+def complete_response(packet, source):
+    labels = {row["candidate_id"]: row["labels"] for row in source["candidates"]}
+    expected = {row["question_id"]: row["expected_rank"] for row in source["questions"]}
     return {
         "schema": trial.RESPONSE_SCHEMA,
         "experiment_sha256": packet["experiment_sha256"],
@@ -46,6 +46,12 @@ def test_packet_is_deterministic_and_hides_answer_and_reference_metadata():
     assert "experimental_reference_only" not in serialized
     assert "historical reference" not in serialized
     assert "does not enable message delivery" in packet["notice"]
+    source_labels = {row["candidate_id"]: row["labels"] for row in source["candidates"]}
+    for candidate in packet["candidate_sets"]:
+        assert candidate["labels"] != source_labels[candidate["candidate_id"]]
+    assert [row["question_id"] for row in packet["scenarios"]] != [
+        row["question_id"] for row in source["questions"]
+    ]
 
 
 def test_packet_rejects_malformed_experiment_instead_of_rendering_it():
@@ -68,7 +74,7 @@ def test_response_template_contains_every_coordinate_without_answers():
 def test_complete_response_scores_without_selecting_or_activating_policy():
     source = experiment()
     packet = trial.render_packet(source)
-    result = trial.score_responses(source, complete_response(packet))
+    result = trial.score_responses(source, complete_response(packet, source))
 
     assert result["complete"] is True
     assert result["preferred_candidate"] is None
@@ -81,7 +87,7 @@ def test_complete_response_scores_without_selecting_or_activating_policy():
 @pytest.mark.parametrize("digest", ["", "0" * 64])
 def test_score_rejects_response_bound_to_another_experiment(digest):
     source = experiment()
-    artifact = complete_response(trial.render_packet(source))
+    artifact = complete_response(trial.render_packet(source), source)
     artifact["experiment_sha256"] = digest
 
     with pytest.raises(trial.LanguageTrialError, match="not bound"):
@@ -90,7 +96,7 @@ def test_score_rejects_response_bound_to_another_experiment(digest):
 
 def test_score_rejects_missing_duplicate_and_unknown_coordinates():
     source = experiment()
-    artifact = complete_response(trial.render_packet(source))
+    artifact = complete_response(trial.render_packet(source), source)
 
     missing = {**artifact, "responses": artifact["responses"][:-1]}
     with pytest.raises(trial.LanguageTrialError, match="every candidate"):

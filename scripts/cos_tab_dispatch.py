@@ -32,8 +32,12 @@ from c2_contract import (
 )
 from c2_runtime_hook import (
     DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR,
+)
+from c2_runtime_hook import (
     SignedRuntimeHookObservation,
     interrupt_challenge_binding_sha256,
+)
+from c2_runtime_hook import (
     load_record as load_runtime_hook_record,
 )
 from c2_runtime_observation import RuntimeObservation

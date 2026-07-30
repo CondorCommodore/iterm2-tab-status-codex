@@ -414,8 +414,7 @@ class SignedRuntimeHookObservation:
         ):
             raise ContractError("coord broker lacks post-Escape challenge causality")
         if expected_challenge_binding_sha256 is not None and (
-            verification.get("challenge_binding_sha256")
-            != expected_challenge_binding_sha256
+            verification.get("challenge_binding_sha256") != expected_challenge_binding_sha256
         ):
             raise ContractError("coord broker verified a different interrupt challenge binding")
 

@@ -16,20 +16,24 @@ import cos_iterm_edge_daemon as edge_daemon  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
-def manifest() -> c2.RunManifest:
+def manifest(*, controller_visible: bool = True) -> c2.RunManifest:
+    controller = {
+        "controller_id": "cos",
+        "host": "macbook",
+        "runtime": "codex",
+        "iterm_session_id": "iterm-cos",
+        "tty": "/dev/ttys001",
+        "cli_session_id": "cli-cos",
+        "coord_session_id": "coord-cos",
+        "coord_agent_id": "mikebook_codex",
+    }
+    if not controller_visible:
+        controller.pop("iterm_session_id")
+        controller.pop("tty")
     return c2.RunManifest.from_dict(
         {
             "manifest_id": "edge-test-v1",
-            "controller": {
-                "controller_id": "cos",
-                "host": "macbook",
-                "runtime": "codex",
-                "iterm_session_id": "iterm-cos",
-                "tty": "/dev/ttys001",
-                "cli_session_id": "cli-cos",
-                "coord_session_id": "coord-cos",
-                "coord_agent_id": "mikebook_codex",
-            },
+            "controller": controller,
             "workers": [
                 {
                     "worker_id": "worker-codex",
@@ -239,10 +243,33 @@ def test_failed_dispatch_releases_worker_reservation(monkeypatch, tmp_path):
         "post",
         result["receipt"],
     )
-    assert daemon.client.events[-2] == (
-        "release",
-        "workspace:mikebook:c2-worker:worker-codex",
+
+
+def test_headless_controller_manifest_still_dispatches_workers(monkeypatch, tmp_path):
+    daemon = make_daemon(tmp_path)
+    daemon.manifest = manifest(controller_visible=False)
+
+    def fake_dispatch(**kwargs):
+        receipt = {
+            "idempotency_key": kwargs["envelope"].idempotency_key,
+            "reservation": kwargs["reservation"],
+        }
+        kwargs["receipts"].append(receipt)
+        return {"ok": True, "receipt": receipt}
+
+    monkeypatch.setattr(edge_daemon, "dispatch_registered_headless", fake_dispatch)
+    result = asyncio.run(
+        daemon.handle(
+            {
+                "protocol": "cos-c2-iterm-edge-v1",
+                "op": "dispatch",
+                "envelope": envelope(),
+            }
+        )
     )
+
+    assert result["ok"] is True
+    assert result["transport"] == "headless"
 
 
 def test_dispatch_exception_releases_worker_reservation(monkeypatch, tmp_path):

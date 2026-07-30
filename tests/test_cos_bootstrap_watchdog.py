@@ -14,21 +14,25 @@ from c2_contract import load_manifest  # noqa: E402
 from c2_coord_client import CoordError  # noqa: E402
 
 
-def write_manifest(path: Path, *, recovery="ab"):
+def write_manifest(path: Path, *, recovery="ab", controller_visible: bool = True):
+    controller = {
+        "controller_id": "cos",
+        "host": "macbook",
+        "runtime": "codex",
+        "iterm_session_id": "iterm-cos",
+        "tty": "/dev/ttys001",
+        "cli_session_id": "cli-cos",
+        "coord_session_id": "coord-cos",
+        "coord_agent_id": "mikebook_codex",
+    }
+    if not controller_visible:
+        controller.pop("iterm_session_id")
+        controller.pop("tty")
     path.write_text(
         json.dumps(
             {
                 "manifest_id": "test",
-                "controller": {
-                    "controller_id": "cos",
-                    "host": "macbook",
-                    "runtime": "codex",
-                    "iterm_session_id": "iterm-cos",
-                    "tty": "/dev/ttys001",
-                    "cli_session_id": "cli-cos",
-                    "coord_session_id": "coord-cos",
-                    "coord_agent_id": "mikebook_codex",
-                },
+                "controller": controller,
                 "workers": [
                     {
                         "worker_id": "worker",
@@ -395,6 +399,26 @@ def test_stale_heartbeat_checks_lease_even_when_edge_is_unhealthy(tmp_path):
     )
     assert result["action"] == "awaiting-visible-lease-expiry-for-headless-trial"
     assert result["live_epoch"] == 7
+
+
+def test_headless_controller_never_triggers_tab_poke(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest, recovery="tab", controller_visible=False)
+    arm_stale(tmp_path)
+    seen = []
+
+    result = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client({"holder": "mikebook_codex", "epoch": 7}),
+        edge_health_fn=lambda: {"ok": True},
+        edge_restart_fn=lambda: {"ok": True},
+        now_ts=500,
+        poke_fn=lambda **kwargs: seen.append(kwargs) or {"ok": True},
+    )
+
+    assert result["action"] == "awaiting-visible-lease-expiry-for-headless-trial"
+    assert seen == []
 
 
 def test_edge_backoff_keeps_probing_without_restarting(tmp_path):

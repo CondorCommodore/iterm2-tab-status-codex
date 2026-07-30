@@ -15,20 +15,24 @@ from c2_contract import ContractError, RunManifest  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
-def manifest():
+def manifest(*, controller_visible: bool = True):
+    controller = {
+        "controller_id": "cos",
+        "host": "macbook",
+        "runtime": "codex",
+        "iterm_session_id": "iterm-cos",
+        "tty": "/dev/ttys001",
+        "cli_session_id": "cli-cos",
+        "coord_session_id": "coord-cos",
+        "coord_agent_id": "mikebook_codex",
+    }
+    if not controller_visible:
+        controller.pop("iterm_session_id")
+        controller.pop("tty")
     return RunManifest.from_dict(
         {
             "manifest_id": "test",
-            "controller": {
-                "controller_id": "cos",
-                "host": "macbook",
-                "runtime": "codex",
-                "iterm_session_id": "iterm-cos",
-                "tty": "/dev/ttys001",
-                "cli_session_id": "cli-cos",
-                "coord_session_id": "coord-cos",
-                "coord_agent_id": "mikebook_codex",
-            },
+            "controller": controller,
             "workers": [
                 {
                     "worker_id": "worker",
@@ -369,3 +373,31 @@ def test_existing_malformed_actions_fail_closed_without_reseed(tmp_path):
         )
 
     assert (tmp_path / "current-actions.txt").read_bytes() == malformed
+
+
+def test_headless_controller_skips_wake_poke(tmp_path, monkeypatch):
+    m = manifest(controller_visible=False)
+    client = FakeClient()
+    client.actionable = lambda _agent: {"items": [{"kind": "task", "task_id": "task-1"}]}
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": time.time(), "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    pokes = []
+    monkeypatch.setattr(
+        supervisor,
+        "poke_controller",
+        lambda **kwargs: pokes.append(kwargs) or {"ok": True},
+    )
+
+    result = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="headless",
+        wake=True,
+    )
+
+    assert result["wake_required"] is True
+    assert result["poked"] is False
+    assert pokes == []

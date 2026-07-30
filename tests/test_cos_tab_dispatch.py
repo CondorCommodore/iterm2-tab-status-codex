@@ -178,20 +178,24 @@ def test_looks_like_agent_session_uses_job_or_runtime():
     assert not dispatch.looks_like_agent_session({"jobName": "zsh", "user.workerRuntime": ""})
 
 
-def _manifest(transport="tab"):
+def _manifest(transport="tab", controller_visible: bool = True):
+    controller = {
+        "controller_id": "cos",
+        "host": "macbook",
+        "runtime": "codex",
+        "iterm_session_id": "iterm-cos",
+        "tty": "/dev/ttys001",
+        "cli_session_id": "cli-cos",
+        "coord_session_id": "coord-cos",
+        "coord_agent_id": "mikebook_codex",
+    }
+    if not controller_visible:
+        controller.pop("iterm_session_id")
+        controller.pop("tty")
     return RunManifest.from_dict(
         {
             "manifest_id": "test",
-            "controller": {
-                "controller_id": "cos",
-                "host": "macbook",
-                "runtime": "codex",
-                "iterm_session_id": "iterm-cos",
-                "tty": "/dev/ttys001",
-                "cli_session_id": "cli-cos",
-                "coord_session_id": "coord-cos",
-                "coord_agent_id": "mikebook_codex",
-            },
+            "controller": controller,
             "workers": [
                 {
                     "worker_id": "worker",
@@ -854,6 +858,20 @@ def test_headless_commands_resume_same_uuid_for_codex_and_claude():
         "claude-session",
         "--print",
     ]
+
+
+def test_controller_poke_applescript_rejects_headless_controller():
+    result = dispatch.send_controller_poke_applescript(
+        manifest=_manifest(controller_visible=False),
+        text="/goal wake up",
+        controller_epoch=7,
+        idempotency_key="poke-1",
+        verify_epoch=lambda *_args, **_kwargs: None,
+        run=lambda *_args, **_kwargs: None,
+    )
+
+    assert result["ok"] is False
+    assert "headless controller has no iTerm session" in result["error"]
 
 
 def test_applescript_write_without_ack_fails_closed(tmp_path):

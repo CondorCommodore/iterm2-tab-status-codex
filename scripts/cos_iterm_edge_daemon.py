@@ -152,9 +152,15 @@ class EdgeDaemon:
             worker = envelope.validate_for(self.manifest)
             if worker.role != "worker":
                 raise ContractError("assignments may target only registered worker roles")
-            if worker.iterm_session_id == self.manifest.controller_iterm_session_id:
+            if (
+                self.manifest.controller_has_visible_terminal()
+                and worker.iterm_session_id == self.manifest.controller_iterm_session_id
+            ):
                 raise ContractError("self-dispatch is forbidden")
-            if worker.tty == self.manifest.controller_tty:
+            if (
+                self.manifest.controller_has_visible_terminal()
+                and worker.tty == self.manifest.controller_tty
+            ):
                 raise ContractError("self-dispatch tty is forbidden")
             async with self.dispatch_guard:
                 if self.dispatch_receipts.has_idempotency_key(envelope.idempotency_key):

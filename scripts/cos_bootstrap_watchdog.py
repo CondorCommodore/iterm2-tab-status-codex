@@ -671,7 +671,9 @@ def run_once(
     pending_since = watchdog.get("pending_since")
     pending_transport = watchdog.get("pending_transport")
     pending_headless_without_visible_reattach = (
-        pending_transport == "headless" and heartbeat.get("ownership") != "visible"
+        manifest.controller_has_visible_terminal()
+        and pending_transport == "headless"
+        and heartbeat.get("ownership") != "visible"
     )
     if (
         isinstance(pending_since, (int, float))
@@ -690,7 +692,10 @@ def run_once(
             "success": True,
             "ack_latency_ms": int((heartbeat["recorded_ts"] - pending_since) * 1000),
             "controller_epoch": heartbeat.get("controller_epoch"),
-            "visible_reattach_required": watchdog.get("pending_transport") == "headless",
+            "visible_reattach_required": (
+                manifest.controller_has_visible_terminal()
+                and watchdog.get("pending_transport") == "headless"
+            ),
         }
         _record_outcome(outcomes_path, receipt)
         watchdog = {
@@ -742,7 +747,12 @@ def run_once(
             "live_epoch": epoch,
         }
 
-    use_tab = edge_available and primary == "tab" and tab_pokes < MAX_TAB_POKES
+    use_tab = (
+        manifest.controller_has_visible_terminal()
+        and edge_available
+        and primary == "tab"
+        and tab_pokes < MAX_TAB_POKES
+    )
     if use_tab:
         if not isinstance(epoch, int) or holder != client.config.principal_id:
             return {

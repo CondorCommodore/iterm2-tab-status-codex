@@ -50,7 +50,11 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Run Python tests
-        run: uv run --python ${{ matrix.python-version }} pytest tests/test_adapter.py -v
+        run: >-
+          uv run --python ${{ matrix.python-version }} pytest
+          tests/test_adapter.py
+          tests/test_c2_mailman_spec_status.py
+          -v
 
   test-shell:
     runs-on: ubuntu-latest

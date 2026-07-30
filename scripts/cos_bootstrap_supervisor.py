@@ -27,8 +27,12 @@ from c2_contract import (
     ContractError,
     ReceiptStore,
     RunManifest,
+    arm_marker_status,
     load_manifest,
+    manifest_contract_sha256,
+    manifest_file_sha256,
     normalize_worker_state,
+    render_arm_marker,
 )
 from c2_coord_client import (
     CoordClient,
@@ -107,6 +111,33 @@ def state_paths(state_dir: Path) -> dict[str, Path]:
         "recovery_hold": state_dir / "recovery-hold.json",
         "pokes": state_dir / "poke-receipts.jsonl",
     }
+
+
+def _marker_status(path: Path, *, manifest: RunManifest, manifest_sha256: str) -> dict[str, Any]:
+    try:
+        marker_text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return {
+            "valid": False,
+            "reason": "arm-marker-missing",
+            "requires_explicit_rearm": True,
+        }
+    return arm_marker_status(
+        marker_text,
+        manifest_id=manifest.manifest_id,
+        manifest_sha256=manifest_sha256,
+    )
+
+
+def _require_arm_marker(
+    path: Path, *, manifest: RunManifest, manifest_sha256: str
+) -> dict[str, Any]:
+    observed = _marker_status(path, manifest=manifest, manifest_sha256=manifest_sha256)
+    if observed.get("valid") is not True:
+        raise ContractError(
+            f"armed marker is not current ({observed.get('reason')}); explicit re-arm required"
+        )
+    return observed
 
 
 def service_readiness(
@@ -387,6 +418,7 @@ def run_tick(
     live_state_path: Path,
     ownership: str,
     wake: bool,
+    manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     paths = state_paths(state_dir)
     state = _load_json(
@@ -395,9 +427,12 @@ def run_tick(
     )
     if not paths["armed"].exists():
         return {"ok": True, "armed": False, "action": "inert"}
-    armed_marker = paths["armed"].read_text(encoding="utf-8").strip()
-    if armed_marker != f"manifest_id={manifest.manifest_id}":
-        raise ContractError("armed marker does not match loaded manifest; explicit re-arm required")
+    effective_manifest_sha256 = manifest_sha256 or manifest_contract_sha256(manifest)
+    _require_arm_marker(
+        paths["armed"],
+        manifest=manifest,
+        manifest_sha256=effective_manifest_sha256,
+    )
     mode = str(state.get("mode") or "bootstrap-authoritative")
     if mode not in CONTROLLER_MODES:
         raise ContractError(f"invalid controller mode: {mode}")
@@ -524,7 +559,11 @@ def run_tick(
 
 
 def arm(
-    *, manifest: RunManifest, state_dir: Path, validate_plan_paths: bool = True
+    *,
+    manifest: RunManifest,
+    state_dir: Path,
+    validate_plan_paths: bool = True,
+    manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     if validate_plan_paths:
         missing = [path for path in manifest.plan_paths if not Path(path).is_file()]
@@ -572,12 +611,20 @@ def arm(
             "last_headless_checkpoint_digest": None,
         },
     )
-    paths["armed"].write_text(f"manifest_id={manifest.manifest_id}\n", encoding="utf-8")
+    effective_manifest_sha256 = manifest_sha256 or manifest_contract_sha256(manifest)
+    paths["armed"].write_text(
+        render_arm_marker(
+            manifest_id=manifest.manifest_id,
+            manifest_sha256=effective_manifest_sha256,
+        ),
+        encoding="utf-8",
+    )
     os.chmod(paths["armed"], 0o600)
     state = {
         "mode": "bootstrap-authoritative",
         "authority": False,
         "manifest_id": manifest.manifest_id,
+        "manifest_sha256": effective_manifest_sha256,
         "lease": None,
         "armed_at": _iso(),
     }
@@ -590,6 +637,7 @@ def arm_from_cli(
     manifest: RunManifest,
     state_dir: Path,
     readiness: dict[str, Any] | None = None,
+    manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Arm only after the machine-local recovery and terminal edge are loaded."""
     observed = readiness if readiness is not None else service_readiness()
@@ -603,7 +651,11 @@ def arm_from_cli(
         if missing:
             reason = "required services are not loaded: " + ", ".join(missing)
         raise ContractError(f"arm readiness refused: {reason}")
-    result = arm(manifest=manifest, state_dir=state_dir)
+    result = arm(
+        manifest=manifest,
+        state_dir=state_dir,
+        manifest_sha256=manifest_sha256,
+    )
     return {**result, "service_readiness": observed}
 
 
@@ -715,6 +767,8 @@ def status(
     client: CoordClient | None,
     state_dir: Path,
     readiness: dict[str, Any] | None = None,
+    manifest: RunManifest | None = None,
+    manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     paths = state_paths(state_dir)
     state = _load_json(paths["state"])
@@ -728,10 +782,20 @@ def status(
             error = str(exc)
     armed = paths["armed"].exists()
     observed_readiness = readiness if readiness is not None else service_readiness()
+    marker = None
+    if manifest is not None:
+        effective_manifest_sha256 = manifest_sha256 or manifest_contract_sha256(manifest)
+        marker = _marker_status(
+            paths["armed"],
+            manifest=manifest,
+            manifest_sha256=effective_manifest_sha256,
+        )
     return {
         "armed": armed,
         "service_readiness": observed_readiness,
         "armed_but_unserviced": armed and observed_readiness.get("ready") is not True,
+        "arm_marker": marker,
+        "requires_explicit_rearm": bool(armed and marker and marker.get("requires_explicit_rearm")),
         "state": state,
         "heartbeat": heartbeat,
         "current_actions": (
@@ -799,10 +863,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     manifest = load_manifest(args.manifest)
+    selected_manifest_sha256 = manifest_file_sha256(args.manifest)
     if args.command == "arm":
         print(
             json.dumps(
-                arm_from_cli(manifest=manifest, state_dir=args.state_dir),
+                arm_from_cli(
+                    manifest=manifest,
+                    state_dir=args.state_dir,
+                    manifest_sha256=selected_manifest_sha256,
+                ),
                 indent=2,
                 sort_keys=True,
             )
@@ -817,9 +886,26 @@ def main(argv: list[str] | None = None) -> int:
         if args.command != "status":
             raise
     if args.command == "status":
-        print(json.dumps(status(client=client, state_dir=args.state_dir), indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                status(
+                    client=client,
+                    state_dir=args.state_dir,
+                    manifest=manifest,
+                    manifest_sha256=selected_manifest_sha256,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     assert client is not None
+    if args.command not in {"standby", "stop"}:
+        _require_arm_marker(
+            state_paths(args.state_dir)["armed"],
+            manifest=manifest,
+            manifest_sha256=selected_manifest_sha256,
+        )
     if args.command == "checkpoint":
         if args.from_file is None:
             parser.error("checkpoint requires --from-file")
@@ -900,6 +986,7 @@ def main(argv: list[str] | None = None) -> int:
             live_state_path=args.live_state,
             ownership=args.ownership,
             wake=True,
+            manifest_sha256=selected_manifest_sha256,
         )
     else:
         while True:
@@ -911,6 +998,7 @@ def main(argv: list[str] | None = None) -> int:
                     live_state_path=args.live_state,
                     ownership=args.ownership,
                     wake=False,
+                    manifest_sha256=selected_manifest_sha256,
                 )
             except LeaseBlocked as exc:
                 result = {

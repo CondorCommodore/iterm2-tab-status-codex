@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -10,6 +11,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +48,24 @@ class LeaseLost(CoordError):
 RequestFn = Callable[[str, str, dict[str, str], bytes | None, float], tuple[int, Any]]
 SHADOW_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+RUNTIME_PROOF_RE = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
+PENDING_RUNTIME_CHALLENGE_FIELDS = frozenset(
+    {
+        "challenge_id",
+        "worker_id",
+        "iterm_session_id",
+        "cli_session_id",
+        "coord_session_id",
+        "controller_epoch",
+        "worker_epoch",
+        "binding_sha256",
+        "armed_at",
+        "expires_at",
+        "runtime",
+        "profile_id",
+        "profile_version",
+    }
+)
 
 
 def _request(
@@ -492,6 +512,101 @@ class CoordClient:
         if not isinstance(verification, dict):
             raise CoordError("coord broker returned no runtime observation verification")
         return verification
+
+    def pending_runtime_observation_challenges(self, *, limit: int = 16) -> list[dict[str, Any]]:
+        """Read only this enrolled observer principal's redacted work feed."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 64:
+            raise CoordError("runtime observation pending limit must be between 1 and 64")
+        _status, payload = self.call(
+            "GET",
+            f"/c2/runtime-observations/challenges/pending?limit={limit}",
+            write=True,
+        )
+        challenges = payload.get("challenges") if isinstance(payload, dict) else None
+        if not isinstance(challenges, list):
+            raise CoordError("coord broker returned no pending runtime challenge list")
+        result: list[dict[str, Any]] = []
+        for raw in challenges:
+            if not isinstance(raw, dict) or set(raw) != PENDING_RUNTIME_CHALLENGE_FIELDS:
+                raise CoordError("coord broker returned malformed pending runtime challenge")
+            challenge_id = raw.get("challenge_id")
+            try:
+                canonical_id = str(uuid.UUID(str(challenge_id)))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise CoordError(
+                    "coord broker returned invalid pending challenge identity"
+                ) from exc
+            if challenge_id != canonical_id:
+                raise CoordError("coord broker returned non-canonical pending challenge identity")
+            if not SHA256_RE.fullmatch(str(raw.get("binding_sha256") or "")):
+                raise CoordError("coord broker returned invalid pending challenge binding")
+            for field in ("controller_epoch", "worker_epoch", "profile_version"):
+                value = raw.get(field)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    raise CoordError(f"coord broker returned invalid pending {field}")
+            for field in (
+                "worker_id",
+                "iterm_session_id",
+                "cli_session_id",
+                "coord_session_id",
+                "runtime",
+                "profile_id",
+                "armed_at",
+                "expires_at",
+            ):
+                if not isinstance(raw.get(field), str) or not str(raw[field]).strip():
+                    raise CoordError(f"coord broker returned invalid pending {field}")
+            result.append(dict(raw))
+        return result
+
+    def publish_runtime_observation(
+        self,
+        report: dict[str, Any],
+        *,
+        expected_binding_sha256: str,
+    ) -> dict[str, Any]:
+        """Publish an opaque signed report and require exact durable readback coordinates."""
+        challenge_id = str(report.get("challenge_id") or "")
+        signature = report.get("signature")
+        if not challenge_id or not RUNTIME_PROOF_RE.fullmatch(str(signature or "")):
+            raise CoordError("runtime observation report lacks challenge identity or opaque proof")
+        if not SHA256_RE.fullmatch(expected_binding_sha256):
+            raise CoordError("runtime observation expected binding is invalid")
+        try:
+            canonical = dict(report)
+            canonical.pop("signature")
+            expected_digest = hashlib.sha256(
+                json.dumps(
+                    canonical,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                    allow_nan=False,
+                ).encode()
+            ).hexdigest()
+        except (TypeError, ValueError) as exc:
+            raise CoordError("runtime observation report is not canonical JSON") from exc
+        try:
+            _status, payload = self.call(
+                "POST",
+                "/c2/runtime-observations",
+                payload=report,
+                write=True,
+                allowed=(200, 201),
+            )
+        except CoordError:
+            # A broker error body must never become a path for reflecting the proof token.
+            raise CoordError("runtime observation publication failed") from None
+        observation = payload.get("observation") if isinstance(payload, dict) else None
+        expected = {
+            "observation_digest": expected_digest,
+            "challenge_id": challenge_id,
+            "challenge_binding_sha256": expected_binding_sha256,
+            "observer_principal": self.config.principal_id,
+        }
+        if not isinstance(observation, dict) or observation != expected:
+            raise CoordError("coord broker returned mismatched runtime observation coordinates")
+        return observation
 
     def post_message_delivery_shadow_run(self, run: dict[str, Any]) -> dict[str, Any]:
         run_id = run.get("run_id")

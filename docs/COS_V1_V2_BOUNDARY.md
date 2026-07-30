@@ -20,6 +20,9 @@ work-item database, or competing authority.
    `cosctl preflight` is the separate read-only terminal gate; it must report
    a ready manifest, plan paths, service registration, and edge health before
    any authorized terminal experiment.
+   `cosctl roster-proposal` compares that manifest with the live signal state;
+   it is diagnostic only, requires explicit re-arm for adoption, and never
+   rewrites identities.
 2. Read one landed controlling plan and write a current-focus record containing
    the active objective, owner/session, expected report, known gate, and next
    reconciliation action.

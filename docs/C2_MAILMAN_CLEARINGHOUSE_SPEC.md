@@ -958,16 +958,43 @@ an empty input buffer immediately before one atomic text-plus-CR/LF API write.
 A submitted transport receipt remains unacknowledged until a distinct recipient
 receipt arrives.
 
-Test 2 remains blocked before execution because this publisher is not installed
-in either runtime's hook configuration and deliberately supplies no real trusted
-empty/non-empty input-buffer observation. Installed Codex/Claude hooks and
-settings remain unchanged and require separate operator authorization. The
-required coord-api challenge and verification endpoints are contract consumers
-here but are not yet implemented in the broker, and no independent observer is
-enrolled. Recipient receipt handling, soft-queue parity, and the full
-dual-runtime fault matrix also remain incomplete. The default-deny gate,
-observation schemas, and atomic source transaction are prerequisites only; none
-activates terminal actions or counts toward a Test 2 acceptance criterion.
+The coord-api broker now durably enrolls and revokes independent observer
+principals, records unchallenged trusted baselines, binds each one-use interrupt
+challenge to the exact baseline observer/runtime/profile plus controller and
+worker epochs, exposes a redacted principal-scoped pending feed, accepts at most
+one exact post-arm observation, and rejects forged or substituted reports. The
+terminal-edge client can consume that feed and publish an opaque signed report
+only when the registered Codex/Claude identity, profile, both epochs, causal
+interval, prompt readiness, empty input buffer, sequence, challenge, and returned
+broker coordinates all match. This path remains inert and dependency-injected;
+it neither invents sensing truth nor installs or writes an iTerm integration.
+
+Test 2 remains blocked before execution because no independently evaluated
+sensor has yet proved real prompt and empty/non-empty input-buffer state for the
+supported Codex and Claude releases. No observer is enrolled, no observer daemon
+or runtime hook is installed, and installed Codex/Claude settings remain
+unchanged; each requires separate operator authorization. Recipient receipt
+handling, soft-queue parity, and the full dual-runtime fault matrix also remain
+incomplete. The default-deny gate, broker, observation schemas, observer client,
+and atomic source transaction are prerequisites only; none activates terminal
+actions or counts toward a Test 2 acceptance criterion.
+
+The repository includes a blinded observation-only comparison helper for the
+next sensing experiment. It scores candidate classifications against frozen
+operator truth and reports false-ready, false-empty, unsafe-actionable, unknown,
+coverage, and per-runtime metrics. Its bundled Codex/Claude cases are explicitly
+synthetic design vectors, not live evidence. The scorer cannot select product
+policy, pass Test 2, or activate delivery; real redacted observations and a
+separately authorized disposable-session run are still required.
+
+After replacing semantic case names with deterministic opaque references, one
+fresh blinded Codex participant pass is frozen by fixture and response digest.
+It classified prompt state correctly in 12/12 cases, classified input-buffer
+state in 8/12, reached 50% fully-known coverage, and produced zero false-ready,
+false-empty, or unsafe-actionable results. The current display heuristic retained
+zero fully-known coverage because it correctly has no trusted input-buffer
+signal. This synthetic result supports a live observer experiment; it does not
+choose the treatment or satisfy any Test 2 promotion criterion.
 
 **Unanswered decisions.** Exact prompt-ready signals by runtime version; whether
 Priority ever uses safe STEER while running; policy for known versus unknown

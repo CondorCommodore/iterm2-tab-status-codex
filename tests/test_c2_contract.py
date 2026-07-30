@@ -112,6 +112,40 @@ def test_manifest_accepts_headless_controller_without_terminal_identity():
     assert manifest.controller_presentation == "headless"
 
 
+def test_manifest_builds_exact_visible_and_headless_controller_producers():
+    manifest = c2.RunManifest.from_dict(manifest_dict())
+
+    visible = manifest.controller_producer("visible")
+    headless = manifest.controller_producer("headless")
+
+    assert visible == {
+        "kind": "c2-supervisor",
+        "manifest_id": "test-v1",
+        "controller_id": "cos",
+        "controller_host": "macbook",
+        "controller_runtime": "codex",
+        "controller_cli_session_id": "cli-cos",
+        "controller_coord_session_id": "coord-cos",
+        "controller_presentation": "visible",
+        "ownership": "visible",
+        "controller_iterm_session_id": "iterm-cos",
+    }
+    assert headless["controller_presentation"] == "headless"
+    assert headless["ownership"] == "headless"
+    assert "controller_iterm_session_id" not in headless
+    assert manifest.controller_producer_matches({**headless, "extension": "preserved"}, "headless")
+    assert not manifest.controller_producer_matches(
+        {**headless, "controller_iterm_session_id": "iterm-cos"}, "headless"
+    )
+
+
+def test_headless_manifest_refuses_visible_controller_producer():
+    manifest = c2.RunManifest.from_dict(manifest_dict(controller_visible=False))
+
+    with pytest.raises(c2.ContractError, match="requires terminal identity"):
+        manifest.controller_producer("visible")
+
+
 def test_manifest_rejects_partially_visible_controller_identity():
     value = manifest_dict(controller_visible=False)
     value["controller"]["tty"] = "/dev/ttys001"

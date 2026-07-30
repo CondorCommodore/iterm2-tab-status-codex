@@ -202,6 +202,36 @@ class RunManifest:
     def controller_presentation(self) -> str:
         return "visible" if self.controller_has_visible_terminal() else "headless"
 
+    def controller_instance_binding(self, ownership: str) -> dict[str, str]:
+        if ownership not in {"visible", "headless"}:
+            raise ContractError(f"unsupported controller ownership: {ownership}")
+        binding = {
+            "manifest_id": self.manifest_id,
+            "controller_id": self.controller_id,
+            "controller_host": self.controller_host,
+            "controller_runtime": self.controller_runtime,
+            "controller_cli_session_id": self.controller_cli_session_id,
+            "controller_coord_session_id": self.controller_coord_session_id,
+            "controller_presentation": ownership,
+            "ownership": ownership,
+        }
+        if ownership == "visible":
+            if not self.controller_has_visible_terminal():
+                raise ContractError("visible controller ownership requires terminal identity")
+            binding["controller_iterm_session_id"] = self.controller_iterm_session_id
+        return binding
+
+    def controller_producer(self, ownership: str) -> dict[str, str]:
+        return {"kind": "c2-supervisor", **self.controller_instance_binding(ownership)}
+
+    def controller_producer_matches(self, producer: object, ownership: str) -> bool:
+        if not isinstance(producer, dict):
+            return False
+        expected = self.controller_producer(ownership)
+        if any(producer.get(key) != value for key, value in expected.items()):
+            return False
+        return ownership != "headless" or producer.get("controller_iterm_session_id") is None
+
     def controller_collides_with_worker(self, worker: WorkerRegistration) -> list[str]:
         collisions: list[str] = []
         if worker.cli_session_id == self.controller_cli_session_id:

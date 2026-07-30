@@ -246,13 +246,30 @@ class CoordClient:
         payload = response if isinstance(response, dict) else {}
         if status == 409:
             raise LeaseBlocked(resource, payload)
-        return self._handle(resource, payload.get("lease"))
+        lease = payload.get("lease")
+        if isinstance(lease, dict) and "producer" not in lease:
+            lease = {**lease, "producer": producer}
+        return self._handle(resource, lease)
+
+    @staticmethod
+    def _expected_controller_instance(handle: LeaseHandle) -> dict[str, Any] | None:
+        producer = handle.lease.get("producer")
+        if not isinstance(producer, dict) or producer.get("kind") != "c2-supervisor":
+            return None
+        expected = dict(producer)
+        expected.pop("kind", None)
+        return expected
 
     def renew_resource(self, handle: LeaseHandle) -> LeaseHandle:
+        request_payload: dict[str, Any] = {"holder": self.config.principal_id}
+        expected = self._expected_controller_instance(handle)
+        if expected is not None:
+            request_payload["expected_controller_instance"] = expected
+            request_payload["expected_epoch"] = handle.epoch
         status, response = self.call(
             "POST",
             self.lease_path(handle.resource, "/renew"),
-            payload={"holder": self.config.principal_id},
+            payload=request_payload,
             write=True,
             allowed=(200, 409),
         )
@@ -261,7 +278,14 @@ class CoordClient:
             raise LeaseLost(
                 f"lease {handle.resource!r} lost to {payload.get('current_holder') or 'unknown'}"
             )
-        renewed = self._handle(handle.resource, payload.get("lease"))
+        lease = payload.get("lease")
+        if (
+            isinstance(lease, dict)
+            and "producer" not in lease
+            and isinstance(handle.lease.get("producer"), dict)
+        ):
+            lease = {**lease, "producer": handle.lease["producer"]}
+        renewed = self._handle(handle.resource, lease)
         if renewed.epoch != handle.epoch:
             message = (
                 f"lease epoch changed during renew: expected={handle.epoch} "
@@ -300,13 +324,17 @@ class CoordClient:
         return lease
 
     def release_resource(self, handle: LeaseHandle) -> bool:
+        request_payload: dict[str, Any] = {
+            "holder": self.config.principal_id,
+            "expected_epoch": handle.epoch,
+        }
+        expected = self._expected_controller_instance(handle)
+        if expected is not None:
+            request_payload["expected_controller_instance"] = expected
         status, _payload = self.call(
             "DELETE",
             self.lease_path(handle.resource),
-            payload={
-                "holder": self.config.principal_id,
-                "expected_epoch": handle.epoch,
-            },
+            payload=request_payload,
             write=True,
             allowed=(200, 404, 409),
         )

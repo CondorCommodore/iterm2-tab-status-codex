@@ -130,6 +130,37 @@ def test_screen_ready_text_cannot_promote_without_trusted_runtime_hook():
     assert record.observation_trusted is False
 
 
+def test_partial_hook_without_live_runtime_cannot_promote():
+    session = FakeSession(
+        variables={
+            "tty": "/dev/ttys003",
+            "session.title": "codex worker",
+            "path": "/tmp/disposable",
+            "session.isProcessing": False,
+            "user.workerObservationProfile": "codex-cli",
+            "user.workerObservationProfileVersion": "1",
+            "user.workerPromptState": "ready",
+            "user.workerInputBufferState": "empty",
+            "user.cliSessionId": "cli-1",
+            "user.coordSessionId": "coord-1",
+        },
+        screen="ready\n› ",
+    )
+
+    record = asyncio.run(
+        daemon.read_session_record(
+            session,
+            window_index=1,
+            tab_index=1,
+            session_index=1,
+        )
+    )
+
+    assert record.runtime == "codex"
+    assert record.prompt_ready is False
+    assert record.observation_trusted is False
+
+
 def test_exact_codex_hook_reports_prompt_ready_only_with_empty_buffer():
     base = {
         "tty": "/dev/ttys003",

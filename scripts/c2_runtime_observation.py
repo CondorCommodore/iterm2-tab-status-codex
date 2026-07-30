@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from c2_contract import ContractError, RUNTIME_OBSERVATION_PROFILES
+from c2_contract import RUNTIME_OBSERVATION_PROFILES, ContractError
 
 OBSERVATION_SCHEMA_VERSION = 1
 PROMPT_STATES = {"ready", "running", "needs_input", "unknown"}
@@ -58,7 +58,8 @@ class RuntimeObservation:
             )
         if not profile_supported(runtime, profile_id, profile_version):
             raise ContractError(
-                f"unsupported runtime observation profile: {runtime}/{profile_id}/v{profile_version}"
+                "unsupported runtime observation profile: "
+                f"{runtime}/{profile_id}/v{profile_version}"
             )
         cli_session_id = _text(value.get("cli_session_id"))
         coord_session_id = _text(value.get("coord_session_id"))
@@ -80,11 +81,9 @@ class RuntimeObservation:
     def from_session_variables(
         cls,
         values: dict[str, str],
-        *,
-        fallback_runtime: str = "",
     ) -> "RuntimeObservation | None":
         raw = {
-            "runtime": values.get("user.workerRuntime") or fallback_runtime,
+            "runtime": values.get("user.workerRuntime"),
             "profile_id": values.get("user.workerObservationProfile"),
             "profile_version": values.get("user.workerObservationProfileVersion"),
             "prompt_state": values.get("user.workerPromptState"),

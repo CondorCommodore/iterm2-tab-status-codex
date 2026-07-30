@@ -29,8 +29,8 @@ from c2_contract import (
     load_envelope,
     load_manifest,
 )
-from c2_visual_decision import VisualDecision, VisualObservation
 from c2_runtime_observation import RuntimeObservation
+from c2_visual_decision import VisualDecision, VisualObservation
 from cos_iterm_edge_client import dispatch_envelope as dispatch_envelope_via_iterm_api
 
 TTY_RE = re.compile(r"^/dev/ttys[0-9A-Za-z_.-]+$")
@@ -596,9 +596,7 @@ async def execute_visual_decision(
         return {"ok": False, "error": "stale cli session identity", "session": before}
     if observed_coord and observed_coord != worker.coord_session_id:
         return {"ok": False, "error": "stale coord session identity", "session": before}
-    observed = RuntimeObservation.from_session_variables(
-        before, fallback_runtime=worker.runtime
-    )
+    observed = RuntimeObservation.from_session_variables(before)
     if observed is None:
         return {
             "ok": False,

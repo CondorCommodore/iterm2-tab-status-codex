@@ -427,6 +427,7 @@ def test_unacknowledged_visual_decision_fails_closed(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("session_kwargs", "error"),
     [
+        ({"runtime": ""}, "missing or unsupported"),
         ({"profile_version": 2}, "missing or unsupported"),
         ({"input_buffer_state": "nonempty"}, "changed since visual capture"),
         ({"cli_session_id": "reused-cli"}, "stale cli session identity"),

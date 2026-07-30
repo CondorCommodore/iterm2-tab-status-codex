@@ -301,9 +301,7 @@ async def read_session_record(
             "user.coordSessionId",
         )
     }
-    runtime_observation = RuntimeObservation.from_session_variables(
-        observation_values, fallback_runtime=runtime
-    )
+    runtime_observation = RuntimeObservation.from_session_variables(observation_values)
     attention_reason = classify_attention_reason(screen_tail)
     role = role_for_tty(tty, cos_ttys)
     return SessionRecord(

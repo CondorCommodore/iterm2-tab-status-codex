@@ -56,6 +56,7 @@ jobs:
           tests/test_c2_coord_client.py
           tests/test_c2_mailman_spec_status.py
           tests/test_c2_runtime_observer.py
+          tests/test_c2_runtime_sensing_trial.py
           tests/test_cos_message_language_trial.py
           -v
 

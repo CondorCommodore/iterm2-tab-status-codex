@@ -1,0 +1,117 @@
+{
+  "schema": "cos.runtime-sensing-comparison.fixture.v1",
+  "experiment_id": "runtime-sensing-design-v1",
+  "provenance": {
+    "kind": "synthetic-design-vectors",
+    "live_evidence": false,
+    "notice": "Synthetic redacted design vectors only. Results cannot prove live terminal sensing, authorize interruption, or pass Test 2."
+  },
+  "candidates": [
+    {
+      "candidate_id": "existing-display-heuristic",
+      "description": "Current generic screen-tail plus iTerm processing-state display heuristic; input-buffer state remains unknown."
+    },
+    {
+      "candidate_id": "independent-observer-prototype",
+      "description": "A separately evaluated candidate observer. Fill only what the supplied evidence proves and otherwise answer unknown."
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "codex-ready-empty",
+      "runtime": "codex",
+      "profile_id": "codex-cli",
+      "profile_version": 1,
+      "observation": {"screen_tail": "› ", "is_processing": false, "scenario": "Codex terminal snapshot A."},
+      "truth": {"prompt_state": "ready", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "codex-running",
+      "runtime": "codex",
+      "profile_id": "codex-cli",
+      "profile_version": 1,
+      "observation": {"screen_tail": "Working (12s • esc to interrupt)", "is_processing": true, "scenario": "Codex terminal snapshot B."},
+      "truth": {"prompt_state": "running", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "codex-needs-input",
+      "runtime": "codex",
+      "profile_id": "codex-cli",
+      "profile_version": 1,
+      "observation": {"screen_tail": "Do you want to allow this command? Press enter to confirm", "is_processing": false, "scenario": "Codex terminal snapshot C."},
+      "truth": {"prompt_state": "needs_input", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "codex-staged-input",
+      "runtime": "codex",
+      "profile_id": "codex-cli",
+      "profile_version": 1,
+      "observation": {"screen_tail": "› finish the current repair", "is_processing": false, "scenario": "Codex terminal snapshot D."},
+      "truth": {"prompt_state": "ready", "input_buffer_state": "nonempty"}
+    },
+    {
+      "case_id": "codex-completion-screen",
+      "runtime": "codex",
+      "profile_id": "codex-cli",
+      "profile_version": 1,
+      "observation": {"screen_tail": "578 passed\n› ", "is_processing": false, "scenario": "Codex terminal snapshot E."},
+      "truth": {"prompt_state": "ready", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "codex-shell-fallback",
+      "runtime": "codex",
+      "profile_id": "codex-cli",
+      "profile_version": 1,
+      "observation": {"screen_tail": "mikebook%", "is_processing": false, "scenario": "Codex-registered terminal snapshot F."},
+      "truth": {"prompt_state": "unknown", "input_buffer_state": "unknown"}
+    },
+    {
+      "case_id": "claude-ready-empty",
+      "runtime": "claude",
+      "profile_id": "claude-code",
+      "profile_version": 1,
+      "observation": {"screen_tail": "> ", "is_processing": false, "scenario": "Claude terminal snapshot A."},
+      "truth": {"prompt_state": "ready", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "claude-running",
+      "runtime": "claude",
+      "profile_id": "claude-code",
+      "profile_version": 1,
+      "observation": {"screen_tail": "Working… press esc to interrupt", "is_processing": true, "scenario": "Claude terminal snapshot B."},
+      "truth": {"prompt_state": "running", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "claude-needs-input",
+      "runtime": "claude",
+      "profile_id": "claude-code",
+      "profile_version": 1,
+      "observation": {"screen_tail": "Allow this tool? confirm with enter", "is_processing": false, "scenario": "Claude terminal snapshot C."},
+      "truth": {"prompt_state": "needs_input", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "claude-staged-input",
+      "runtime": "claude",
+      "profile_id": "claude-code",
+      "profile_version": 1,
+      "observation": {"screen_tail": "> summarize the report", "is_processing": false, "scenario": "Claude terminal snapshot D."},
+      "truth": {"prompt_state": "ready", "input_buffer_state": "nonempty"}
+    },
+    {
+      "case_id": "claude-completion-screen",
+      "runtime": "claude",
+      "profile_id": "claude-code",
+      "profile_version": 1,
+      "observation": {"screen_tail": "Done.\n> ", "is_processing": false, "scenario": "Claude terminal snapshot E."},
+      "truth": {"prompt_state": "ready", "input_buffer_state": "empty"}
+    },
+    {
+      "case_id": "claude-shell-fallback",
+      "runtime": "claude",
+      "profile_id": "claude-code",
+      "profile_version": 1,
+      "observation": {"screen_tail": "mikebook%", "is_processing": false, "scenario": "Claude-registered terminal snapshot F."},
+      "truth": {"prompt_state": "unknown", "input_buffer_state": "unknown"}
+    }
+  ]
+}

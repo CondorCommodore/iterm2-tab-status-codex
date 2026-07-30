@@ -1,0 +1,19 @@
+{
+  "experiment_id": "runtime-sensing-design-v1",
+  "fixture_sha256": "ffc5e8e67f2131b3641a0e38acaee10b607a8a27fda73b1d3c8d0109fe9d33db",
+  "responses": [
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-86b8f065ac53f9ee5858", "input_buffer_state": "empty", "prompt_state": "ready"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-a4cd87a147739bbd4d49", "input_buffer_state": "nonempty", "prompt_state": "ready"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-f34b1720cddc503a1663", "input_buffer_state": "unknown", "prompt_state": "running"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-6180b979555106ef52e1", "input_buffer_state": "unknown", "prompt_state": "unknown"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-62f54d4f4cd1e266764e", "input_buffer_state": "unknown", "prompt_state": "running"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-53bfbf73eb3dd07fa55c", "input_buffer_state": "unknown", "prompt_state": "needs_input"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-ee2b25c0e1e12dcc21d0", "input_buffer_state": "empty", "prompt_state": "ready"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-ac1651b1edec1ad5116b", "input_buffer_state": "empty", "prompt_state": "ready"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-696ef0802fd9aa6aa3b5", "input_buffer_state": "unknown", "prompt_state": "unknown"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-e7f1a878bb3da0c0af47", "input_buffer_state": "unknown", "prompt_state": "needs_input"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-ed2d021fa6989495a800", "input_buffer_state": "nonempty", "prompt_state": "ready"},
+    {"candidate_id": "independent-observer-prototype", "case_ref": "case-b652679a16d2affef363", "input_buffer_state": "empty", "prompt_state": "ready"}
+  ],
+  "schema": "cos.runtime-sensing-comparison.responses.v1"
+}

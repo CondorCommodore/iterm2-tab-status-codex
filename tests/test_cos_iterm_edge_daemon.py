@@ -174,9 +174,7 @@ def test_default_deny_gate_refuses_every_terminal_operation_without_side_effects
     daemon.manifest = manifest(terminal_actions_enabled=False)
 
     for operation in ("dispatch", "poke", "visual_action"):
-        result = asyncio.run(
-            daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation})
-        )
+        result = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": operation}))
         assert result == {
             "ok": False,
             "error": "terminal actions are disabled by the run manifest",
@@ -184,9 +182,7 @@ def test_default_deny_gate_refuses_every_terminal_operation_without_side_effects
             "terminal_actions_enabled": False,
         }
 
-    health = asyncio.run(
-        daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": "health"})
-    )
+    health = asyncio.run(daemon.handle({"protocol": "cos-c2-iterm-edge-v1", "op": "health"}))
     assert health["ok"] is True
     assert health["terminal_actions_enabled"] is False
     assert daemon.client.events == []

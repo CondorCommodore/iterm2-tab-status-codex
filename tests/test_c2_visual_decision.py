@@ -85,6 +85,29 @@ def test_visual_action_surface_is_bounded():
         decision(seen, text="unexpected")
 
 
+@pytest.mark.parametrize(
+    ("action", "terminal_text"),
+    [
+        ("press_enter", "\r"),
+        ("press_escape", "\x1b"),
+        ("press_tab", "\t"),
+        ("clear_line", "\x15"),
+    ],
+)
+def test_visual_key_actions_map_to_one_bounded_character(action, terminal_text):
+    seen = observation()
+
+    assert decision(seen, action=action).terminal_text() == terminal_text
+
+
+@pytest.mark.parametrize("action", ["press_enter", "press_escape", "press_tab", "clear_line"])
+def test_visual_key_actions_reject_attached_text(action):
+    seen = observation()
+
+    with pytest.raises(ContractError, match="cannot include text"):
+        decision(seen, action=action, text="smuggled payload")
+
+
 @pytest.mark.parametrize("text", ["one\ntwo", "one\rtwo", "\x03", "\x1b", "\x7f"])
 def test_visual_send_text_rejects_terminal_control_characters(text):
     seen = observation()

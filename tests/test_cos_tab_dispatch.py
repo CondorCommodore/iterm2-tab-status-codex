@@ -14,7 +14,12 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import cos_tab_dispatch as dispatch  # noqa: E402
-from c2_contract import DispatchEnvelope, ReceiptStore, RunManifest  # noqa: E402
+from c2_contract import (  # noqa: E402
+    ContractError,
+    DispatchEnvelope,
+    ReceiptStore,
+    RunManifest,
+)
 from c2_visual_decision import VisualDecision, VisualObservation  # noqa: E402
 
 
@@ -308,12 +313,64 @@ def test_visual_decision_requires_controller_and_worker_epochs(monkeypatch, tmp_
     )
 
     assert result["ok"] is False
-    assert result["action_applied"] is True
+    assert result["action_applied"] is False
+    assert result["key_write_succeeded"] is True
+    assert result["observed_presentation"] is False
     assert result["verification_state"] == "pending"
     assert verified == [
         ("workspace:mikebook:c2-supervisor", 7),
         ("workspace:mikebook:c2-worker:worker", 13),
+        ("workspace:mikebook:c2-supervisor", 7),
+        ("workspace:mikebook:c2-worker:worker", 13),
     ]
+
+
+@pytest.mark.parametrize(("action", "expected"), [("press_tab", "\t"), ("clear_line", "\x15")])
+def test_visual_queue_and_clear_actions_use_fenced_single_character(
+    monkeypatch, tmp_path, action, expected
+):
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        snapshots=[
+            {"session.isProcessing": False},
+            {"session.isProcessing": True},
+        ],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _visual_observation()
+    decision = VisualDecision.from_dict(
+        {
+            "observation_digest": observation.digest(),
+            "action": action,
+            "text": "",
+            "rationale": "Fresh visual evidence calls for this bounded key action",
+            "decided_by": "llm:test-supervisor",
+            "idempotency_key": f"visual-{action}-1",
+        }
+    )
+
+    result = asyncio.run(
+        dispatch.execute_visual_decision(
+            object(),
+            manifest=_manifest(),
+            observation=observation,
+            decision=decision,
+            verify_epoch=lambda *_args: None,
+            receipts=ReceiptStore(tmp_path / f"{action}-receipts.jsonl"),
+            ack_attempts=1,
+        )
+    )
+
+    assert target.sent == [expected]
+    assert result["receipt"]["decision_action"] == action
+    assert result["receipt"]["observed_ack"] is False
+    assert result["receipt"]["key_write_succeeded"] is True
+    assert result["verification_state"] == "pending"
 
 
 def test_unacknowledged_visual_decision_fails_closed(monkeypatch, tmp_path):
@@ -342,6 +399,90 @@ def test_unacknowledged_visual_decision_fails_closed(monkeypatch, tmp_path):
     assert result["receipt"]["observed_ack"] is False
     assert target.sent == ["\r"]
     assert result["receipt"]["post_visual_verification_required"] is True
+    assert result["receipt"]["verification_state"] == "pending"
+
+
+def test_visual_decision_reservation_prevents_replay_after_key_write_crash(monkeypatch, tmp_path):
+    class CrashingSession(FakeSession):
+        async def async_send_text(self, payload):
+            self.sent.append(payload)
+            raise RuntimeError("simulated crash after terminal write")
+
+    target = CrashingSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _visual_observation()
+    chosen = _visual_decision(observation)
+    store = ReceiptStore(tmp_path / "visual-receipts.jsonl")
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        asyncio.run(
+            dispatch.execute_visual_decision(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=chosen,
+                verify_epoch=lambda *_args: None,
+                receipts=store,
+            )
+        )
+    assert target.sent == ["\r"]
+    assert store.has_idempotency_key(chosen.idempotency_key)
+
+    with pytest.raises(ContractError, match="duplicate visual decision"):
+        asyncio.run(
+            dispatch.execute_visual_decision(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=chosen,
+                verify_epoch=lambda *_args: None,
+                receipts=store,
+            )
+        )
+    assert target.sent == ["\r"]
+
+
+def test_visual_decision_rechecks_epochs_after_durable_reservation(monkeypatch, tmp_path):
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _visual_observation()
+    chosen = _visual_decision(observation)
+    store = ReceiptStore(tmp_path / "visual-receipts.jsonl")
+    calls = []
+
+    def transfer_after_reservation(resource, epoch):
+        calls.append((resource, epoch))
+        if len(calls) == 3:
+            raise RuntimeError("controller epoch transferred during reservation")
+
+    with pytest.raises(RuntimeError, match="epoch transferred"):
+        asyncio.run(
+            dispatch.execute_visual_decision(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=chosen,
+                verify_epoch=transfer_after_reservation,
+                receipts=store,
+            )
+        )
+
+    assert store.has_idempotency_key(chosen.idempotency_key)
+    assert target.sent == []
 
 
 def test_visual_decision_lease_loss_prevents_terminal_input(monkeypatch, tmp_path):

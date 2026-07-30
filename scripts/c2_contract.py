@@ -9,6 +9,7 @@ receipts used to fail closed during a local retry.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -406,16 +407,27 @@ class ReceiptStore:
 
     def append(self, receipt: dict[str, Any]) -> None:
         key = _required(receipt.get("idempotency_key"), "receipt.idempotency_key")
-        if self.has_idempotency_key(key):
-            raise ContractError(f"duplicate dispatch idempotency key: {key}")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        try:
-            with os.fdopen(fd, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n")
-        except Exception:
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "r+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
-                os.close(fd)
-            except OSError:
-                pass
-            raise
+                handle.seek(0)
+                for line in handle:
+                    try:
+                        existing = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(existing, dict) and existing.get("idempotency_key") == key:
+                        raise ContractError(f"duplicate dispatch idempotency key: {key}")
+                handle.seek(0, os.SEEK_END)
+                handle.write(json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+                parent_fd = os.open(self.path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(parent_fd)
+                finally:
+                    os.close(parent_fd)
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

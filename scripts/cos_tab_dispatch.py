@@ -590,14 +590,10 @@ async def execute_visual_decision(
     worker_resource = f"workspace:mikebook:c2-worker:{worker.worker_id}"
     verify_epoch(SUPERVISOR_RESOURCE, observation.controller_epoch)
     verify_epoch(worker_resource, observation.worker_epoch)
-    await session.async_send_text(decision.terminal_text())  # type: ignore[attr-defined]
-    observed_ack, _after = await _session_acknowledged(
-        session, before=before, attempts=ack_attempts
-    )
-    receipt = {
+    reservation_receipt = {
         "receipt_version": 1,
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "kind": "visual-decision",
+        "kind": "visual-decision-reservation",
         "worker_id": worker.worker_id,
         "target_iterm_session_id": worker.iterm_session_id,
         "target_tty": worker.tty,
@@ -611,24 +607,41 @@ async def execute_visual_decision(
         "worker_epoch": observation.worker_epoch,
         "idempotency_key": decision.idempotency_key,
         "submit_method": "iterm2-python-api-visual-action",
-        "observed_ack": observed_ack,
+        "key_write_succeeded": False,
+        "observed_ack": False,
+        "observed_presentation": False,
         "post_visual_verification_required": True,
-        "verification_state": "pending" if observed_ack else "not-started",
+        "verification_state": "write-pending",
+    }
+    # Persist the non-replayable decision before injecting its key. ReceiptStore
+    # serializes duplicate detection and append under one file lock, so two
+    # executors cannot both pass a check-then-write window.
+    receipts.append(reservation_receipt)
+    # Reservation durability can be slower than a lease transition. Fence the
+    # exact authority again immediately before the irreversible key write.
+    verify_epoch(SUPERVISOR_RESOURCE, observation.controller_epoch)
+    verify_epoch(worker_resource, observation.worker_epoch)
+    await session.async_send_text(decision.terminal_text())  # type: ignore[attr-defined]
+    receipt = {
+        **reservation_receipt,
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "kind": "visual-decision-key-write",
+        "decision_idempotency_key": decision.idempotency_key,
+        "idempotency_key": f"{decision.idempotency_key}:key-write",
+        "key_write_succeeded": True,
+        "verification_state": "pending",
     }
     receipts.append(receipt)
     return {
-        # Transport acknowledgment proves only that the keystroke reached iTerm.
-        # A fresh screenshot and LLM decision must confirm the UI transition
-        # before the action is reported as complete.
+        # The API write is not visual outcome evidence. A fresh screenshot and
+        # LLM decision must confirm the UI transition before any ACK.
         "ok": False,
-        "action_applied": observed_ack,
-        "verification_state": receipt["verification_state"],
+        "action_applied": False,
+        "key_write_succeeded": True,
+        "observed_presentation": False,
+        "verification_state": "pending",
         "receipt": receipt,
-        "error": (
-            "post-action visual verification required"
-            if observed_ack
-            else "visual action was not acknowledged"
-        ),
+        "error": "post-action visual verification required",
     }
 
 

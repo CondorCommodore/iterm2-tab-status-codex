@@ -12,7 +12,13 @@ from typing import Any
 
 from c2_contract import ContractError, RunManifest
 
-ALLOWED_VISUAL_ACTIONS = {"send_text", "press_enter", "press_escape"}
+ALLOWED_VISUAL_ACTIONS = {
+    "send_text",
+    "press_enter",
+    "press_escape",
+    "press_tab",
+    "clear_line",
+}
 MAX_OBSERVATION_AGE_SECONDS = 120
 
 
@@ -115,4 +121,8 @@ class VisualDecision:
             return "\r"
         if self.action == "press_escape":
             return "\x1b"
+        if self.action == "press_tab":
+            return "\t"
+        if self.action == "clear_line":
+            return "\x15"
         return self.text

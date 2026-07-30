@@ -780,7 +780,7 @@ in-memory producer state: readback fetches the durable bundle, recomputes the
 pure projection, and requires byte-identical control and treatment evidence.
 Forged artifact, fixture, or projection digests fail closed. Local contract
 proof passes the focused contract and 2,460 full coord-api tests (68
-integration-only skips), plus the 403-test consumer repository suite. An opt-in real-PostgreSQL
+integration-only skips), plus the 404-test consumer repository suite. An opt-in real-PostgreSQL
 test also passes without skipping on an isolated fully migrated database. A
 separately recorded local loopback run (external evidence, not reproducible
 from this consumer revision alone) recorded artifact

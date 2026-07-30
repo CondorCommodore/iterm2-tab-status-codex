@@ -118,7 +118,13 @@ def reconstruct(item: Mapping[str, Any]) -> dict[str, Any]:
 def produce(client: CoordClient, fixture: Mapping[str, Any], run_id: str) -> dict[str, Any]:
     """Persist one synthetic run through the supported principal-bound route."""
 
-    item = client.post_message_delivery_shadow_run(build_run(fixture, run_id))
+    submitted = build_run(fixture, run_id)
+    item = client.post_message_delivery_shadow_run(submitted)
+    if (
+        item.get("run_id") != submitted["run_id"]
+        or item.get("artifact_sha256") != submitted["artifact_sha256"]
+    ):
+        raise Phase2EvidenceError("durable response does not match submitted run artifact")
     return {
         "run_id": item["run_id"],
         "artifact_sha256": item["artifact_sha256"],

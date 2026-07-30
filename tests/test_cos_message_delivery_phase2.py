@@ -56,6 +56,25 @@ def test_producer_and_fresh_reader_share_only_durable_route_state_without_stop_c
     assert reconstructed["artifact_sha256"] == produced["artifact_sha256"]
 
 
+def test_producer_rejects_stale_idempotent_artifact_for_reused_run_id():
+    run_id = "phase2-stale-idempotency-1"
+    stale_fixture = fixture()
+    stale_fixture["now"] = "2026-07-29T23:59:58Z"
+    stale_item = phase2.build_run(stale_fixture, run_id) | {
+        "recorded_by": "mikebook_codex",
+        "recorded_at": "2026-07-29T23:59:59Z",
+    }
+
+    class StaleIdempotentClient:
+        def post_message_delivery_shadow_run(self, run):
+            assert run["run_id"] == run_id
+            assert run["artifact_sha256"] != stale_item["artifact_sha256"]
+            return copy.deepcopy(stale_item)
+
+    with pytest.raises(phase2.Phase2EvidenceError, match="does not match submitted"):
+        phase2.produce(StaleIdempotentClient(), fixture(), run_id)
+
+
 def test_cli_can_isolate_coord_config_from_operator_secrets(monkeypatch, tmp_path):
     captured = {}
 

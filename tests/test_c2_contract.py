@@ -120,6 +120,24 @@ def test_manifest_rejects_partially_visible_controller_identity():
         c2.RunManifest.from_dict(value)
 
 
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_manifest_rejects_controller_session_identity_collision(field):
+    value = manifest_dict()
+    value["workers"][0][field] = value["controller"][field]
+
+    with pytest.raises(c2.ContractError, match="must not also be registered as a worker"):
+        c2.RunManifest.from_dict(value)
+
+
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_manifest_rejects_headless_controller_session_identity_collision(field):
+    value = manifest_dict(controller_visible=False)
+    value["workers"][0][field] = value["controller"][field]
+
+    with pytest.raises(c2.ContractError, match="must not also be registered as a worker"):
+        c2.RunManifest.from_dict(value)
+
+
 def test_envelope_is_bound_to_registration_repo_and_actions():
     manifest = c2.RunManifest.from_dict(manifest_dict())
     envelope = c2.DispatchEnvelope.from_dict(envelope_dict())

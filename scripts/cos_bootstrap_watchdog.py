@@ -577,7 +577,11 @@ def run_once(
             "next_check_ts": actions.next_check_ts,
         }
 
-    if (action_due or isinstance(action_pending_since, (int, float))) and not recovery_hold:
+    if (
+        manifest.controller_has_visible_terminal()
+        and (action_due or isinstance(action_pending_since, (int, float)))
+        and not recovery_hold
+    ):
         if actions is None:
             return {
                 "ok": False,

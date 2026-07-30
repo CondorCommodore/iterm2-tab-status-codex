@@ -514,6 +514,35 @@ def test_headless_trial_waits_for_epoch_expiry_then_resumes_same_uuid(tmp_path):
     assert result["receipt"]["controller_epoch"] == 8
 
 
+def test_headless_action_due_with_expired_lease_skips_visible_poke_and_resumes(tmp_path):
+    manifest, _actions = prepare_action_loop(tmp_path, controller_visible=False)
+    arm_stale(tmp_path)
+    seen = []
+    commands = []
+
+    def resume(command, **_kwargs):
+        commands.append(command)
+        write_headless_authority(tmp_path)
+        publish_headless_checkpoint(tmp_path, manifest)
+        return subprocess.CompletedProcess(command, 0, "done", "")
+
+    result = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=500,
+        run=resume,
+        poke_fn=lambda **kwargs: seen.append(kwargs) or {"ok": True},
+    )
+
+    assert result["action"] == "headless-resume"
+    assert result["receipt"]["headless_turn_success"] is True
+    assert result["receipt"]["success"] is True
+    assert result["receipt"]["recovery_state"] == "bounded-turn-complete"
+    assert commands[0][:4] == ["codex", "exec", "resume", "cli-cos"]
+    assert seen == []
+
+
 def test_headless_recovery_does_not_block_on_visible_reattach(tmp_path):
     manifest = tmp_path / "manifest.json"
     write_manifest(manifest, recovery="headless")
@@ -564,9 +593,15 @@ def test_headless_local_acceptance_marker_without_coord_readback_is_not_success(
     assert result["receipt"]["model_checkpoint_durable"] is False
 
 
-def prepare_action_loop(tmp_path, *, now_ts=100, next_decision=None):
+def prepare_action_loop(
+    tmp_path,
+    *,
+    now_ts=100,
+    next_decision=None,
+    controller_visible: bool = True,
+):
     manifest_path = tmp_path / "manifest.json"
-    write_manifest(manifest_path, recovery="headless")
+    write_manifest(manifest_path, recovery="headless", controller_visible=controller_visible)
     m = load_manifest(manifest_path)
     actions = current_actions.seed_actions(
         manifest=m,

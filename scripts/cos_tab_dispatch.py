@@ -550,6 +550,12 @@ async def execute_visual_decision(
     worker = manifest.worker(observation.worker_id)
     if worker.role != "worker":
         raise ContractError("visual decisions may target only registered workers")
+    collisions = manifest.controller_collides_with_worker(worker)
+    if collisions:
+        raise ContractError(
+            "controller session identities must not also be registered as a worker: "
+            + ", ".join(collisions)
+        )
     if (
         manifest.controller_has_visible_terminal()
         and worker.iterm_session_id == manifest.controller_iterm_session_id

@@ -158,7 +158,7 @@ class RunManifest:
         recovery_transport = str(value.get("recovery_transport") or "ab").strip().lower()
         if recovery_transport not in DISPATCH_TRANSPORTS:
             raise ContractError(f"unsupported recovery_transport: {recovery_transport}")
-        return cls(
+        manifest = cls(
             manifest_id=_required(value.get("manifest_id"), "manifest_id"),
             controller_id=_required(controller.get("controller_id"), "controller.controller_id"),
             controller_host=_required(controller.get("host"), "controller.host"),
@@ -186,6 +186,14 @@ class RunManifest:
             merge_policy=dict(value.get("merge_policy") or {}),
             hard_boundaries=tuple(str(item) for item in value.get("hard_boundaries", [])),
         )
+        for worker in workers:
+            collisions = manifest.controller_collides_with_worker(worker)
+            if collisions:
+                raise ContractError(
+                    "controller session identities must not also be registered as a worker: "
+                    + ", ".join(collisions)
+                )
+        return manifest
 
     def controller_has_visible_terminal(self) -> bool:
         return bool(self.controller_iterm_session_id and self.controller_tty)
@@ -193,6 +201,14 @@ class RunManifest:
     @property
     def controller_presentation(self) -> str:
         return "visible" if self.controller_has_visible_terminal() else "headless"
+
+    def controller_collides_with_worker(self, worker: WorkerRegistration) -> list[str]:
+        collisions: list[str] = []
+        if worker.cli_session_id == self.controller_cli_session_id:
+            collisions.append("cli_session_id")
+        if worker.coord_session_id == self.controller_coord_session_id:
+            collisions.append("coord_session_id")
+        return collisions
 
     def transport_for(self, assignment_id: str) -> str:
         if self.dispatch_transport != "ab":
@@ -272,6 +288,12 @@ class DispatchEnvelope:
             raise ContractError("dispatch cli_session_id does not match registration")
         if self.coord_session_id != worker.coord_session_id:
             raise ContractError("dispatch coord_session_id does not match registration")
+        collisions = manifest.controller_collides_with_worker(worker)
+        if collisions:
+            raise ContractError(
+                "controller session identities must not also be registered as a worker: "
+                + ", ".join(collisions)
+            )
         manifest.permits(self.repo, self.permitted_actions)
         if worker.repositories and self.repo not in worker.repositories:
             raise ContractError(f"worker is not registered for repository: {self.repo}")

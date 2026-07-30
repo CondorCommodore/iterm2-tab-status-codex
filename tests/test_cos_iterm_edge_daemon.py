@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import os
 import sys
 import threading
@@ -139,6 +140,15 @@ def make_daemon(tmp_path) -> edge_daemon.EdgeDaemon:
     daemon.dispatch_guard = asyncio.Lock()
     daemon.target_locks = {}
     return daemon
+
+
+def manifest_with_colliding_worker(field: str) -> c2.RunManifest:
+    base = manifest(controller_visible=False)
+    worker = replace(
+        base.workers[0],
+        **{field: getattr(base, f"controller_{field}")},
+    )
+    return replace(base, workers=(worker,))
 
 
 def test_health_reports_loaded_manifest_digest_and_process_identity(tmp_path):
@@ -296,6 +306,25 @@ def test_dispatch_exception_releases_worker_reservation(monkeypatch, tmp_path):
         "workspace:mikebook:c2-worker:worker-codex",
     ) in daemon.client.events
     assert result["receipt"]["observed_ack"] is False
+
+
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_headless_dispatch_rejects_controller_session_identity_collision(field, tmp_path):
+    daemon = make_daemon(tmp_path)
+    daemon.manifest = manifest_with_colliding_worker(field)
+    request = {
+        "protocol": "cos-c2-iterm-edge-v1",
+        "op": "dispatch",
+        "envelope": {
+            **envelope(),
+            field: getattr(daemon.manifest, f"controller_{field}"),
+        },
+    }
+
+    with pytest.raises(c2.ContractError, match="must not also be registered as a worker"):
+        asyncio.run(
+            daemon.handle(request)
+        )
 
 
 def test_invalid_envelope_is_rejected_before_worker_claim(tmp_path):

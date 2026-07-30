@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import subprocess
 import sys
 import time
@@ -217,6 +218,15 @@ def _manifest(transport="tab", controller_visible: bool = True):
     )
 
 
+def _manifest_with_colliding_worker(field: str, *, controller_visible: bool = True):
+    manifest = _manifest(controller_visible=controller_visible)
+    worker = replace(
+        manifest.workers[0],
+        **{field: getattr(manifest, f"controller_{field}")},
+    )
+    return replace(manifest, workers=(worker,))
+
+
 def _envelope():
     return DispatchEnvelope.from_dict(
         {
@@ -401,6 +411,24 @@ def test_registered_dispatch_uses_exact_session_epoch_and_crlf(monkeypatch, tmp_
     assert result["receipt"]["observed_ack"] is True
     assert result["receipt"]["submit_method"] == "iterm2-python-api-crlf"
     assert result["receipt"]["metrics"] == {"recovery_submitted": False}
+
+
+@pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
+def test_headless_registered_dispatch_rejects_controller_session_identity_collision(
+    field, tmp_path
+):
+    manifest = _manifest_with_colliding_worker(field, controller_visible=False)
+    envelope = replace(_envelope(), **{field: getattr(manifest, f"controller_{field}")})
+
+    with pytest.raises(dispatch.ContractError, match="must not also be registered as a worker"):
+        asyncio.run(
+            dispatch.dispatch_registered_headless(
+                manifest=manifest,
+                envelope=envelope,
+                verify_epoch=lambda *_args: None,
+                receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+            )
+        )
 
 
 def test_registered_dispatch_accepts_exact_foreground_runtime_when_iterm_name_drifts(

@@ -152,3 +152,23 @@ def test_readback_rejects_unknown_schema_even_when_artifact_digest_matches():
 
     with pytest.raises(phase2.Phase2EvidenceError, match="unsupported.*schema"):
         phase2.reconstruct(item)
+
+
+def test_producer_rejects_unknown_fixture_schema():
+    value = fixture()
+    value["schema"] = "cos.message-delivery-shadow.fixture.v999"
+
+    with pytest.raises(phase2.Phase2EvidenceError, match="unsupported.*fixture schema"):
+        phase2.build_run(value, "phase2-fixture-schema-produce-1")
+
+
+def test_readback_rejects_unknown_fixture_schema_with_matching_digests():
+    item = phase2.build_run(fixture(), "phase2-fixture-schema-readback-1")
+    item["input_snapshot"]["schema"] = "cos.message-delivery-shadow.fixture.v999"
+    reconstructed_fixture = item["input_snapshot"] | {"events": item["events"]}
+    item["fixture_sha256"] = phase2.policy.content_digest(reconstructed_fixture)
+    unsigned = {key: value for key, value in item.items() if key != "artifact_sha256"}
+    item["artifact_sha256"] = phase2.policy.content_digest(unsigned)
+
+    with pytest.raises(phase2.Phase2EvidenceError, match="unsupported.*fixture schema"):
+        phase2.reconstruct(item)

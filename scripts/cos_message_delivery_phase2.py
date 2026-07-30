@@ -33,6 +33,11 @@ RUN_FIELDS = (
 )
 
 
+def _require_fixture_schema(fixture: Mapping[str, Any]) -> None:
+    if fixture.get("schema") != "cos.message-delivery-shadow.fixture.v1":
+        raise Phase2EvidenceError("unsupported message-delivery fixture schema")
+
+
 def _projection(fixture: Mapping[str, Any]) -> dict[str, Any]:
     return policy.project_delivery(
         messages=fixture["messages"],
@@ -50,6 +55,7 @@ def _projection(fixture: Mapping[str, Any]) -> dict[str, Any]:
 def build_run(fixture: Mapping[str, Any], run_id: str) -> dict[str, Any]:
     """Build one digest-bound artifact suitable for the coord-api Phase 2 route."""
 
+    _require_fixture_schema(fixture)
     source = dict(fixture)
     events = source.pop("events")
     if not isinstance(events, list):
@@ -84,6 +90,7 @@ def reconstruct(item: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(snapshot, dict) or not isinstance(events, list):
         raise Phase2EvidenceError("durable artifact lacks reconstructable inputs")
     fixture = snapshot | {"events": events}
+    _require_fixture_schema(fixture)
     if stored.get("fixture_sha256") != policy.content_digest(fixture):
         raise Phase2EvidenceError("durable fixture digest mismatch")
     treatment = _projection(fixture)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -15,7 +16,7 @@ from c2_contract import ContractError, RunManifest  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
-def manifest(*, controller_visible: bool = True):
+def manifest(*, controller_visible: bool = True, plan_paths: list[str] | None = None):
     controller = {
         "controller_id": "cos",
         "host": "macbook",
@@ -45,7 +46,7 @@ def manifest(*, controller_visible: bool = True):
                     "coord_agent_id": "mikebook_codex",
                 }
             ],
-            "plan_paths": ["/plan"],
+            "plan_paths": plan_paths or ["/plan"],
             "permitted_repositories": ["Condor/repo"],
             "permitted_actions": ["inspect"],
         }
@@ -190,6 +191,97 @@ class FakeClient:
 
     def get_resource(self, resource):
         return None
+
+
+def launchctl_runner(*loaded_labels):
+    loaded = set(loaded_labels)
+
+    def run(command, **_kwargs):
+        label = command[-1].rsplit("/", 1)[-1]
+        is_loaded = label in loaded
+        return subprocess.CompletedProcess(
+            command,
+            0 if is_loaded else 113,
+            stdout="service = loaded" if is_loaded else "",
+            stderr="Could not find service" if not is_loaded else "",
+        )
+
+    return run
+
+
+def readiness(*, watchdog: bool, edge: bool):
+    labels = []
+    if watchdog:
+        labels.append("com.local.cos-bootstrap-watchdog")
+    if edge:
+        labels.append("com.local.cos-iterm-edge")
+    return supervisor.service_readiness(run=launchctl_runner(*labels), system="Darwin", uid=501)
+
+
+def test_service_readiness_requires_both_loaded_services():
+    absent = readiness(watchdog=False, edge=False)
+    partial = readiness(watchdog=True, edge=False)
+    ready = readiness(watchdog=True, edge=True)
+
+    assert absent["ready"] is False
+    assert partial["ready"] is False
+    assert partial["services"]["watchdog"]["loaded"] is True
+    assert partial["services"]["terminal_edge"]["loaded"] is False
+    assert ready["ready"] is True
+
+
+def test_service_readiness_is_fail_closed_off_darwin():
+    observed = supervisor.service_readiness(system="Linux")
+
+    assert observed == {
+        "supported": False,
+        "ready": False,
+        "reason": "unsupported platform: Linux",
+        "services": {},
+    }
+
+
+def test_cli_arm_refuses_without_services_and_does_not_write_marker(tmp_path):
+    with pytest.raises(ContractError, match="arm readiness refused"):
+        supervisor.arm_from_cli(
+            manifest=manifest(),
+            state_dir=tmp_path,
+            readiness=readiness(watchdog=False, edge=False),
+        )
+
+    assert not (tmp_path / "ARMED").exists()
+    assert not (tmp_path / "supervisor-state.json").exists()
+
+
+def test_cli_arm_succeeds_only_with_ready_services(tmp_path):
+    observed = readiness(watchdog=True, edge=True)
+    plan = tmp_path / "plan.md"
+    plan.write_text("# plan\n", encoding="utf-8")
+    result = supervisor.arm_from_cli(
+        manifest=manifest(plan_paths=[str(plan)]),
+        state_dir=tmp_path,
+        readiness=observed,
+    )
+
+    assert result["armed"] is True
+    assert result["service_readiness"] == observed
+    assert (tmp_path / "ARMED").is_file()
+
+
+def test_status_reports_armed_but_unserviced_without_mutating_state(tmp_path):
+    supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
+    marker_before = (tmp_path / "ARMED").read_bytes()
+
+    result = supervisor.status(
+        client=FakeClient(),
+        state_dir=tmp_path,
+        readiness=readiness(watchdog=True, edge=False),
+    )
+
+    assert result["armed"] is True
+    assert result["armed_but_unserviced"] is True
+    assert result["service_readiness"]["ready"] is False
+    assert (tmp_path / "ARMED").read_bytes() == marker_before
 
 
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):

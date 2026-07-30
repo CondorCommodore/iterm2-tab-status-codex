@@ -99,8 +99,7 @@ def build_envelope_dispatch_plan(
             tty=worker.tty,
             text=envelope.objective,
             reason=(
-                f"validated envelope assignment={envelope.assignment_id} "
-                f"worker={worker.worker_id}"
+                f"validated envelope assignment={envelope.assignment_id} worker={worker.worker_id}"
             ),
             dashboard_action="; ".join(dashboard["recommended_actions"]),
             dry_run_payload=envelope.canonical_json(),

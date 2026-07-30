@@ -30,6 +30,7 @@ from c2_contract import (
     load_manifest,
 )
 from c2_visual_decision import VisualDecision, VisualObservation
+from c2_runtime_observation import RuntimeObservation
 from cos_iterm_edge_client import dispatch_envelope as dispatch_envelope_via_iterm_api
 
 TTY_RE = re.compile(r"^/dev/ttys[0-9A-Za-z_.-]+$")
@@ -108,6 +109,10 @@ async def session_variables(session: object) -> dict[str, str]:
         "user.workerReadiness",
         "user.cliSessionId",
         "user.coordSessionId",
+        "user.workerObservationProfile",
+        "user.workerObservationProfileVersion",
+        "user.workerPromptState",
+        "user.workerInputBufferState",
         "session.isProcessing",
         "session.currentCommand",
     )
@@ -122,7 +127,12 @@ async def session_variables(session: object) -> dict[str, str]:
 
 
 def looks_like_agent_session(values: dict[str, str]) -> bool:
-    haystack = " ".join(values.values()).lower()
+    # Observation-profile metadata describes an enrolled contract; it is not
+    # proof that the runtime still owns the terminal foreground.
+    haystack = " ".join(
+        str(values.get(name) or "")
+        for name in ("jobName", "foregroundJobName", "name", "user.workerRuntime")
+    ).lower()
     return "codex" in haystack or "claude" in haystack
 
 
@@ -586,6 +596,31 @@ async def execute_visual_decision(
         return {"ok": False, "error": "stale cli session identity", "session": before}
     if observed_coord and observed_coord != worker.coord_session_id:
         return {"ok": False, "error": "stale coord session identity", "session": before}
+    observed = RuntimeObservation.from_session_variables(
+        before, fallback_runtime=worker.runtime
+    )
+    if observed is None:
+        return {
+            "ok": False,
+            "error": "trusted runtime observation variables are missing or unsupported",
+            "session": before,
+        }
+    try:
+        observed.validate_registration(
+            runtime=worker.runtime,
+            profile_id=worker.observation_profile_id,
+            profile_version=worker.observation_profile_version,
+            cli_session_id=worker.cli_session_id,
+            coord_session_id=worker.coord_session_id,
+        )
+    except ContractError as exc:
+        return {"ok": False, "error": str(exc), "session": before}
+    if observed != observation.runtime_observation:
+        return {
+            "ok": False,
+            "error": "live runtime observation changed since visual capture",
+            "session": before,
+        }
 
     worker_resource = f"workspace:mikebook:c2-worker:{worker.worker_id}"
     verify_epoch(SUPERVISOR_RESOURCE, observation.controller_epoch)

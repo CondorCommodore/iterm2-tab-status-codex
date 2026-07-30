@@ -915,13 +915,28 @@ contains a strict boolean `terminal_actions_enabled` gate that defaults false;
 the edge refuses dispatch, poke, and visual actions before lease, reservation,
 receipt, or terminal effects while health remains readable and reports the gate.
 This closes only the default-deny kill-switch source prerequisite; it does not
-activate the edge or authorize Test 2. Test 2 remains blocked before execution
-because there is no versioned per-runtime prompt-ready observation profile, no
-trusted non-empty input-buffer observation, no atomic
-Escape-to-reverified-prompt-ready transaction before text, and no distinct
-recipient receipt beyond transport acknowledgement. Soft-queue parity and the
-full dual-runtime fault matrix also remain unimplemented. These are readiness
-findings only and count toward no Test 2 acceptance criterion.
+activate the edge or authorize Test 2.
+
+The source contract now defines observation schema v1 with distinct enrolled
+profiles `codex/codex-cli/v1` and `claude/claude-code/v1`. A visual terminal
+action must bind the exact iTerm, CLI, coord, runtime, and profile identities.
+The live session variables must reproduce the captured profile, prompt state, and typed
+input-buffer state immediately before fencing. Generic screen text may still
+drive display-only readiness, but it cannot establish terminal-action readiness.
+An absent or unsupported profile, unknown/non-empty buffer, mismatched identity,
+or changed live observation rejects before an epoch check or terminal byte.
+Escape additionally requires the captured runtime to be `running`; every other
+currently bounded visual action requires `ready` plus a verified empty buffer.
+
+Test 2 remains blocked before execution because no enrolled Codex or Claude
+runtime hook yet publishes those trusted observation variables, and therefore
+there is still no real trusted empty/non-empty input-buffer observation. The
+atomic Escape-to-freshly-reverified-prompt-ready transaction before text and a
+distinct recipient receipt beyond transport acknowledgement also remain
+unimplemented. Soft-queue parity and the full dual-runtime fault matrix remain
+unimplemented. The default-deny gate and observation schema are source
+prerequisites only; neither activates terminal actions nor counts toward a Test
+2 acceptance criterion.
 
 **Unanswered decisions.** Exact prompt-ready signals by runtime version; whether
 Priority ever uses safe STEER while running; policy for known versus unknown

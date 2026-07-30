@@ -100,6 +100,64 @@ def test_read_session_record_classifies_runtime_and_report(tmp_path):
     assert record.attention_reason is None
     assert record.role == "worker"
     assert record.last_fleet_report == "worker-ttys003-report.md"
+    assert record.prompt_ready is False
+    assert record.observation_trusted is False
+
+
+def test_screen_ready_text_cannot_promote_without_trusted_runtime_hook():
+    session = FakeSession(
+        variables={
+            "tty": "/dev/ttys003",
+            "session.title": "codex worker",
+            "path": "/tmp/disposable",
+            "session.isProcessing": False,
+        },
+        screen="ready\n› ",
+    )
+
+    record = asyncio.run(
+        daemon.read_session_record(
+            session,
+            window_index=1,
+            tab_index=1,
+            session_index=1,
+        )
+    )
+
+    assert record.readiness == "ready"
+    assert record.prompt_ready is False
+    assert record.input_buffer_state == "unknown"
+    assert record.observation_trusted is False
+
+
+def test_exact_codex_hook_reports_prompt_ready_only_with_empty_buffer():
+    base = {
+        "tty": "/dev/ttys003",
+        "session.title": "codex worker",
+        "path": "/tmp/disposable",
+        "session.isProcessing": False,
+        "user.workerRuntime": "codex",
+        "user.workerObservationProfile": "codex-cli",
+        "user.workerObservationProfileVersion": "1",
+        "user.workerPromptState": "ready",
+        "user.cliSessionId": "cli-1",
+        "user.coordSessionId": "coord-1",
+    }
+    for buffer_state, expected in (("empty", True), ("nonempty", False), ("unknown", False)):
+        session = FakeSession(
+            variables={**base, "user.workerInputBufferState": buffer_state},
+            screen="› ",
+        )
+        record = asyncio.run(
+            daemon.read_session_record(
+                session,
+                window_index=1,
+                tab_index=1,
+                session_index=1,
+            )
+        )
+        assert record.prompt_ready is expected
+        assert record.observation_trusted is True
 
 
 def test_set_session_variables_sets_status_surface():

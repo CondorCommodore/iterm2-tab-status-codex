@@ -35,6 +35,8 @@ def manifest_dict(*, controller_visible: bool = True, **overrides):
                 "cli_session_id": "cli-worker",
                 "coord_session_id": "coord-worker",
                 "coord_agent_id": "mikebook_codex",
+                "observation_profile_id": "codex-cli",
+                "observation_profile_version": 1,
                 "repositories": ["Condor/repo"],
             },
             {
@@ -46,6 +48,8 @@ def manifest_dict(*, controller_visible: bool = True, **overrides):
                 "cli_session_id": "cli-claude",
                 "coord_session_id": "coord-claude",
                 "coord_agent_id": "mikebook_claude",
+                "observation_profile_id": "claude-code",
+                "observation_profile_version": 1,
                 "repositories": ["Condor/repo"],
             },
         ],
@@ -107,6 +111,18 @@ def test_manifest_explicitly_enables_terminal_actions():
     manifest = c2.RunManifest.from_dict(manifest_dict(terminal_actions_enabled=True))
 
     assert manifest.terminal_actions_enabled is True
+
+
+def test_manifest_rejects_cross_runtime_or_unknown_observation_profile():
+    value = manifest_dict()
+    value["workers"][0]["observation_profile_id"] = "claude-code"
+    with pytest.raises(c2.ContractError, match="unsupported worker observation profile"):
+        c2.RunManifest.from_dict(value)
+
+    value = manifest_dict()
+    value["workers"][0]["observation_profile_version"] = 2
+    with pytest.raises(c2.ContractError, match="unsupported worker observation profile"):
+        c2.RunManifest.from_dict(value)
 
 
 def test_shipped_manifest_example_keeps_terminal_actions_disabled():

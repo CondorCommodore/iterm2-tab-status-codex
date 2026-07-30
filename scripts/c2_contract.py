@@ -40,6 +40,10 @@ CONTROLLER_MODES = {
     "bootstrap-standby",
 }
 RUNTIMES = {"codex", "claude"}
+RUNTIME_OBSERVATION_PROFILES = {
+    ("codex", "codex-cli", 1),
+    ("claude", "claude-code", 1),
+}
 DISPATCH_TRANSPORTS = {"tab", "headless", "ab"}
 TTY_RE = re.compile(r"^/dev/ttys[0-9A-Za-z_.-]+$")
 
@@ -74,6 +78,8 @@ class WorkerRegistration:
     cli_session_id: str
     coord_session_id: str
     coord_agent_id: str
+    observation_profile_id: str = ""
+    observation_profile_version: int = 0
     capabilities: tuple[str, ...] = ()
     repositories: tuple[str, ...] = ()
     role: str = "worker"
@@ -89,6 +95,23 @@ class WorkerRegistration:
         role = str(value.get("role") or "worker").strip().lower()
         if role not in {"worker", "cos"}:
             raise ContractError(f"unsupported worker role: {role}")
+        profile_id = str(value.get("observation_profile_id") or "").strip().lower()
+        raw_profile_version = value.get("observation_profile_version", 0)
+        if isinstance(raw_profile_version, bool) or not isinstance(raw_profile_version, int):
+            raise ContractError("worker.observation_profile_version must be an integer")
+        if bool(profile_id) != bool(raw_profile_version):
+            raise ContractError(
+                "worker observation_profile_id and observation_profile_version must both be set"
+            )
+        if (
+            profile_id
+            and (runtime, profile_id, raw_profile_version)
+            not in RUNTIME_OBSERVATION_PROFILES
+        ):
+            raise ContractError(
+                "unsupported worker observation profile: "
+                f"{runtime}/{profile_id}/v{raw_profile_version}"
+            )
         return cls(
             worker_id=_required(value.get("worker_id"), "worker.worker_id"),
             host=_required(value.get("host"), "worker.host"),
@@ -98,6 +121,8 @@ class WorkerRegistration:
             cli_session_id=_required(value.get("cli_session_id"), "worker.cli_session_id"),
             coord_session_id=_required(value.get("coord_session_id"), "worker.coord_session_id"),
             coord_agent_id=_required(value.get("coord_agent_id"), "worker.coord_agent_id"),
+            observation_profile_id=profile_id,
+            observation_profile_version=raw_profile_version,
             capabilities=tuple(str(item) for item in value.get("capabilities", []) if str(item)),
             repositories=tuple(str(item) for item in value.get("repositories", []) if str(item)),
             role=role,

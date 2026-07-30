@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from c2_runtime_observation import RuntimeObservation
+
 DEFAULT_REPORT_DIR = Path.home() / ".claude" / "plans" / "fleet-reports"
 DEFAULT_LIVE_STATE_NAME = "iterm-live-state.json"
 DEFAULT_EVENTS_NAME = "iterm-live-events.jsonl"
@@ -37,6 +39,12 @@ VARIABLE_NAMES = (
     "user.workerGoal",
     "user.lastFleetReport",
     "user.workerRuntime",
+    "user.workerObservationProfile",
+    "user.workerObservationProfileVersion",
+    "user.workerPromptState",
+    "user.workerInputBufferState",
+    "user.cliSessionId",
+    "user.coordSessionId",
     "user.workerCwd",
 )
 
@@ -196,6 +204,12 @@ class SessionRecord:
     screen_tail: str
     last_fleet_report: str
     attention_reason: str | None = None
+    observation_profile_id: str = ""
+    observation_profile_version: int = 0
+    prompt_state: str = "unknown"
+    input_buffer_state: str = "unknown"
+    prompt_ready: bool = False
+    observation_trusted: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -209,6 +223,12 @@ class SessionRecord:
             "runtime": self.runtime,
             "readiness": self.readiness,
             "attention_reason": self.attention_reason,
+            "observation_profile_id": self.observation_profile_id,
+            "observation_profile_version": self.observation_profile_version,
+            "prompt_state": self.prompt_state,
+            "input_buffer_state": self.input_buffer_state,
+            "prompt_ready": self.prompt_ready,
+            "observation_trusted": self.observation_trusted,
             "role": self.role,
             "screen_tail": compact_text(self.screen_tail, limit=500),
             "last_fleet_report": self.last_fleet_report,
@@ -269,6 +289,21 @@ async def read_session_record(
     is_processing = await _get_processing(session)
     runtime = classify_runtime(title, cwd, screen_tail)
     readiness = classify_readiness(text=screen_tail, is_processing=is_processing)
+    observation_values = {
+        name: await _get_variable(session, name)
+        for name in (
+            "user.workerRuntime",
+            "user.workerObservationProfile",
+            "user.workerObservationProfileVersion",
+            "user.workerPromptState",
+            "user.workerInputBufferState",
+            "user.cliSessionId",
+            "user.coordSessionId",
+        )
+    }
+    runtime_observation = RuntimeObservation.from_session_variables(
+        observation_values, fallback_runtime=runtime
+    )
     attention_reason = classify_attention_reason(screen_tail)
     role = role_for_tty(tty, cos_ttys)
     return SessionRecord(
@@ -285,6 +320,16 @@ async def read_session_record(
         role=role,
         screen_tail=screen_tail,
         last_fleet_report=reports_by_tty.get(tty_short(tty), ""),
+        observation_profile_id=(runtime_observation.profile_id if runtime_observation else ""),
+        observation_profile_version=(
+            runtime_observation.profile_version if runtime_observation else 0
+        ),
+        prompt_state=(runtime_observation.prompt_state if runtime_observation else "unknown"),
+        input_buffer_state=(
+            runtime_observation.input_buffer_state if runtime_observation else "unknown"
+        ),
+        prompt_ready=(runtime_observation.prompt_ready if runtime_observation else False),
+        observation_trusted=runtime_observation is not None,
     )
 
 

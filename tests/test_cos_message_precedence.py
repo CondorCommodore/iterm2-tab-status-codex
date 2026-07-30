@@ -21,7 +21,9 @@ def test_b_is_the_canonical_ordered_contract():
     )
     assert fixture["schema"] == SCHEMA
     assert tuple(fixture["labels"]) == PRECEDENCE
-    assert [DISPLAY_LABEL[label] for label in PRECEDENCE] == fixture["display_labels"]
+    assert [DISPLAY_LABEL[label] for label in PRECEDENCE] == fixture[
+        "display_labels"
+    ]
     assert [PRECEDENCE_RANK[label] for label in PRECEDENCE] == [0, 1, 2, 3]
     assert fixture["decision"]["selected_candidate"] == "B"
 

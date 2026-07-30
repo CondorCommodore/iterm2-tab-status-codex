@@ -89,20 +89,20 @@ The session delivery agent is an adapter, not a controller. It cannot claim
 tasks, change urgency, synthesize instructions, acquire supervisor authority, or
 choose a new recipient outside the delivery hub's fenced delivery instruction.
 
-## 3. Message urgency
+## 3. Message precedence
 
-The working neutral vocabulary is deliberately provisional:
+The canonical ordered vocabulary selected by the operator is:
 
 ```text
-Critical > Urgent > Elevated > Normal
+Flash > Immediate > Priority > Routine
 ```
 
 | Public working label | Operational treatment |
 | --- | --- |
-| Normal | Hold externally and present at the next natural idle/ready boundary. |
-| Elevated | Place ahead of Normal and present at the next verified model boundary; do not interrupt active work by default. |
-| Urgent | Place ahead of Elevated and Normal; steer by interrupting current processing through the shared verified Escape sequence. Always requires recipient acknowledgement and a disposition. |
-| Critical | Place at the front; interrupt immediately under pre-authorized policy. Always requires prompt recipient acknowledgement and a disposition. Failure escalates immediately. |
+| Routine | Hold externally and present at the next natural idle/ready boundary. |
+| Priority | Place ahead of Routine and present at the next verified model boundary; do not interrupt active work by default. |
+| Immediate | Place ahead of Priority and Routine; request one fenced graceful steering transition. Always requires recipient acknowledgement and a disposition. |
+| Flash | Place at the front; interrupt immediately under pre-authorized policy. Always requires prompt recipient acknowledgement and a disposition. Failure escalates immediately. |
 
 FIFO applies inside a class using existing coord-api message/event ordering,
 except when a message explicitly supersedes another item, expires, or is
@@ -119,13 +119,13 @@ credential, destructive-action, and remote-host boundaries still apply. Any
 historical compatibility name for this attribute remains hidden from general
 users.
 
-If urgency is missing, the message is Normal. An optional LLM assistant may
-propose an urgency or digest, but only deterministic policy or an authorized
-sender can change it. An LLM can never promote traffic to Critical or restricted
-override. The neutral labels, their number, and their descriptions are
-hypotheses to test with operators. An implementation-only compatibility mapping
-is isolated in the note at the end of the experiment section and must not leak
-into general-user APIs or UI.
+If precedence is missing, the message is Routine. An optional local classifier
+may propose a precedence or digest, but only deterministic policy or an
+authorized sender can change it. A classifier can never promote traffic to
+Flash or restricted override. New schemas and UI must emit only the canonical
+lowercase values `routine`, `priority`, `immediate`, and `flash`. Any remaining
+legacy label in this document describes the frozen v1 Test 1 experiment only;
+it is not a normative alias and must not be implemented in a new contract.
 
 ## 4. External authoritative queue
 
@@ -134,15 +134,15 @@ and places one delivery obligation per logical recipient in the delivery hub.
 Acceptance is not terminal presentation.
 
 The queue is stored outside Claude, Codex, iTerm, and local watcher files. Only
-the currently selected item is injected. This permits later Elevated, Urgent, or
-Critical traffic to move forward without editing or clearing a TUI input buffer.
+the currently selected item is injected. This permits later Priority, Immediate,
+or Flash traffic to move forward without editing or clearing a TUI input buffer.
 
 An item includes:
 
 ```json
 {
   "message_id": 28650,
-  "urgency": "urgent",
+  "precedence": "immediate",
   "recipient_agent": "mikebook_codex",
   "target_scope": "agent",
   "target_coord_session_id": null,
@@ -180,7 +180,7 @@ The manifest may contain:
   existing coord-api task/attempt/lease records.
 
 It must never inline authoritative instructions, handoffs, or any text whose exact
-wording carries authority. Those entries contain only `message_id`, urgency,
+wording carries authority. Those entries contain only `message_id`, precedence,
 sender, subject, timestamps, integrity digest, and obligation flags. The session
 downloads the authoritative body from `/messages/{id}` with exact-session
 credentials where applicable.
@@ -205,7 +205,7 @@ credentials where applicable.
   "queued_message_headers": [
     {
       "message_id": "M-28650",
-      "urgency": "urgent",
+      "precedence": "immediate",
       "subject": "Suspend merge activity for repository X",
       "sender": "operator",
       "body_digest": "sha256:...",
@@ -231,7 +231,7 @@ credentials where applicable.
 
 A session checkpoints `last_digest_sequence_seen` and content digest through an
 unnumbered upsert. A skipped sequence or broken digest chain causes a full
-digest refresh, not blind acknowledgement of its contents. Urgent and Critical
+digest refresh, not blind acknowledgement of its contents. Immediate and Flash
 traffic still triggers active delivery; the next digest reconciles missed or
 duplicated urgent presentation.
 
@@ -248,7 +248,7 @@ The delivery hub emits runtime-neutral actions:
 
 Default mapping:
 
-| Worker state | Normal | Elevated | Urgent | Critical |
+| Worker state | Routine | Priority | Immediate | Flash |
 | --- | --- | --- | --- | --- |
 | `idle` / ready | PRESENT | PRESENT first | PRESENT now | PRESENT now |
 | `running` | HOLD | STEER at boundary | INTERRUPT | INTERRUPT now |
@@ -267,9 +267,9 @@ different observations, but neither receives weaker identity, fencing, or
 postcondition checks. There is no Claude-only shortcut that equates hard Enter
 with receipt, and no Codex-only durable soft queue inside the TUI.
 
-### 6.1 Urgent/Critical Escape protocol
+### 6.1 Immediate/Flash Escape protocol
 
-For Urgent and Critical traffic, the shared initial physical action is Escape.
+For Immediate and Flash traffic, the shared initial physical action is Escape.
 It is a
 state-transition protocol, not a raw keystroke macro:
 
@@ -293,7 +293,7 @@ state-transition protocol, not a raw keystroke macro:
 10. Require the Claude/Codex model to fetch the message and write its own
     recipient receipt.
 
-Urgent permits a bounded graceful transition before escalation. Critical has a shorter
+Immediate permits a bounded graceful transition before escalation. Flash has a shorter
 deadline and immediately raises a recovery/operator alert on failure. Repeated
 Escape or process termination is not automatic; it requires an explicit policy
 and, for stronger action, restricted-override authority.
@@ -382,8 +382,8 @@ not infer them from subject text, message content, task state, or an LLM.
 
 `received` or `acting` are unnumbered receipt states, not substantive replies.
 A precise blocker or requested answer is a numbered semantic response. Deadlines
-are evaluated by the delivery hub. Overdue Normal/Elevated traffic raises status;
-overdue Urgent/Critical traffic triggers urgency-specific escalation without
+are evaluated by the delivery hub. Overdue Routine/Priority traffic raises status;
+overdue Immediate/Flash traffic triggers precedence-specific escalation without
 fabricating a reply.
 
 ### 7.4 State machines
@@ -431,7 +431,7 @@ messages.
 Expiry prevents new presentation after `expires_at`. It does not erase audit or
 silently cancel work already started. Expired unpresented instructions close as
 `expired`; expired presented instructions require an explicit disposition or operator
-policy. Clock decisions use coord-api/server time. Short-TTL Urgent/Critical traffic that
+policy. Clock decisions use coord-api/server time. Short-TTL Immediate/Flash traffic that
 expires undelivered escalates.
 
 ### 8.3 Retry and idempotency
@@ -824,8 +824,8 @@ rather than merely `presented` or `read`.
 ### Test 2: safe dual-runtime delivery lab
 
 **Hypothesis.** Enrolled disposable Claude and Codex sessions can implement the
-same HOLD/PRESENT/STEER/INTERRUPT contract: idle-gated Normal/Elevated delivery
-and verified Escape-plus-submit for Urgent/Critical delivery, without depending
+same HOLD/PRESENT/STEER/INTERRUPT contract: idle-gated Routine/Priority delivery
+and verified Escape-plus-submit for Immediate/Flash delivery, without depending
 on a runtime's internal prompt queue or losing pre-existing input.
 
 **Prerequisites.** Test 1 passes; one disposable, explicitly enrolled Claude
@@ -836,7 +836,7 @@ write access; and a kill switch that disables terminal actions.
 
 **Fixture/envelope set.** For each runtime, use synthetic messages in idle,
 running, needs-input, blocked, stale, lost, chooser, completion, and shell-fallback
-states. Include Normal/Elevated idle delivery, Urgent/Critical preemption, a
+states. Include Routine/Priority idle delivery, Immediate/Flash preemption, a
 non-empty pre-existing input buffer, one intentionally lost presentation reply,
 duplicate delivery requests, reordered receipts, stale epochs, reused TTY with a
 new UUID, changed CLI/coord UUID, missed first CR, and one safe soft-queue versus
@@ -848,11 +848,11 @@ external-queue comparison where the runtime supports it.
    epochs without sending input.
 2. Replay all fixtures in observation-only mode and record predicted logical
    actions and expected postconditions.
-3. For Normal/Elevated, queue externally, transition the session from running to
+3. For Routine/Priority, queue externally, transition the session from running to
    verified idle, present only the selected synthetic message reference, submit
    through separate CR/LF characters, and require terminal presentation plus
    recipient receipts.
-4. For Urgent/Critical, lock the target, capture before-state evidence, reverify
+4. For Immediate/Flash, lock the target, capture before-state evidence, reverify
    both epochs, send one Escape, and require a verified same-runtime prompt-ready
    transition before any text. Reverify immediately before text and submit the
    synthetic reference through CR/LF.
@@ -887,7 +887,7 @@ boundary.
 profile if prompt-ready cannot be proven. Use explicit recipient pull plus a
 visible inbox indicator if idle detection is unreliable. Standardize on external
 HOLD and hard submit if soft queuing is runtime-specific or lossy. Reserve
-interruption for Critical only if Urgent latency gains do not outweigh continuity
+interruption for Flash only if Immediate latency gains do not outweigh continuity
 loss. Remove automatic retry if lost ACK cannot be distinguished from lost
 delivery.
 
@@ -917,7 +917,7 @@ remain unimplemented. These are readiness findings only and count toward no
 Test 2 acceptance criterion.
 
 **Unanswered decisions.** Exact prompt-ready signals by runtime version; whether
-Elevated ever uses safe STEER while running; policy for known versus unknown
+Priority ever uses safe STEER while running; policy for known versus unknown
 pre-existing input; per-urgency transition deadlines; and whether any supported
 runtime justifies a soft-queue optimization.
 
@@ -938,7 +938,7 @@ owner or worktree.
 **Fixture/envelope set.** One real task message with objective, authorized file
 scope, acceptance test, stop condition, report destination, no-deploy/no-merge
 boundary, required receipt, and required final response. Add one synthetic
-Normal informational header, one authorized urgency update that moves ahead of
+Routine informational header, one authorized precedence update that moves ahead of
 it without changing task scope, one duplicate delivery attempt, and one planned
 session restart producing a verified successor UUID. The task message is
 agent-scoped; a separate synthetic exact-session message proves that old-session
@@ -1011,18 +1011,26 @@ runtime runs first; whether a canary commit or draft PR is useful; how long to
 wait between receipt and escalation; whether restart is graceful or forced; and
 what soak evidence is required before more than one real task is admitted.
 
-**Experimental reference note.** Test 1 alone compares the neutral labels with
-the standard four precedence meanings historically named Routine, Priority,
-Immediate, and Flash. The names and shorthand codes are research-fixture data,
-not product language, API enums, defaults, or activation policy. They must not
-appear in general-user UX. The comparison may be removed or collapsed based on
-operator comprehension results.
+**Operator vocabulary decision (2026-07-30).** The operator selected candidate
+B as the canonical precedence vocabulary: `routine`, `priority`, `immediate`,
+and `flash`, in increasing order. The earlier
+Normal/Elevated/Urgent/Critical reducer and 24-message fixture remain frozen v1
+experimental evidence so their published digests stay reproducible; they are
+not the vocabulary for new schemas, model outputs, or product behavior.
+
+The deployed Test 1 acceptance ran three producer-stopped reads over the frozen
+28,921-message snapshot. All three produced projection digest
+`c254b011fdb84957b54a92a41670f69b91e97710e244c301316c7fb3c1673938`
+without changing the message count or sequence. The evidence bundle SHA-256 is
+`0e0b28f173459acb86cfd659a2a8514c133633ad3de30dca6352b7b5b9242b84`.
+This establishes a repeatable read-only source for the next, observation-only
+classification stage; it does not activate delivery or interruption policy.
 
 ## 13. Staged acceptance plan
 
 ### Stage A: pure contract and queue tests
 
-- Validate `Critical > Urgent > Elevated > Normal`, FIFO within class,
+- Validate `Flash > Immediate > Priority > Routine`, FIFO within class,
   deterministic defaults, and
   explicit authorized supersession.
 - Prove restricted override is rejected from ordinary principals and classifiers.
@@ -1052,7 +1060,7 @@ operator comprehension results.
 - Exercise idle, running, needs-input, blocked, stale, lost, unknown, queued
   operator text, permission chooser, shell fallback, closed tab, and stopped
   runtime states.
-- For Urgent/Critical traffic, prove Escape is preceded and followed by exact identity and epoch
+- For Immediate/Flash traffic, prove Escape is preceded and followed by exact identity and epoch
   checks, reaches a verified prompt, and never treats byte acceptance as success.
 - Exercise CR and LF as separate characters, missed first submit, duplicate
   delivery, delayed state signals, and lost presentation response.
@@ -1065,9 +1073,9 @@ operator comprehension results.
 
 ### Stage D: delivery-hub and response integration
 
-- Create semantic messages with all four urgency levels; verify immediate coord-api
+- Create semantic messages with all four precedence levels; verify immediate coord-api
   acceptance and state-aware delayed presentation.
-- Verify individual recipient ACKs for Urgent/Critical and configured Elevated traffic, without numbered
+- Verify individual recipient ACKs for Immediate/Flash and configured Priority traffic, without numbered
   ACK messages.
 - Require and correlate substantive responses; test wrong sender, wrong
   `reply_to`, wrong correlation, empty result, and stale predecessor reply.
@@ -1086,28 +1094,28 @@ operator comprehension results.
   state; resume without duplicate responsibility or false closure.
 - Simulate coord-api, provider/API, and terminal observation outages with bounded
   backoff while health and lease checks continue.
-- Prove Urgent/Critical missed-ACK escalation and operator-visible precise blockers.
+- Prove Immediate/Flash missed-ACK escalation and operator-visible precise blockers.
 - Run shadow decisions alongside current instantaneous delivery and compare
   urgency ordering, chosen action, presentation result, response correlation, and
   message-volume reduction.
 - Prove authority takeover and rollback across successive supervisor epochs.
 - Complete an unattended canary with mixed Claude/Codex recipients, all four
-  urgency levels, one supersession, one session succession, one forced stall, one
+  precedence levels, one supersession, one session succession, one forced stall, one
   controller interruption, required replies, zero numbered ACKs, and zero
   operator keystrokes.
 
 ## 14. Open design questions
 
-1. Which coord-api principal roles may originate Critical traffic, and which
+1. Which coord-api principal roles may originate Flash traffic, and which
    separate role may set restricted override?
-2. Is Elevated traffic while running always deferred to idle, or may
+2. Is Priority traffic while running always deferred to idle, or may
    runtime-specific model boundaries expose a deterministic safe STEER without
    Escape?
 3. What exact post-Escape observations constitute prompt-ready for each
    supported Claude and Codex release, and how are profile versions enrolled?
-4. May an Urgent/Critical message clear pre-existing unsubmitted input, or must any
+4. May an Immediate/Flash message clear pre-existing unsubmitted input, or must any
    non-empty/unknown input always block for operator reconciliation?
-5. What are the default ACK and response deadlines by urgency, and which
+5. What are the default ACK and response deadlines by precedence, and which
    senders may override them?
 6. Should one logical-agent message create one shared obligation or one
    obligation per explicitly addressed recipient when an agent has multiple

@@ -1,0 +1,24 @@
+{
+  "schema": "cos.message-precedence.labels.v1",
+  "labels": ["routine", "priority", "immediate", "flash"],
+  "display_labels": ["Routine", "Priority", "Immediate", "Flash"],
+  "semantics": {
+    "routine": "Normal asynchronous delivery; wait for the next natural ready boundary.",
+    "priority": "Deliver ahead of routine traffic at the next verified boundary without interrupting active work by default.",
+    "immediate": "Time-sensitive traffic that may request one fenced graceful steering transition and requires acknowledgement and disposition.",
+    "flash": "An explicit safety or authority conflict requiring the shortest authorized fenced interruption path and immediate escalation on failure."
+  },
+  "decision": {
+    "selected_candidate": "B",
+    "selected_by": "human_operator",
+    "selected_at": "2026-07-30",
+    "legacy_v1_labels_are_historical_only": true
+  },
+  "test1_acceptance": {
+    "runs": 3,
+    "projection_sha256": "c254b011fdb84957b54a92a41670f69b91e97710e244c301316c7fb3c1673938",
+    "evidence_sha256": "0e0b28f173459acb86cfd659a2a8514c133633ad3de30dca6352b7b5b9242b84",
+    "message_count": 28921,
+    "message_sequence": 28981
+  }
+}

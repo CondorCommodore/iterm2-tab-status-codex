@@ -13,8 +13,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from c2_coord_client import CoordClient, CoordConfig
 import cos_message_delivery_policy as policy
+from c2_coord_client import CoordClient, CoordConfig
 
 
 class Phase2EvidenceError(ValueError):

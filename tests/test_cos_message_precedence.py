@@ -32,7 +32,7 @@ def test_new_contract_rejects_historical_v1_names(legacy):
         validate_label(legacy)
 
 
-def test_rule_floor_cannot_be_downgraded():
+def test_model_proposal_cannot_change_policy_owned_precedence():
     assert effective_precedence("routine", "flash") == "flash"
-    assert effective_precedence("flash", "routine") == "flash"
+    assert effective_precedence("flash", "routine") == "routine"
     assert effective_precedence("priority", "immediate") == "immediate"

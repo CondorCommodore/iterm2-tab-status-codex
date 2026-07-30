@@ -180,7 +180,7 @@ The manifest may contain:
   existing coord-api task/attempt/lease records.
 
 It must never inline authoritative instructions, handoffs, or any text whose exact
-wording carries authority. Those entries contain only `message_id`, urgency,
+wording carries authority. Those entries contain only `message_id`, precedence,
 sender, subject, timestamps, integrity digest, and obligation flags. The session
 downloads the authoritative body from `/messages/{id}` with exact-session
 credentials where applicable.
@@ -205,7 +205,7 @@ credentials where applicable.
   "queued_message_headers": [
     {
       "message_id": "M-28650",
-      "urgency": "urgent",
+      "precedence": "immediate",
       "subject": "Suspend merge activity for repository X",
       "sender": "operator",
       "body_digest": "sha256:...",

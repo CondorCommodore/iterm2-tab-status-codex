@@ -19,9 +19,8 @@ def validate_label(label: str) -> str:
     return label
 
 
-def effective_precedence(model_label: str, rule_floor: str = "routine") -> str:
-    """Apply the safety floor; a model may raise but never lower that floor."""
+def effective_precedence(model_label: str, policy_precedence: str = "routine") -> str:
+    """Validate a model proposal while retaining policy-owned precedence."""
 
-    model_label = validate_label(model_label)
-    rule_floor = validate_label(rule_floor)
-    return PRECEDENCE[max(PRECEDENCE_RANK[model_label], PRECEDENCE_RANK[rule_floor])]
+    validate_label(model_label)
+    return validate_label(policy_precedence)

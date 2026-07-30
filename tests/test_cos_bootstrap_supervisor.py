@@ -378,6 +378,49 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
     assert result["idle_worker_ids"] == ["worker"]
 
 
+def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_path):
+    plan = tmp_path / "plan.md"
+    plan.write_text("# plan\n", encoding="utf-8")
+    m = manifest(plan_paths=[str(plan)])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("manifest-bytes\n", encoding="utf-8")
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "generated_ts": time.time(),
+                "sessions": [
+                    {
+                        "iterm_session_id": "replacement-session",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "readiness": "idle",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = supervisor.preflight(
+        manifest=m,
+        manifest_path=manifest_path,
+        live_state_path=live_state_path,
+        readiness=readiness(watchdog=True, edge=True),
+    )
+
+    assert result["ready"] is False
+    assert result["worker_roster_ready"] is False
+    assert result["identity_drift"] == [
+        {
+            "tty": "/dev/ttys003",
+            "observed_session_id": "replacement-session",
+            "runtime": "codex",
+            "readiness": "idle",
+        }
+    ]
+
+
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     m = manifest()
     client = FakeClient()

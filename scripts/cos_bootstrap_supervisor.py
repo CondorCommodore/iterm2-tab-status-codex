@@ -845,6 +845,7 @@ def preflight(
     *,
     manifest: RunManifest,
     manifest_path: Path,
+    live_state_path: Path = DEFAULT_LIVE_STATE,
     readiness: dict[str, Any] | None = None,
     edge_probe: Any = request_edge,
 ) -> dict[str, Any]:
@@ -852,6 +853,8 @@ def preflight(
     observed_readiness = readiness if readiness is not None else service_readiness()
     plan_missing = [path for path in manifest.plan_paths if not Path(path).is_file()]
     manifest_sha256 = manifest_file_sha256(manifest_path)
+    workers = classify_registered_workers(manifest, _load_json(live_state_path))
+    idle_workers = [worker for worker in workers if worker["state"] == "idle"]
     edge: dict[str, Any]
     if not manifest.terminal_actions_enabled:
         edge = {
@@ -882,11 +885,15 @@ def preflight(
         "ready": (
             observed_readiness.get("ready") is True
             and not plan_missing
+            and bool(idle_workers)
             and edge.get("ready") is True
         ),
         "manifest_id": manifest.manifest_id,
         "manifest_sha256": manifest_sha256,
         "missing_plan_paths": plan_missing,
+        "workers": workers,
+        "idle_worker_ids": [worker["worker_id"] for worker in idle_workers],
+        "worker_roster_ready": bool(idle_workers),
         "service_readiness": observed_readiness,
         "edge": edge,
         "terminal_actions_enabled": manifest.terminal_actions_enabled,
@@ -944,6 +951,7 @@ def main(argv: list[str] | None = None) -> int:
         result = preflight(
             manifest=manifest,
             manifest_path=args.manifest,
+            live_state_path=args.live_state,
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["ready"] else 1

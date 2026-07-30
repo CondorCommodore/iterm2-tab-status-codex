@@ -345,10 +345,28 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text("manifest-bytes\n", encoding="utf-8")
     digest = supervisor.manifest_file_sha256(manifest_path)
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "generated_ts": time.time(),
+                "sessions": [
+                    {
+                        "iterm_session_id": "iterm-worker",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "readiness": "idle",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     result = supervisor.preflight(
         manifest=m,
         manifest_path=manifest_path,
+        live_state_path=live_state_path,
         readiness=readiness(watchdog=True, edge=True),
         edge_probe=lambda *_args, **_kwargs: {
             "ok": True,
@@ -357,6 +375,7 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
     )
 
     assert result["ready"] is True
+    assert result["idle_worker_ids"] == ["worker"]
 
 
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):

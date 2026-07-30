@@ -1011,12 +1011,20 @@ runtime runs first; whether a canary commit or draft PR is useful; how long to
 wait between receipt and escalation; whether restart is graceful or forced; and
 what soak evidence is required before more than one real task is admitted.
 
-**Experimental reference note.** Test 1 alone compares the neutral labels with
-the standard four precedence meanings historically named Routine, Priority,
-Immediate, and Flash. The names and shorthand codes are research-fixture data,
-not product language, API enums, defaults, or activation policy. They must not
-appear in general-user UX. The comparison may be removed or collapsed based on
-operator comprehension results.
+**Operator vocabulary decision (2026-07-30).** The operator selected candidate
+B as the canonical precedence vocabulary: `routine`, `priority`, `immediate`,
+and `flash`, in increasing order. The earlier
+Normal/Elevated/Urgent/Critical reducer and 24-message fixture remain frozen v1
+experimental evidence so their published digests stay reproducible; they are
+not the vocabulary for new schemas, model outputs, or product behavior.
+
+The deployed Test 1 acceptance ran three producer-stopped reads over the frozen
+28,921-message snapshot. All three produced projection digest
+`c254b011fdb84957b54a92a41670f69b91e97710e244c301316c7fb3c1673938`
+without changing the message count or sequence. The evidence bundle SHA-256 is
+`0e0b28f173459acb86cfd659a2a8514c133633ad3de30dca6352b7b5b9242b84`.
+This establishes a repeatable read-only source for the next, observation-only
+classification stage; it does not activate delivery or interruption policy.
 
 ## 13. Staged acceptance plan
 

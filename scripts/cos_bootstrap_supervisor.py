@@ -12,6 +12,8 @@ import argparse
 import hashlib
 import json
 import os
+import platform
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -50,6 +52,10 @@ from cos_iterm_edge_client import poke_controller
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"
 DEFAULT_LIVE_STATE = Path.home() / ".claude" / "plans" / "fleet-reports" / "iterm-live-state.json"
+REQUIRED_LAUNCHD_SERVICES = {
+    "watchdog": "com.local.cos-bootstrap-watchdog",
+    "terminal_edge": "com.local.cos-iterm-edge",
+}
 
 
 def _iso(ts: float | None = None) -> str:
@@ -100,6 +106,51 @@ def state_paths(state_dir: Path) -> dict[str, Path]:
         "action_receipts": state_dir / "action-receipts.jsonl",
         "recovery_hold": state_dir / "recovery-hold.json",
         "pokes": state_dir / "poke-receipts.jsonl",
+    }
+
+
+def service_readiness(
+    *,
+    run: Any = subprocess.run,
+    system: str | None = None,
+    uid: int | None = None,
+) -> dict[str, Any]:
+    """Read launchd registration without starting, stopping, or kicking a service."""
+    observed_system = system or platform.system()
+    if observed_system != "Darwin":
+        return {
+            "supported": False,
+            "ready": False,
+            "reason": f"unsupported platform: {observed_system}",
+            "services": {},
+        }
+    observed_uid = os.getuid() if uid is None else uid
+    services: dict[str, dict[str, Any]] = {}
+    for name, label in REQUIRED_LAUNCHD_SERVICES.items():
+        try:
+            result = run(
+                ["launchctl", "print", f"gui/{observed_uid}/{label}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            loaded = result.returncode == 0
+            detail = (
+                "loaded" if loaded else (result.stderr or result.stdout or "not loaded").strip()
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            loaded = False
+            detail = str(exc)
+        services[name] = {
+            "label": label,
+            "loaded": loaded,
+            "detail": detail[:240],
+        }
+    return {
+        "supported": True,
+        "ready": all(item["loaded"] for item in services.values()),
+        "services": services,
     }
 
 
@@ -534,6 +585,28 @@ def arm(
     return {"ok": True, "armed": True, **state}
 
 
+def arm_from_cli(
+    *,
+    manifest: RunManifest,
+    state_dir: Path,
+    readiness: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Arm only after the machine-local recovery and terminal edge are loaded."""
+    observed = readiness if readiness is not None else service_readiness()
+    if observed.get("ready") is not True:
+        missing = [
+            item.get("label") or name
+            for name, item in (observed.get("services") or {}).items()
+            if item.get("loaded") is not True
+        ]
+        reason = str(observed.get("reason") or "required services are not loaded")
+        if missing:
+            reason = "required services are not loaded: " + ", ".join(missing)
+        raise ContractError(f"arm readiness refused: {reason}")
+    result = arm(manifest=manifest, state_dir=state_dir)
+    return {**result, "service_readiness": observed}
+
+
 def set_standby(*, client: CoordClient, state_dir: Path) -> dict[str, Any]:
     paths = state_paths(state_dir)
     state = _load_json(paths["state"])
@@ -637,7 +710,12 @@ def reattach_visible(
     return {"ok": True, "action_digest": digest, "ownership": "visible"}
 
 
-def status(*, client: CoordClient | None, state_dir: Path) -> dict[str, Any]:
+def status(
+    *,
+    client: CoordClient | None,
+    state_dir: Path,
+    readiness: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     paths = state_paths(state_dir)
     state = _load_json(paths["state"])
     heartbeat = _load_json(paths["heartbeat"])
@@ -648,8 +726,12 @@ def status(*, client: CoordClient | None, state_dir: Path) -> dict[str, Any]:
             lease = client.get_resource(SUPERVISOR_RESOURCE)
         except CoordError as exc:
             error = str(exc)
+    armed = paths["armed"].exists()
+    observed_readiness = readiness if readiness is not None else service_readiness()
     return {
-        "armed": paths["armed"].exists(),
+        "armed": armed,
+        "service_readiness": observed_readiness,
+        "armed_but_unserviced": armed and observed_readiness.get("ready") is not True,
         "state": state,
         "heartbeat": heartbeat,
         "current_actions": (
@@ -719,7 +801,11 @@ def main(argv: list[str] | None = None) -> int:
     manifest = load_manifest(args.manifest)
     if args.command == "arm":
         print(
-            json.dumps(arm(manifest=manifest, state_dir=args.state_dir), indent=2, sort_keys=True)
+            json.dumps(
+                arm_from_cli(manifest=manifest, state_dir=args.state_dir),
+                indent=2,
+                sort_keys=True,
+            )
         )
         return 0
     client: CoordClient | None = None

@@ -401,6 +401,24 @@ vendor string to an action. If visual capture or the supervising model is
 unavailable, the worker remains fenced at `needs_input` unless the run manifest
 contains a separately authorized fallback.
 
+The bounded key surface includes Enter, Escape, Tab, and clear-line (Ctrl-U),
+plus printable text. Tab and clear-line are experimental recovery primitives:
+live Codex trials showed that a running session may require Tab to queue staged
+text, while a goal-blocked session may require clear-line before an exact
+resume command. These observations do not become adapter rules. Claude, Codex,
+and future runtimes use the same primitives, but the supervising LLM selects an
+action only from fresh visual evidence and the edge requires post-action visual
+verification. A successful key write alone is not message presentation,
+receipt, or execution evidence.
+
+Visual decisions reserve their idempotency key durably before terminal input.
+The append-only write result uses a child key and records only
+`key_write_succeeded`; it keeps `observed_ack` and `observed_presentation`
+false. A crash after injection therefore leaves a non-replayable reservation,
+and concurrent executors serialize duplicate detection with the append. The
+decision remains `pending` until a separately recorded fresh screenshot and
+LLM verdict confirms the intended visual outcome.
+
 After any visual action, capture again and require the LLM to confirm the
 intended transition. A process title, blank screen API, successful write call,
 or static `isProcessing` value is not acknowledgment. Headless completion also

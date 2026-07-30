@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -213,3 +214,20 @@ def test_receipt_store_rejects_duplicate_idempotency(tmp_path):
 
     with pytest.raises(c2.ContractError, match="duplicate"):
         store.append({"idempotency_key": "same", "ok": True})
+
+
+def test_receipt_store_atomically_reserves_one_concurrent_idempotency_key(tmp_path):
+    store = c2.ReceiptStore(tmp_path / "receipts.jsonl")
+
+    def append_once(sequence):
+        try:
+            store.append({"idempotency_key": "same", "sequence": sequence})
+            return "appended"
+        except c2.ContractError:
+            return "duplicate"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = sorted(pool.map(append_once, [1, 2]))
+
+    assert outcomes == ["appended", "duplicate"]
+    assert len(store.records()) == 1

@@ -54,6 +54,7 @@ jobs:
           uv run --python ${{ matrix.python-version }} pytest
           tests/test_adapter.py
           tests/test_c2_mailman_spec_status.py
+          tests/test_cos_message_language_trial.py
           -v
 
   test-shell:

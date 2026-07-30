@@ -16,14 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_b_is_the_canonical_ordered_contract():
-    fixture = json.loads(
-        (ROOT / "tests/fixtures/message_precedence_labels_v1.json").read_text()
-    )
+    fixture_path = ROOT / "tests/fixtures/message_precedence_labels_v1.json"
+    fixture = json.loads(fixture_path.read_text())
+    display_labels = [DISPLAY_LABEL[label] for label in PRECEDENCE]
     assert fixture["schema"] == SCHEMA
     assert tuple(fixture["labels"]) == PRECEDENCE
-    assert [DISPLAY_LABEL[label] for label in PRECEDENCE] == fixture[
-        "display_labels"
-    ]
+    assert display_labels == fixture["display_labels"]
     assert [PRECEDENCE_RANK[label] for label in PRECEDENCE] == [0, 1, 2, 3]
     assert fixture["decision"]["selected_candidate"] == "B"
 

@@ -26,6 +26,15 @@ class LeaseBlocked(CoordError):
         self.payload = payload
 
 
+class LeaseRejected(CoordError):
+    def __init__(self, resource: str, payload: dict[str, Any]):
+        reason = str(payload.get("reason") or "lease_claim_rejected")
+        detail = str(payload.get("detail") or payload.get("status") or "coord-api rejected claim")
+        super().__init__(f"lease {resource!r} claim rejected: {reason}: {detail}")
+        self.resource = resource
+        self.payload = payload
+
+
 class LeaseLost(CoordError):
     pass
 
@@ -245,7 +254,10 @@ class CoordClient:
         )
         payload = response if isinstance(response, dict) else {}
         if status == 409:
-            raise LeaseBlocked(resource, payload)
+            current_holder = str(payload.get("current_holder") or "")
+            if current_holder and current_holder != self.config.principal_id:
+                raise LeaseBlocked(resource, payload)
+            raise LeaseRejected(resource, payload)
         lease = payload.get("lease")
         if isinstance(lease, dict) and "producer" not in lease:
             lease = {**lease, "producer": producer}

@@ -14,7 +14,9 @@ work-item database, or competing authority.
 ### V1 must do
 
 1. Join coord-api as the canonical Codex principal and show a read-only fleet
-   snapshot before any action.
+   snapshot before any action. `cosctl status` is the deterministic snapshot
+   surface: it reports registered worker states, actionable coord items, wake
+   reasons, and a decision digest without mutating state.
 2. Read one landed controlling plan and write a current-focus record containing
    the active objective, owner/session, expected report, known gate, and next
    reconciliation action.

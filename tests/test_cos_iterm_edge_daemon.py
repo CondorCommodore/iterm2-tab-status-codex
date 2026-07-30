@@ -167,7 +167,9 @@ def test_health_reports_loaded_manifest_digest_and_process_identity(tmp_path):
     assert result["terminal_actions_enabled"] is True
 
 
-def test_default_deny_gate_refuses_every_terminal_operation_without_side_effects(tmp_path):
+def test_default_deny_gate_refuses_every_terminal_operation_without_side_effects(
+    tmp_path,
+):
     daemon = make_daemon(tmp_path)
     daemon.manifest = manifest(terminal_actions_enabled=False)
 

@@ -216,9 +216,21 @@ def test_runtime_observation_challenge_and_verification_use_broker_endpoints():
         payload = json.loads(body) if body else None
         calls.append((method, url, headers, payload, timeout))
         if url.endswith("/challenges"):
-            return 201, {"challenge": {"challenge_id": "challenge-1", "issued_at": 1001.0}}
+            return 201, {
+                "challenge": {
+                    "challenge_id": "challenge-1",
+                    "issued_at": 1001.0,
+                    "binding_sha256": coord.interrupt_challenge_binding_sha256(payload),
+                }
+            }
         if url.endswith("/arm"):
-            return 200, {"challenge": {"challenge_id": "challenge-1", "armed": True}}
+            return 200, {
+                "challenge": {
+                    "challenge_id": "challenge-1",
+                    "armed": True,
+                    "binding_sha256": payload["binding_sha256"],
+                }
+            }
         return 200, {
             "verification": {
                 "verified": True,
@@ -227,12 +239,23 @@ def test_runtime_observation_challenge_and_verification_use_broker_endpoints():
         }
 
     client = coord.CoordClient(config(), request=request)
-    challenge = client.create_runtime_interrupt_challenge(
-        {"idempotency_key": "interrupt-1:challenge", "worker_id": "worker"}
-    )
+    challenge_request = {
+        "idempotency_key": "interrupt-1:challenge",
+        "worker_id": "worker",
+        "iterm_session_id": "iterm-worker",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
+        "controller_epoch": 7,
+        "worker_epoch": 13,
+        "initial_hook_digest": "a" * 64,
+        "observation_digest": "b" * 64,
+        "delivery_text_sha256": "c" * 64,
+    }
+    challenge = client.create_runtime_interrupt_challenge(challenge_request)
     armed = client.arm_runtime_interrupt_challenge(
         {
             "challenge_id": "challenge-1",
+            "binding_sha256": challenge["binding_sha256"],
             "idempotency_key": "interrupt-1:challenge-arm",
         }
     )
@@ -248,6 +271,60 @@ def test_runtime_observation_challenge_and_verification_use_broker_endpoints():
     assert calls[1][1].endswith("/c2/runtime-observations/challenges/challenge-1/arm")
     assert calls[2][1].endswith("/c2/runtime-observations/verify")
     assert calls[2][3]["observation"]["event_id"] == "event-1"
+
+
+def test_runtime_interrupt_challenge_rejects_reordered_binding_response():
+    request_payload = {
+        "idempotency_key": "interrupt-1:challenge",
+        "worker_id": "worker",
+        "iterm_session_id": "iterm-worker",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
+        "controller_epoch": 7,
+        "worker_epoch": 13,
+        "initial_hook_digest": "a" * 64,
+        "observation_digest": "b" * 64,
+        "delivery_text_sha256": "c" * 64,
+    }
+    client = coord.CoordClient(
+        config(),
+        request=lambda *_args: (
+            200,
+            {
+                "challenge": {
+                    "challenge_id": "challenge-old",
+                    "issued_at": 1001.0,
+                    "binding_sha256": "d" * 64,
+                }
+            },
+        ),
+    )
+    with pytest.raises(coord.CoordError, match="differently bound"):
+        client.create_runtime_interrupt_challenge(request_payload)
+
+
+def test_runtime_interrupt_challenge_rejects_mismatched_arm_binding():
+    client = coord.CoordClient(
+        config(),
+        request=lambda *_args: (
+            200,
+            {
+                "challenge": {
+                    "challenge_id": "challenge-1",
+                    "armed": True,
+                    "binding_sha256": "b" * 64,
+                }
+            },
+        ),
+    )
+    with pytest.raises(coord.CoordError, match="did not arm the exact"):
+        client.arm_runtime_interrupt_challenge(
+            {
+                "challenge_id": "challenge-1",
+                "binding_sha256": "a" * 64,
+                "idempotency_key": "interrupt-1:challenge-arm",
+            }
+        )
 
 
 @pytest.mark.parametrize(

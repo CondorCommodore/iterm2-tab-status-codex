@@ -943,9 +943,16 @@ signing secret is stored beside the worker: coord-api must verify a report from
 an independently enrolled observer. The transaction binds the exact delivery
 text digest and captured broker-hook event into the LLM decision and durable
 reservation, obtains a one-use broker challenge, rejects any hook-event drift
-before one Escape, and requires a
+before one Escape, and rejects a replayed challenge unless its canonical
+binding digest covers the exact worker/iTerm/CLI/coord identities, controller
+and worker epochs, initial-hook and visual-observation digests, and delivery-text
+digest. The broker arms that exact binding before the action. After the final
+network fence, the edge re-reads the exact object, TTY, foreground process, and
+already broker-verified hook with no intervening network operation before one
+Escape. The transaction then requires a
 newer challenge-bound report that the broker attests was observed only after it
-armed the challenge at the Escape boundary. It revalidates exact
+armed the challenge and whose observation timestamp does not predate the
+Escape write. It revalidates exact
 runtime/profile/CLI/coord/iTerm identity, TTY, foreground, prompt readiness, and
 an empty input buffer immediately before one atomic text-plus-CR/LF API write.
 A submitted transport receipt remains unacknowledged until a distinct recipient

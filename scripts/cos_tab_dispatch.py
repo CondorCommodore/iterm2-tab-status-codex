@@ -32,6 +32,7 @@ from c2_contract import (
 )
 from c2_runtime_hook import DEFAULT_STATE_DIR as DEFAULT_RUNTIME_HOOK_STATE_DIR
 from c2_runtime_hook import SignedRuntimeHookObservation
+from c2_runtime_hook import interrupt_challenge_binding_sha256
 from c2_runtime_hook import load_record as load_runtime_hook_record
 from c2_runtime_observation import RuntimeObservation
 from c2_visual_decision import VisualDecision, VisualObservation
@@ -807,20 +808,20 @@ async def execute_escape_delivery_transaction(
         verify_epoch(SUPERVISOR_RESOURCE, observation.controller_epoch)
         verify_epoch(worker_resource, observation.worker_epoch)
 
-    challenge = create_challenge(
-        {
-            "worker_id": worker.worker_id,
-            "iterm_session_id": worker.iterm_session_id,
-            "cli_session_id": worker.cli_session_id,
-            "coord_session_id": worker.coord_session_id,
-            "controller_epoch": observation.controller_epoch,
-            "worker_epoch": observation.worker_epoch,
-            "initial_hook_digest": initial.digest(),
-            "observation_digest": observation.digest(),
-            "delivery_text_sha256": text_sha256,
-            "idempotency_key": f"{decision.idempotency_key}:challenge",
-        }
-    )
+    challenge_request = {
+        "worker_id": worker.worker_id,
+        "iterm_session_id": worker.iterm_session_id,
+        "cli_session_id": worker.cli_session_id,
+        "coord_session_id": worker.coord_session_id,
+        "controller_epoch": observation.controller_epoch,
+        "worker_epoch": observation.worker_epoch,
+        "initial_hook_digest": initial.digest(),
+        "observation_digest": observation.digest(),
+        "delivery_text_sha256": text_sha256,
+        "idempotency_key": f"{decision.idempotency_key}:challenge",
+    }
+    challenge_binding_sha256 = interrupt_challenge_binding_sha256(challenge_request)
+    challenge = create_challenge(challenge_request)
     if not isinstance(challenge, dict):
         raise ContractError("coord broker returned no interrupt challenge")
     challenge_id = str(challenge.get("challenge_id") or "")
@@ -830,8 +831,11 @@ async def execute_escape_delivery_transaction(
         or isinstance(challenge_issued_at, bool)
         or not isinstance(challenge_issued_at, (int, float))
         or not math.isfinite(float(challenge_issued_at))
+        or challenge.get("binding_sha256") != challenge_binding_sha256
     ):
-        raise ContractError("coord broker returned an invalid interrupt challenge")
+        raise ContractError(
+            "coord broker returned an invalid or differently bound interrupt challenge"
+        )
 
     # Re-baseline after challenge creation and immediately before the Escape.
     baseline_session = await exact_session()
@@ -870,6 +874,7 @@ async def execute_escape_delivery_transaction(
         "initial_hook_digest": initial.digest(),
         "baseline_hook_digest": baseline.digest(),
         "challenge_id": challenge_id,
+        "challenge_binding_sha256": challenge_binding_sha256,
         "observation_digest": observation.digest(),
         "delivery_text_sha256": text_sha256,
         "idempotency_key": decision.idempotency_key,
@@ -885,6 +890,7 @@ async def execute_escape_delivery_transaction(
             "arm_requested_at": arm_requested_at,
             "controller_epoch": observation.controller_epoch,
             "worker_epoch": observation.worker_epoch,
+            "binding_sha256": challenge_binding_sha256,
             "idempotency_key": f"{decision.idempotency_key}:challenge-arm",
         }
     )
@@ -892,6 +898,7 @@ async def execute_escape_delivery_transaction(
         not isinstance(armed, dict)
         or armed.get("challenge_id") != challenge_id
         or armed.get("armed") is not True
+        or armed.get("binding_sha256") != challenge_binding_sha256
     ):
         raise ContractError("coord broker did not arm the exact interrupt challenge")
     receipts.append(
@@ -975,7 +982,9 @@ async def execute_escape_delivery_transaction(
                 iterm_session_id=worker.iterm_session_id,
                 now_ts=hook_clock(),
                 after_sequence=baseline.sequence,
+                min_observed_at=escape_write_started_at,
                 expected_challenge_id=challenge_id,
+                expected_challenge_binding_sha256=challenge_binding_sha256,
             )
             if values.get("tty") != worker.tty:
                 last_error = "registered tty changed after Escape"
@@ -1030,7 +1039,9 @@ async def execute_escape_delivery_transaction(
         iterm_session_id=worker.iterm_session_id,
         now_ts=hook_clock(),
         after_sequence=baseline.sequence,
+        min_observed_at=escape_write_started_at,
         expected_challenge_id=challenge_id,
+        expected_challenge_binding_sha256=challenge_binding_sha256,
     )
     if final_hook.runtime_observation.input_buffer_state != "empty":
         raise ContractError("input buffer changed before atomic command write")

@@ -42,6 +42,37 @@ PROFILE_BY_RUNTIME = {
 HOOK_SCHEMA_VERSION = 1
 MAX_HOOK_AGE_SECONDS = 15.0
 BrokerVerifier = Callable[[dict[str, Any]], dict[str, Any]]
+INTERRUPT_CHALLENGE_BINDING_FIELDS = (
+    "worker_id",
+    "iterm_session_id",
+    "cli_session_id",
+    "coord_session_id",
+    "controller_epoch",
+    "worker_epoch",
+    "initial_hook_digest",
+    "observation_digest",
+    "delivery_text_sha256",
+)
+
+
+def interrupt_challenge_binding_sha256(request: dict[str, Any]) -> str:
+    """Bind a broker challenge to the complete interrupt-delivery authority set."""
+    missing = [field for field in INTERRUPT_CHALLENGE_BINDING_FIELDS if field not in request]
+    if missing:
+        raise ContractError(
+            "runtime interrupt challenge binding is incomplete: " + ", ".join(missing)
+        )
+    canonical = {field: request[field] for field in INTERRUPT_CHALLENGE_BINDING_FIELDS}
+    try:
+        payload = json.dumps(
+            canonical,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    except (TypeError, ValueError) as exc:
+        raise ContractError("runtime interrupt challenge binding is not canonical") from exc
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _required(value: object, name: str) -> str:
@@ -352,6 +383,7 @@ class SignedRuntimeHookObservation:
         after_sequence: int | None = None,
         min_observed_at: float | None = None,
         expected_challenge_id: str | None = None,
+        expected_challenge_binding_sha256: str | None = None,
     ) -> None:
         self.runtime_observation.validate_registration(
             runtime=runtime,
@@ -381,6 +413,11 @@ class SignedRuntimeHookObservation:
             or verification.get("observed_after_arm") is not True
         ):
             raise ContractError("coord broker lacks post-Escape challenge causality")
+        if expected_challenge_binding_sha256 is not None and (
+            verification.get("challenge_binding_sha256")
+            != expected_challenge_binding_sha256
+        ):
+            raise ContractError("coord broker verified a different interrupt challenge binding")
 
 
 def session_variable_values(

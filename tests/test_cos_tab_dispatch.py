@@ -27,6 +27,7 @@ from c2_contract import (  # noqa: E402
 from c2_runtime_hook import (  # noqa: E402
     HOOK_SCHEMA_VERSION,
     SignedRuntimeHookObservation,
+    interrupt_challenge_binding_sha256,
     session_variable_values,
 )
 from c2_runtime_observation import RuntimeObservation  # noqa: E402
@@ -50,16 +51,32 @@ def _broker_verifier(report):
 
 
 def _broker_args():
-    return {
-        "create_challenge": lambda _request: {
+    state = {"binding_sha256": ""}
+
+    def create_challenge(request):
+        state["binding_sha256"] = interrupt_challenge_binding_sha256(request)
+        return {
             "challenge_id": "challenge-1",
             "issued_at": 1001.0,
-        },
-        "arm_challenge": lambda request: {
+            "binding_sha256": state["binding_sha256"],
+        }
+
+    def arm_challenge(request):
+        return {
             "challenge_id": request["challenge_id"],
             "armed": True,
-        },
-        "verify_hook_authenticity": _broker_verifier,
+            "binding_sha256": request["binding_sha256"],
+        }
+
+    def verify(report):
+        result = _broker_verifier(report)
+        result["challenge_binding_sha256"] = state["binding_sha256"]
+        return result
+
+    return {
+        "create_challenge": create_challenge,
+        "arm_challenge": arm_challenge,
+        "verify_hook_authenticity": verify,
         "hook_clock": lambda: 1002.0,
     }
 
@@ -568,6 +585,44 @@ def test_escape_transaction_rejects_new_same_state_hook_after_visual_capture(mon
     assert target.sent == []
 
 
+def test_escape_transaction_rejects_reordered_challenge_binding_before_effect(
+    monkeypatch, tmp_path
+):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    observation = _escape_observation()
+    broker_args = _broker_args()
+    broker_args["create_challenge"] = lambda _request: {
+        "challenge_id": "challenge-old",
+        "issued_at": 1001.0,
+        "binding_sha256": "d" * 64,
+    }
+    with pytest.raises(ContractError, match="differently bound"):
+        asyncio.run(
+            dispatch.execute_escape_delivery_transaction(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=_escape_decision(observation),
+                text="must-not-send",
+                verify_epoch=lambda *_: None,
+                receipts=ReceiptStore(tmp_path / "interrupt-reordered-challenge.jsonl"),
+                **broker_args,
+            )
+        )
+    assert target.sent == []
+
+
 @pytest.mark.parametrize("buffer_state", ["unknown", "nonempty"])
 def test_escape_transaction_never_sends_text_for_unverified_post_buffer(
     monkeypatch, tmp_path, buffer_state
@@ -605,7 +660,7 @@ def test_escape_transaction_never_sends_text_for_unverified_post_buffer(
     assert target.sent == ["\x1b"]
 
 
-def test_escape_transaction_rejects_report_without_post_arm_attestation(monkeypatch, tmp_path):
+def test_escape_transaction_rejects_hook_that_predates_escape(monkeypatch, tmp_path):
     before = _signed_hook(sequence=4, prompt_state="running")
     pre_escape = _signed_hook(sequence=5, prompt_state="ready", observed_at=1001.5)
     target = FakeSession(
@@ -643,7 +698,7 @@ def test_escape_transaction_rejects_report_without_post_arm_attestation(monkeypa
         )
     )
     assert result["ok"] is False
-    assert "post-Escape challenge causality" in result["error"]
+    assert "predates terminal action" in result["error"]
     assert target.sent == ["\x1b"]
 
 
@@ -711,6 +766,47 @@ def test_escape_transaction_hook_change_after_epoch_fence_prevents_escape(monkey
                 text="must-not-send",
                 verify_epoch=lambda *_: None,
                 receipts=ReceiptStore(tmp_path / "interrupt-post-fence-drift.jsonl"),
+                **_broker_args(),
+            )
+        )
+    assert target.sent == []
+
+
+def test_escape_transaction_foreground_switch_during_escape_fence_prevents_escape(
+    monkeypatch, tmp_path
+):
+    before = _signed_hook(sequence=4, prompt_state="running")
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        prompt_state="running",
+        snapshots=[before, before, before, before],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+    monkeypatch.setattr(dispatch, "tty_foreground_group_matches_runtime", lambda *_: False)
+    fence_calls = 0
+
+    def switch_during_escape_fence(_resource, _epoch):
+        nonlocal fence_calls
+        fence_calls += 1
+        if fence_calls == 2:
+            target.job = "shell"
+
+    observation = _escape_observation()
+    with pytest.raises(ContractError, match="lost foreground after Escape fence"):
+        asyncio.run(
+            dispatch.execute_escape_delivery_transaction(
+                object(),
+                manifest=_manifest(),
+                observation=observation,
+                decision=_escape_decision(observation),
+                text="must-not-send",
+                verify_epoch=switch_during_escape_fence,
+                receipts=ReceiptStore(tmp_path / "interrupt-escape-fence-race.jsonl"),
                 **_broker_args(),
             )
         )

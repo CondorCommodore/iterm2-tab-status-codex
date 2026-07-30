@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from c2_contract import ContractError
+from c2_runtime_hook import interrupt_challenge_binding_sha256
+
 
 class CoordError(RuntimeError):
     pass
@@ -42,6 +45,7 @@ class LeaseLost(CoordError):
 
 RequestFn = Callable[[str, str, dict[str, str], bytes | None, float], tuple[int, Any]]
 SHADOW_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 
 def _request(
@@ -440,14 +444,21 @@ class CoordClient:
             or not math.isfinite(float(issued_at))
         ):
             raise CoordError("coord broker returned invalid runtime challenge timestamp")
+        try:
+            expected_binding = interrupt_challenge_binding_sha256(request)
+        except ContractError as exc:
+            raise CoordError(str(exc)) from exc
+        if challenge.get("binding_sha256") != expected_binding:
+            raise CoordError("coord broker returned a differently bound runtime challenge")
         return challenge
 
     def arm_runtime_interrupt_challenge(self, request: dict[str, Any]) -> dict[str, Any]:
         challenge_id = str(request.get("challenge_id") or "")
         idempotency_key = str(request.get("idempotency_key") or "")
-        if not challenge_id or not idempotency_key:
+        binding_sha256 = str(request.get("binding_sha256") or "")
+        if not challenge_id or not idempotency_key or not SHA256_RE.fullmatch(binding_sha256):
             raise CoordError(
-                "arming runtime challenge requires challenge and idempotency identities"
+                "arming runtime challenge requires challenge, binding, and idempotency identities"
             )
         _status, payload = self.call(
             "POST",
@@ -464,6 +475,7 @@ class CoordClient:
             not isinstance(challenge, dict)
             or challenge.get("challenge_id") != challenge_id
             or challenge.get("armed") is not True
+            or challenge.get("binding_sha256") != binding_sha256
         ):
             raise CoordError("coord broker did not arm the exact runtime challenge")
         return challenge

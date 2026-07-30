@@ -254,6 +254,12 @@ python3 scripts/cos_tab_state_monitor.py --print
 python3 scripts/cos_dashboard.py
 ```
 
+`cosctl status` is the pre-action read-only view for the bootstrap supervisor.
+It includes the live lease, arm/readiness state, registered worker
+classification, actionable coord feed, wake reasons, and a deterministic
+decision digest. It does not reserve workers, dispatch prompts, or change
+coord-api state.
+
 When `iterm-live-state.json` exists, `cos_dashboard.py` prefers it over the
 older signal-file snapshot so COS sees API-derived readiness (`ready`,
 `running`, `queued`, `needs_input`, `idle`, `unknown`) without screen-scraping

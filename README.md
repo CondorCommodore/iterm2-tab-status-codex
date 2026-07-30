@@ -227,9 +227,10 @@ directory:
   controller epoch fencing, idempotency, and append-only receipts. Legacy
   TTY-only `/goal` dispatch remains available for compatibility but is not a C2
   authority path.
-- `scripts/cos_dispatch_orchestrator.py` selects an eligible worker from the
-  dashboard state and dispatches a validated `/goal ...` command. Use
-  `--dry-run` outside iTerm2 first.
+- `scripts/cos_dispatch_orchestrator.py` selects an eligible worker for a
+  dry-run plan. Legacy `/goal ...` dispatch is intentionally dry-run only;
+  live V1 dispatch must provide a complete envelope and manifest so the edge
+  can reserve the worker, fence the controller epoch, and write a receipt.
 
 Install and verify the iTerm API scripts directly:
 
@@ -242,6 +243,8 @@ Dry-run a dispatch before sending:
 ```bash
 python3 scripts/cos_tab_dispatch.py --dry-run --tty /dev/ttys003 --text '/goal inspect current task and report'
 python3 scripts/cos_dispatch_orchestrator.py --dry-run --goal 'inspect current task and report' --cos-tty /dev/ttys006
+# live dispatch (requires a validated envelope and the armed C2 edge)
+python3 scripts/cos_dispatch_orchestrator.py --envelope /path/assignment.json --manifest /path/run-manifest.json
 ```
 
 Build a COS dashboard from current tab signals and fleet reports:

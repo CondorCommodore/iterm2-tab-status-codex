@@ -731,6 +731,7 @@ async def execute_escape_delivery_transaction(
     verify_epoch: Any,
     receipts: ReceiptStore,
     create_challenge: Any,
+    arm_challenge: Any,
     verify_hook_authenticity: Any,
     post_attempts: int = 8,
     poll_interval: float = 0.1,
@@ -797,6 +798,10 @@ async def execute_escape_delivery_transaction(
     )
     if initial.runtime_observation != observation.runtime_observation:
         raise ContractError("signed live hook changed since visual observation")
+    if not observation.runtime_hook_digest:
+        raise ContractError("interrupt observation does not bind a broker runtime hook")
+    if observation.runtime_hook_digest != initial.digest():
+        raise ContractError("visual capture does not bind the live runtime hook event")
 
     def fence() -> None:
         verify_epoch(SUPERVISOR_RESOURCE, observation.controller_epoch)
@@ -851,6 +856,8 @@ async def execute_escape_delivery_transaction(
     )
     if baseline.runtime_observation != observation.runtime_observation:
         raise ContractError("signed runtime state changed before Escape")
+    if baseline.digest() != observation.runtime_hook_digest:
+        raise ContractError("runtime hook event changed after visual capture")
 
     reservation = {
         "receipt_version": 1,
@@ -871,8 +878,8 @@ async def execute_escape_delivery_transaction(
         "verification_state": "escape-pending",
     }
     receipts.append(reservation)
-    fence()
     escape_session = await exact_session()
+    fence()
     await escape_session.async_send_text("\x1b")  # type: ignore[attr-defined]
     escape_written_at = hook_clock()
     escape_receipt = {
@@ -884,6 +891,21 @@ async def execute_escape_delivery_transaction(
         "verification_state": "post-escape-pending",
     }
     receipts.append(escape_receipt)
+    armed = arm_challenge(
+        {
+            "challenge_id": challenge_id,
+            "escape_written_at": escape_written_at,
+            "controller_epoch": observation.controller_epoch,
+            "worker_epoch": observation.worker_epoch,
+            "idempotency_key": f"{decision.idempotency_key}:challenge-arm",
+        }
+    )
+    if (
+        not isinstance(armed, dict)
+        or armed.get("challenge_id") != challenge_id
+        or armed.get("armed") is not True
+    ):
+        raise ContractError("coord broker did not arm the exact interrupt challenge")
 
     after = None
     last_error = "no fresh signed post-Escape hook observation"
@@ -902,7 +924,7 @@ async def execute_escape_delivery_transaction(
                 iterm_session_id=worker.iterm_session_id,
                 now_ts=hook_clock(),
                 after_sequence=baseline.sequence,
-                min_observed_at=max(escape_written_at, float(challenge_issued_at)),
+                min_observed_at=escape_written_at,
                 expected_challenge_id=challenge_id,
             )
             if values.get("tty") != worker.tty:
@@ -958,7 +980,7 @@ async def execute_escape_delivery_transaction(
         iterm_session_id=worker.iterm_session_id,
         now_ts=hook_clock(),
         after_sequence=baseline.sequence,
-        min_observed_at=max(escape_written_at, float(challenge_issued_at)),
+        min_observed_at=escape_written_at,
         expected_challenge_id=challenge_id,
     )
     if final_hook.runtime_observation.input_buffer_state != "empty":
@@ -966,10 +988,26 @@ async def execute_escape_delivery_transaction(
     if not final_hook.runtime_observation.prompt_ready:
         raise ContractError("runtime left prompt-ready state before atomic command write")
 
-    # One revalidated API write prevents a lease/identity gap between text and submit.
+    # Fence first, then repeat the complete local target/state comparison so a
+    # slow epoch verification cannot hide a foreground or session transition.
     fence()
-    final_session = await exact_session()
-    await final_session.async_send_text(f"{text}\r\n")  # type: ignore[attr-defined]
+    write_session = await exact_session()
+    write_values = await session_variables(write_session)
+    if write_values.get("tty") != worker.tty:
+        raise ContractError("registered tty changed after final epoch fence")
+    write_foreground_owned = foreground_matches_runtime(
+        write_values, worker.runtime
+    ) or tty_foreground_group_matches_runtime(worker.tty, worker.runtime)
+    if not write_foreground_owned:
+        raise ContractError("registered agent lost foreground after final epoch fence")
+    write_hook = SignedRuntimeHookObservation.from_session_variables(write_values)
+    if write_hook.digest() != final_hook.digest():
+        raise ContractError("signed runtime observation changed after final epoch fence")
+    if write_hook.runtime_observation.input_buffer_state != "empty":
+        raise ContractError("input buffer changed after final epoch fence")
+    if not write_hook.runtime_observation.prompt_ready:
+        raise ContractError("runtime left prompt-ready state after final epoch fence")
+    await write_session.async_send_text(f"{text}\r\n")  # type: ignore[attr-defined]
     receipt = {
         **escape_receipt,
         "kind": "interrupt-delivery-submitted",

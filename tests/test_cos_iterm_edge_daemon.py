@@ -322,9 +322,7 @@ def test_headless_dispatch_rejects_controller_session_identity_collision(field, 
     }
 
     with pytest.raises(c2.ContractError, match="must not also be registered as a worker"):
-        asyncio.run(
-            daemon.handle(request)
-        )
+        asyncio.run(daemon.handle(request))
 
 
 def test_invalid_envelope_is_rejected_before_worker_claim(tmp_path):

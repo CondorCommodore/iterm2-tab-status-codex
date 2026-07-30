@@ -52,18 +52,23 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def render_packet(experiment: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the deterministic operator packet without answer-key metadata."""
+def _validate_experiment(experiment: Mapping[str, Any]) -> None:
     try:
         score_language_comprehension(experiment, [])
     except DeliveryPolicyError as exc:
         raise LanguageTrialError(str(exc)) from exc
-    candidates = experiment.get("candidates")
     questions = experiment.get("questions")
     for question in questions:
         scenario = question.get("scenario")
         if not isinstance(scenario, str) or not scenario.strip():
             raise LanguageTrialError("language questions require a non-empty scenario")
+
+
+def render_packet(experiment: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the deterministic operator packet without answer-key metadata."""
+    _validate_experiment(experiment)
+    candidates = experiment.get("candidates")
+    questions = experiment.get("questions")
     experiment_sha256 = content_digest(experiment)
 
     packet = {
@@ -143,6 +148,7 @@ def render_markdown(packet: Mapping[str, Any]) -> str:
 def score_responses(
     experiment: Mapping[str, Any], response_artifact: Mapping[str, Any]
 ) -> dict[str, Any]:
+    _validate_experiment(experiment)
     if response_artifact.get("schema") != RESPONSE_SCHEMA:
         raise LanguageTrialError("unsupported response artifact schema")
     experiment_sha256 = content_digest(experiment)

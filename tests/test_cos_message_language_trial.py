@@ -71,6 +71,16 @@ def test_packet_rejects_missing_render_fields_without_a_traceback():
         trial.render_packet(source)
 
 
+def test_score_rejects_rebound_experiment_that_cannot_render():
+    source = experiment()
+    artifact = complete_response(trial.render_packet(source), source)
+    del source["questions"][0]["scenario"]
+    artifact["experiment_sha256"] = trial.content_digest(source)
+
+    with pytest.raises(trial.LanguageTrialError, match="non-empty scenario"):
+        trial.score_responses(source, artifact)
+
+
 def test_response_template_contains_every_coordinate_without_answers():
     packet = trial.render_packet(experiment())
     template = trial.response_template(packet)

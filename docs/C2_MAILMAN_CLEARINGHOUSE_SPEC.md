@@ -779,18 +779,22 @@ experiment receipts do not allocate `M-####` identity. The separate
 in-memory producer state: readback fetches the durable bundle, recomputes the
 pure projection, and requires byte-identical control and treatment evidence.
 Forged artifact, fixture, or projection digests fail closed. Local contract
-proof passes 14 focused and 2,439 full coord-api tests (59 integration-only
-skips), plus the 396-test consumer repository suite. An opt-in real-PostgreSQL
+proof passes the focused contract and 2,460 full coord-api tests (68
+integration-only skips), plus the 401-test consumer repository suite. An opt-in real-PostgreSQL
 test also passes without skipping on an isolated fully migrated database. A
-separate-process loopback run recorded artifact
+separately recorded local loopback run (external evidence, not reproducible
+from this consumer revision alone) recorded artifact
 `ca0aca13fd4d68ed17f0a276c7aea337d9ed065c45d1e34caec0b42be92603b0`,
 then reconstructed projection
 `c254b011fdb84957b54a92a41670f69b91e97710e244c301316c7fb3c1673938`
-byte-identically after the producer exited. The semantic message count remained
-zero and `coord_messages_id_seq` remained uncalled. This proves the disposable
-producer-stop path, not the running coord-api: publication, independent review,
-deployment, and an authorized running-edge probe remain required before Test 1
-can claim live durable reconstruction.
+byte-identically after the harness observed the producer process exit. The
+semantic message count remained zero and `coord_messages_id_seq` remained
+uncalled. The durable row itself does not prove that a producer stopped:
+`readback` reports `producer_stop_observed=false`, and only an independent
+process-lifecycle observation may establish that experiment condition. The
+external run supports the disposable path but does not prove the running
+coord-api: independent review, deployment, and an authorized running-edge probe
+remain required before Test 1 can claim live durable reconstruction.
 
 **Pre-protocol diagnostics only, 2026-07-29.** In one operator-authorized
 bounded review, the local edge returned `observed_ack=false`; the prompt was

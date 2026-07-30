@@ -20,7 +20,7 @@ def fixture():
     )
 
 
-def test_producer_stopped_readback_reconstructs_byte_identically():
+def test_durable_readback_reconstructs_byte_identically():
     durable_item = phase2.build_run(fixture(), "phase2-producer-stop-1") | {
         "recorded_by": "mikebook_codex",
         "recorded_at": "2026-07-29T23:00:00Z",
@@ -29,11 +29,12 @@ def test_producer_stopped_readback_reconstructs_byte_identically():
     result = phase2.reconstruct(durable_item)
 
     assert result["byte_identical"] is True
+    assert result["producer_stop_observed"] is False
     assert result["run_id"] == "phase2-producer-stop-1"
     assert result["projection_sha256"] == result["projection"]["projection_sha256"]
 
 
-def test_producer_and_fresh_reader_share_only_durable_route_state():
+def test_producer_and_fresh_reader_share_only_durable_route_state_without_stop_claim():
     class DurableClient:
         def __init__(self):
             self.item = None
@@ -117,4 +118,37 @@ def test_matching_self_asserted_digest_cannot_hide_wrong_projection():
     item["artifact_sha256"] = phase2.policy.content_digest(unsigned)
 
     with pytest.raises(phase2.Phase2EvidenceError, match="projection digest mismatch"):
+        phase2.reconstruct(item)
+
+
+@pytest.mark.parametrize(
+    "field,path",
+    [
+        ("treatment_projection", ("proposed_action", "message_id")),
+        ("control_projection", ("control_proposed_action", "message_id")),
+    ],
+)
+def test_python_equal_but_canonically_different_projection_fails_closed(field, path):
+    item = phase2.build_run(fixture(), "phase2-canonical-bytes-1")
+    target = item[field]
+    for part in path[:-1]:
+        target = target[part]
+    original = target[path[-1]]
+    assert isinstance(original, int)
+    target[path[-1]] = float(original)
+    assert target[path[-1]] == original
+    unsigned = {key: value for key, value in item.items() if key != "artifact_sha256"}
+    item["artifact_sha256"] = phase2.policy.content_digest(unsigned)
+
+    with pytest.raises(phase2.Phase2EvidenceError, match="differs from reconstruction"):
+        phase2.reconstruct(item)
+
+
+def test_readback_rejects_unknown_schema_even_when_artifact_digest_matches():
+    item = phase2.build_run(fixture(), "phase2-schema-version-1")
+    item["schema_version"] = "cos.message-delivery-shadow.run.v2"
+    unsigned = {key: value for key, value in item.items() if key != "artifact_sha256"}
+    item["artifact_sha256"] = phase2.policy.content_digest(unsigned)
+
+    with pytest.raises(phase2.Phase2EvidenceError, match="unsupported.*schema"):
         phase2.reconstruct(item)

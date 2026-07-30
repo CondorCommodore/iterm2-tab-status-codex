@@ -73,6 +73,8 @@ def reconstruct(item: Mapping[str, Any]) -> dict[str, Any]:
     """Reconstruct from durable readback only and require byte-identical evidence."""
 
     stored = dict(item)
+    if stored.get("schema_version") != "cos.message-delivery-shadow.run.v1":
+        raise Phase2EvidenceError("unsupported durable shadow-run schema")
     artifact_digest = stored.get("artifact_sha256")
     artifact_fields = {key: stored.get(key) for key in RUN_FIELDS}
     if artifact_digest != policy.content_digest(artifact_fields):
@@ -87,9 +89,13 @@ def reconstruct(item: Mapping[str, Any]) -> dict[str, Any]:
     treatment = _projection(fixture)
     if stored.get("producer_projection_sha256") != policy.content_digest(treatment):
         raise Phase2EvidenceError("producer projection digest mismatch")
-    if stored.get("treatment_projection") != treatment:
+    if policy.canonical_json(stored.get("treatment_projection")) != policy.canonical_json(
+        treatment
+    ):
         raise Phase2EvidenceError("durable treatment differs from reconstruction")
-    if stored.get("control_projection") != treatment["control_comparison"]:
+    if policy.canonical_json(stored.get("control_projection")) != policy.canonical_json(
+        treatment["control_comparison"]
+    ):
         raise Phase2EvidenceError("durable control comparison differs from reconstruction")
     return {
         "run_id": stored.get("run_id"),
@@ -97,6 +103,7 @@ def reconstruct(item: Mapping[str, Any]) -> dict[str, Any]:
         "artifact_sha256": artifact_digest,
         "projection_sha256": treatment["projection_sha256"],
         "byte_identical": True,
+        "producer_stop_observed": False,
         "projection": treatment,
     }
 

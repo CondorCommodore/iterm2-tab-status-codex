@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -153,6 +154,21 @@ def test_visual_key_actions_reject_attached_text(action):
 
     with pytest.raises(ContractError, match="cannot include text"):
         decision(seen, action=action, text="smuggled payload")
+
+
+def test_interrupt_decision_binds_exact_delivery_text_digest():
+    seen = observation(prompt_state="running")
+    text = "FLASH synthetic message M-test"
+    chosen = decision(
+        seen,
+        action="press_escape",
+        delivery_text_sha256=hashlib.sha256(text.encode()).hexdigest(),
+    )
+    assert chosen.validate_delivery_text(text) == hashlib.sha256(text.encode()).hexdigest()
+    with pytest.raises(ContractError, match="differs"):
+        chosen.validate_delivery_text("different message")
+    with pytest.raises(ContractError, match="does not bind"):
+        decision(seen, action="press_escape").validate_delivery_text(text)
 
 
 @pytest.mark.parametrize("text", ["one\ntwo", "one\rtwo", "\x03", "\x1b", "\x7f"])

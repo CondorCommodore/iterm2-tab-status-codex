@@ -1,8 +1,21 @@
 # COS Message Delivery Hub and Session Delivery Agent
 
-Status: first-pass design specification; no authority activation implied.
+Status: V1-shadow/V2 design specification; no authority activation implied.
+
+The finite bootstrap supervisor contract is in
+[`COS_V1_V2_BOUNDARY.md`](COS_V1_V2_BOUNDARY.md). This document does not expand
+the V1 COS core. It specifies experiments and later transport capabilities that
+must reuse the V1 coord-api identities, leases, attempts, and evidence.
 
 ## 1. Purpose and non-goals
+
+### Scope rule
+
+The current operational COS does not depend on this delivery hub. Until Tests 1
+and 2 pass and the operator authorizes the next stage, the hub is a shadow
+projection and the existing bounded delivery path remains the control. A design
+element below is not an implementation requirement merely because it has an API
+shape or a reducer test.
 
 The **message delivery hub** is a coord-api TRANSPORT projection/service role
 for semantic messages, their delivery obligations, and required responses. It

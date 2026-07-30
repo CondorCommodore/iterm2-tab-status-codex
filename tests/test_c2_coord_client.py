@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -339,6 +340,149 @@ def test_runtime_interrupt_challenge_rejects_invalid_broker_response(response):
     client = coord.CoordClient(config(), request=lambda *_args: (200, response))
     with pytest.raises(coord.CoordError, match="challenge"):
         client.create_runtime_interrupt_challenge({"idempotency_key": "challenge-1"})
+
+
+def test_observer_pending_feed_is_principal_scoped_and_strict():
+    calls = []
+    challenge = {
+        "challenge_id": "00000000-0000-4000-8000-000000000001",
+        "worker_id": "worker-codex",
+        "iterm_session_id": "iterm-worker",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
+        "controller_epoch": 7,
+        "worker_epoch": 13,
+        "binding_sha256": "a" * 64,
+        "armed_at": "2026-07-30T12:00:00Z",
+        "expires_at": "2026-07-30T12:00:30Z",
+        "runtime": "codex",
+        "profile_id": "codex-cli",
+        "profile_version": 1,
+    }
+
+    def request(method, url, headers, body, timeout):
+        calls.append((method, url, headers, body))
+        return 200, {"ok": True, "challenges": [challenge]}
+
+    client = coord.CoordClient(config(), request=request)
+    assert client.pending_runtime_observation_challenges(limit=4) == [challenge]
+    assert calls[0][0:2] == (
+        "GET",
+        "http://coord/c2/runtime-observations/challenges/pending?limit=4",
+    )
+    assert calls[0][2]["Authorization"] == "Bearer write"
+    assert calls[0][2]["X-Principal-Id"] == "mikebook_codex"
+    assert calls[0][3] is None
+
+    malformed = {**challenge, "controller_principal": "must-stay-redacted"}
+    client = coord.CoordClient(config(), request=lambda *_args: (200, {"challenges": [malformed]}))
+    with pytest.raises(coord.CoordError, match="malformed"):
+        client.pending_runtime_observation_challenges()
+
+
+@pytest.mark.parametrize("limit", [True, 0, 65, "16"])
+def test_observer_pending_feed_rejects_invalid_limit(limit):
+    client = coord.CoordClient(config(), request=lambda *_args: (500, {}))
+    with pytest.raises(coord.CoordError, match="limit"):
+        client.pending_runtime_observation_challenges(limit=limit)
+
+
+def test_observer_publication_requires_exact_durable_coordinates_and_hides_proof():
+    calls = []
+    report = {
+        "hook_schema_version": 1,
+        "runtime_observation": {
+            "runtime": "codex",
+            "profile_id": "codex-cli",
+            "profile_version": 1,
+            "prompt_state": "ready",
+            "input_buffer_state": "empty",
+            "cli_session_id": "cli-worker",
+            "coord_session_id": "coord-worker",
+        },
+        "iterm_session_id": "iterm-worker",
+        "sequence": 4,
+        "observed_at": 1001.0,
+        "event_id": "event-4",
+        "challenge_id": "00000000-0000-4000-8000-000000000001",
+        "signature": "secret_proof_token_that_must_not_be_reflected_12345",
+    }
+    canonical = dict(report)
+    canonical.pop("signature")
+    digest = hashlib.sha256(
+        json.dumps(
+            canonical,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+    response = {
+        "observation": {
+            "observation_digest": digest,
+            "challenge_id": report["challenge_id"],
+            "challenge_binding_sha256": "a" * 64,
+            "observer_principal": "mikebook_codex",
+        }
+    }
+
+    def request(method, url, headers, body, timeout):
+        calls.append((method, url, headers, json.loads(body)))
+        return 201, response
+
+    client = coord.CoordClient(config(), request=request)
+    assert (
+        client.publish_runtime_observation(report, expected_binding_sha256="a" * 64)
+        == response["observation"]
+    )
+    assert calls[0][0:2] == ("POST", "http://coord/c2/runtime-observations")
+    assert calls[0][2]["X-Principal-Id"] == "mikebook_codex"
+    assert calls[0][3] == report
+
+    client = coord.CoordClient(
+        config(), request=lambda *_args: (409, {"detail": report["signature"]})
+    )
+    with pytest.raises(coord.CoordError) as raised:
+        client.publish_runtime_observation(report, expected_binding_sha256="a" * 64)
+    assert report["signature"] not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"observation_digest": "b" * 64},
+        {"challenge_id": "00000000-0000-4000-8000-000000000002"},
+        {"challenge_binding_sha256": "b" * 64},
+        {"observer_principal": "another-principal"},
+    ],
+)
+def test_observer_publication_rejects_mismatched_readback(mutation):
+    report = {
+        "hook_schema_version": 1,
+        "runtime_observation": {},
+        "iterm_session_id": "iterm-worker",
+        "sequence": 1,
+        "observed_at": 1.0,
+        "event_id": "event",
+        "challenge_id": "00000000-0000-4000-8000-000000000001",
+        "signature": "a" * 32,
+    }
+    canonical = dict(report)
+    canonical.pop("signature")
+    digest = hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    coordinates = {
+        "observation_digest": digest,
+        "challenge_id": report["challenge_id"],
+        "challenge_binding_sha256": "a" * 64,
+        "observer_principal": "mikebook_codex",
+        **mutation,
+    }
+    client = coord.CoordClient(config(), request=lambda *_args: (201, {"observation": coordinates}))
+    with pytest.raises(coord.CoordError, match="mismatched"):
+        client.publish_runtime_observation(report, expected_binding_sha256="a" * 64)
 
 
 def test_renew_rejects_successor_epoch():

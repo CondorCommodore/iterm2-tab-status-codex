@@ -17,6 +17,9 @@ work-item database, or competing authority.
    snapshot before any action. `cosctl status` is the deterministic snapshot
    surface: it reports registered worker states, actionable coord items, wake
    reasons, and a decision digest without mutating state.
+   `cosctl preflight` is the separate read-only terminal gate; it must report
+   a ready manifest, plan paths, service registration, and edge health before
+   any authorized terminal experiment.
 2. Read one landed controlling plan and write a current-focus record containing
    the active objective, owner/session, expected report, known gate, and next
    reconciliation action.

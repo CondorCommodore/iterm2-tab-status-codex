@@ -95,6 +95,55 @@ def test_claim_and_renew_preserve_epoch_and_principal_headers():
     assert "%3A" in calls[0][1]
 
 
+def test_claim_distinguishes_live_holder_contention_from_contract_rejection():
+    responses = iter(
+        [
+            (409, {"status": "blocked", "current_holder": "control-room"}),
+            (
+                409,
+                {
+                    "status": "blocked",
+                    "current_holder": "mikebook_codex",
+                    "reason": "controller_instance_mismatch",
+                    "detail": "controller instance does not match the live lease",
+                },
+            ),
+            (
+                409,
+                {
+                    "status": "blocked",
+                    "reason": "controller_instance_binding_invalid",
+                    "detail": (
+                        "c2-supervisor producer requires a complete controller instance binding"
+                    ),
+                },
+            ),
+        ]
+    )
+
+    def request(method, url, headers, body, timeout):
+        return next(responses)
+
+    client = coord.CoordClient(config(), request=request)
+    with pytest.raises(coord.LeaseBlocked, match="held by control-room") as contention:
+        client.claim_resource("workspace:mikebook:c2-supervisor", ttl_seconds=180, producer={})
+    assert contention.value.payload["current_holder"] == "control-room"
+
+    with pytest.raises(
+        coord.LeaseRejected,
+        match="controller_instance_mismatch.*does not match the live lease",
+    ) as rejection:
+        client.claim_resource("workspace:mikebook:c2-supervisor", ttl_seconds=180, producer={})
+    assert rejection.value.payload["current_holder"] == "mikebook_codex"
+    assert rejection.value.payload["reason"] == "controller_instance_mismatch"
+
+    with pytest.raises(
+        coord.LeaseRejected,
+        match="controller_instance_binding_invalid.*complete controller instance binding",
+    ):
+        client.claim_resource("workspace:mikebook:c2-supervisor", ttl_seconds=180, producer={})
+
+
 def test_c2_claim_renew_and_release_preserve_instance_expectation():
     calls = []
     producer = {

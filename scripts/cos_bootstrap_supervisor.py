@@ -962,6 +962,7 @@ def preflight(
             observed_readiness.get("ready") is True
             and not plan_missing
             and bool(idle_workers)
+            and not identity_drift
             and edge.get("ready") is True
         ),
         "manifest_id": manifest.manifest_id,

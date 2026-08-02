@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import cos_bootstrap_supervisor as supervisor  # noqa: E402
-from c2_contract import ContractError, RunManifest  # noqa: E402
+from c2_contract import ContractError, RunManifest, WorkerRegistration  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
@@ -426,6 +427,65 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
     assert result["ready"] is True
     assert result["idle_worker_ids"] == ["worker"]
     assert result["blockers"] == []
+
+
+def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path):
+    plan = tmp_path / "plan.md"
+    plan.write_text("# plan\n", encoding="utf-8")
+    base = manifest(plan_paths=[str(plan)])
+    second = WorkerRegistration(
+        worker_id="worker-2",
+        host="macbook",
+        runtime="codex",
+        iterm_session_id="iterm-worker-2",
+        tty="/dev/ttys004",
+        cli_session_id="cli-worker-2",
+        coord_session_id="coord-worker-2",
+        coord_agent_id="mikebook_codex",
+    )
+    m = replace(base, workers=(base.workers[0], second), terminal_actions_enabled=True)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("manifest-bytes\n", encoding="utf-8")
+    digest = supervisor.manifest_file_sha256(manifest_path)
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "generated_ts": time.time(),
+                "sessions": [
+                    {
+                        "iterm_session_id": "replacement-session",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "readiness": "unknown",
+                    },
+                    {
+                        "iterm_session_id": "iterm-worker-2",
+                        "tty": "/dev/ttys004",
+                        "runtime": "codex",
+                        "readiness": "idle",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = supervisor.preflight(
+        manifest=m,
+        manifest_path=manifest_path,
+        live_state_path=live_state_path,
+        readiness=readiness(watchdog=True, edge=True),
+        edge_probe=lambda *_args, **_kwargs: {
+            "ok": True,
+            "manifest_sha256": digest,
+        },
+    )
+
+    assert result["idle_worker_ids"] == ["worker-2"]
+    assert result["identity_drift"]
+    assert result["ready"] is False
+    assert "identity_drift" in {item["code"] for item in result["blockers"]}
 
 
 def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_path):

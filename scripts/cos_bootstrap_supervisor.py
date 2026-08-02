@@ -297,6 +297,10 @@ def classify_registered_workers(
                 "runtime": worker.runtime,
                 "iterm_session_id": worker.iterm_session_id,
                 "tty": worker.tty,
+                "cli_session_id": worker.cli_session_id,
+                "coord_session_id": worker.coord_session_id,
+                "observation_profile_id": worker.observation_profile_id,
+                "observation_profile_version": worker.observation_profile_version,
                 "state": state,
                 "observed": observed or None,
             }
@@ -867,18 +871,76 @@ def preflight(
     idle_workers = [worker for worker in workers if worker["state"] == "idle"]
     registered_ttys = {worker.tty for worker in manifest.workers}
     registered_sessions = {worker.iterm_session_id for worker in manifest.workers}
-    identity_drift = [
-        {
-            "tty": str(session.get("tty") or ""),
-            "observed_session_id": str(session.get("iterm_session_id") or ""),
-            "runtime": str(session.get("runtime") or "unknown"),
-            "readiness": str(session.get("readiness") or "unknown"),
-        }
-        for session in live_state.get("sessions", [])
-        if isinstance(session, dict)
-        and session.get("tty") in registered_ttys
-        and session.get("iterm_session_id") not in registered_sessions
-    ]
+    identity_drift: list[dict[str, Any]] = []
+    for session in live_state.get("sessions", []):
+        if (
+            not isinstance(session, dict)
+            or session.get("tty") not in registered_ttys
+            or session.get("iterm_session_id") in registered_sessions
+        ):
+            continue
+        expected_worker = next(
+            worker for worker in manifest.workers if worker.tty == session.get("tty")
+        )
+        required_fields = [
+            "iterm_session_id",
+            "tty",
+            "runtime",
+            "cli_session_id",
+            "coord_session_id",
+        ]
+        if expected_worker.observation_profile_id:
+            required_fields.extend(("observation_profile_id", "observation_profile_version"))
+        expected_bindings = {field: getattr(expected_worker, field) for field in required_fields}
+        observed_bindings = {field: session.get(field) for field in required_fields}
+        identity_drift.append(
+            {
+                "worker_id": expected_worker.worker_id,
+                "drifted_fields": [
+                    field
+                    for field in required_fields
+                    if observed_bindings[field] != expected_bindings[field]
+                ],
+                "expected_bindings": expected_bindings,
+                "observed_bindings": observed_bindings,
+                "tty": str(session.get("tty") or ""),
+                "observed_session_id": str(session.get("iterm_session_id") or ""),
+                "runtime": str(session.get("runtime") or "unknown"),
+                "readiness": str(session.get("readiness") or "unknown"),
+            }
+        )
+    for worker in workers:
+        observed = worker.get("observed")
+        if not isinstance(observed, dict):
+            continue
+        required_fields = [
+            "iterm_session_id",
+            "tty",
+            "runtime",
+            "cli_session_id",
+            "coord_session_id",
+        ]
+        if worker["observation_profile_id"]:
+            required_fields.extend(("observation_profile_id", "observation_profile_version"))
+        drifted_fields = [
+            field for field in required_fields if observed.get(field) != worker.get(field)
+        ]
+        if drifted_fields:
+            identity_drift.append(
+                {
+                    "worker_id": worker["worker_id"],
+                    "drifted_fields": drifted_fields,
+                    "expected_bindings": {field: worker.get(field) for field in required_fields},
+                    "observed_bindings": {field: observed.get(field) for field in required_fields},
+                    "expected_session_id": worker["iterm_session_id"],
+                    "expected_tty": worker["tty"],
+                    "expected_runtime": worker["runtime"],
+                    "observed_session_id": observed.get("iterm_session_id"),
+                    "observed_tty": observed.get("tty"),
+                    "observed_runtime": observed.get("runtime"),
+                    "readiness": observed.get("readiness"),
+                }
+            )
     edge: dict[str, Any]
     if not manifest.terminal_actions_enabled:
         edge = {
@@ -905,11 +967,64 @@ def preflight(
                 "reason": "edge_unavailable",
                 "error": f"{type(exc).__name__}: {exc}",
             }
+    blockers: list[dict[str, Any]] = []
+    if observed_readiness.get("ready") is not True:
+        blockers.append(
+            {
+                "code": "service_not_ready",
+                "detail": observed_readiness.get("reason") or "required services are not ready",
+                "action": "inspect service registration; do not arm or dispatch",
+            }
+        )
+    if plan_missing:
+        blockers.append(
+            {
+                "code": "plan_missing",
+                "paths": plan_missing,
+                "action": "restore or replace plan paths, then re-run preflight",
+            }
+        )
+    if not manifest.terminal_actions_enabled:
+        blockers.append(
+            {
+                "code": "terminal_actions_disabled",
+                "action": "operator must explicitly edit the manifest and re-arm",
+            }
+        )
+    if identity_drift:
+        blockers.append(
+            {
+                "code": "identity_drift",
+                "sessions": identity_drift,
+                "action": (
+                    "inspect roster-proposal; adoption requires explicit manifest edit and re-arm"
+                ),
+            }
+        )
+    if not idle_workers:
+        blockers.append(
+            {
+                "code": "no_idle_registered_worker",
+                "action": (
+                    "wait for or explicitly enroll an idle registered worker; "
+                    "never inject into a replacement"
+                ),
+            }
+        )
+    if edge.get("ready") is not True:
+        blockers.append(
+            {
+                "code": "edge_not_ready",
+                "detail": edge.get("reason") or "terminal edge is not ready",
+                "action": "repair or load the pinned edge; do not use a fallback transport",
+            }
+        )
     return {
         "ready": (
             observed_readiness.get("ready") is True
             and not plan_missing
             and bool(idle_workers)
+            and not identity_drift
             and edge.get("ready") is True
         ),
         "manifest_id": manifest.manifest_id,
@@ -922,6 +1037,7 @@ def preflight(
         "service_readiness": observed_readiness,
         "edge": edge,
         "terminal_actions_enabled": manifest.terminal_actions_enabled,
+        "blockers": blockers,
     }
 
 
@@ -945,6 +1061,27 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
             ),
             None,
         )
+        required_fields = [
+            "iterm_session_id",
+            "tty",
+            "runtime",
+            "cli_session_id",
+            "coord_session_id",
+        ]
+        if worker.observation_profile_id:
+            required_fields.extend(("observation_profile_id", "observation_profile_version"))
+        expected_bindings = {field: getattr(worker, field) for field in required_fields}
+        observed_bindings = [
+            {field: session.get(field) for field in required_fields} for session in candidates
+        ]
+        drifted_fields = sorted(
+            {
+                field
+                for observed_candidate in observed_bindings
+                for field in required_fields
+                if observed_candidate.get(field) != expected_bindings[field]
+            }
+        )
         workers.append(
             {
                 "worker_id": worker.worker_id,
@@ -953,6 +1090,9 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
                     "tty": worker.tty,
                     "runtime": worker.runtime,
                 },
+                "expected_bindings": expected_bindings,
+                "observed_bindings": observed_bindings,
+                "drifted_fields": drifted_fields,
                 "observed_on_expected_tty": [
                     {
                         "iterm_session_id": str(session.get("iterm_session_id")),
@@ -962,7 +1102,9 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
                     for session in candidates
                 ],
                 "status": (
-                    "unchanged"
+                    "binding-drift"
+                    if expected is not None and drifted_fields
+                    else "unchanged"
                     if expected is not None
                     else "replacement-on-tty"
                     if candidates

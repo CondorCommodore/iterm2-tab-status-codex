@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import cos_bootstrap_supervisor as supervisor  # noqa: E402
-from c2_contract import ContractError, RunManifest  # noqa: E402
+from c2_contract import ContractError, RunManifest, WorkerRegistration  # noqa: E402
 from c2_coord_client import LeaseHandle  # noqa: E402
 
 
@@ -340,6 +341,8 @@ def test_status_includes_read_only_fleet_snapshot(tmp_path):
                         "iterm_session_id": "iterm-worker",
                         "tty": "/dev/ttys003",
                         "runtime": "codex",
+                        "cli_session_id": "cli-worker",
+                        "coord_session_id": "coord-worker",
                         "readiness": "idle",
                     }
                 ],
@@ -379,6 +382,11 @@ def test_preflight_fails_closed_when_terminal_actions_are_disabled(tmp_path):
 
     assert result["ready"] is False
     assert result["edge"]["reason"] == "terminal_actions_disabled_in_manifest"
+    assert [item["code"] for item in result["blockers"]] == [
+        "terminal_actions_disabled",
+        "no_idle_registered_worker",
+        "edge_not_ready",
+    ]
 
 
 def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
@@ -399,6 +407,8 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
                         "iterm_session_id": "iterm-worker",
                         "tty": "/dev/ttys003",
                         "runtime": "codex",
+                        "cli_session_id": "cli-worker",
+                        "coord_session_id": "coord-worker",
                         "readiness": "idle",
                     }
                 ],
@@ -420,6 +430,97 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
 
     assert result["ready"] is True
     assert result["idle_worker_ids"] == ["worker"]
+    assert result["blockers"] == []
+
+
+def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path):
+    plan = tmp_path / "plan.md"
+    plan.write_text("# plan\n", encoding="utf-8")
+    base = manifest(plan_paths=[str(plan)])
+    second = WorkerRegistration(
+        worker_id="worker-2",
+        host="macbook",
+        runtime="codex",
+        iterm_session_id="iterm-worker-2",
+        tty="/dev/ttys004",
+        cli_session_id="cli-worker-2",
+        coord_session_id="coord-worker-2",
+        coord_agent_id="mikebook_codex",
+    )
+    third = WorkerRegistration(
+        worker_id="worker-3",
+        host="macbook",
+        runtime="codex",
+        iterm_session_id="iterm-worker-3",
+        tty="/dev/ttys005",
+        cli_session_id="cli-worker-3",
+        coord_session_id="coord-worker-3",
+        coord_agent_id="mikebook_codex",
+    )
+    m = replace(
+        base,
+        workers=(base.workers[0], second, third),
+        terminal_actions_enabled=True,
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("manifest-bytes\n", encoding="utf-8")
+    digest = supervisor.manifest_file_sha256(manifest_path)
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "generated_ts": time.time(),
+                "sessions": [
+                    {
+                        "iterm_session_id": "replacement-session",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "readiness": "unknown",
+                    },
+                    {
+                        "iterm_session_id": "iterm-worker-2",
+                        "tty": "/dev/ttys004",
+                        "runtime": "codex",
+                        "cli_session_id": "stale-cli-worker-2",
+                        "coord_session_id": "stale-coord-worker-2",
+                        "readiness": "idle",
+                    },
+                    {
+                        "iterm_session_id": "iterm-worker-3",
+                        "tty": "/dev/ttys005",
+                        "runtime": "codex",
+                        "cli_session_id": "cli-worker-3",
+                        "coord_session_id": "coord-worker-3",
+                        "readiness": "idle",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = supervisor.preflight(
+        manifest=m,
+        manifest_path=manifest_path,
+        live_state_path=live_state_path,
+        readiness=readiness(watchdog=True, edge=True),
+        edge_probe=lambda *_args, **_kwargs: {
+            "ok": True,
+            "manifest_sha256": digest,
+        },
+    )
+
+    assert result["idle_worker_ids"] == ["worker-2", "worker-3"]
+    assert result["identity_drift"]
+    assert result["ready"] is False
+    assert "identity_drift" in {item["code"] for item in result["blockers"]}
+    worker_two_drift = next(
+        item for item in result["identity_drift"] if item.get("worker_id") == "worker-2"
+    )
+    assert set(worker_two_drift["drifted_fields"]) >= {
+        "cli_session_id",
+        "coord_session_id",
+    }
 
 
 def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_path):
@@ -455,14 +556,31 @@ def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_pa
 
     assert result["ready"] is False
     assert result["worker_roster_ready"] is False
-    assert result["identity_drift"] == [
-        {
-            "tty": "/dev/ttys003",
-            "observed_session_id": "replacement-session",
-            "runtime": "codex",
-            "readiness": "idle",
-        }
-    ]
+    replacement = result["identity_drift"][0]
+    assert replacement["worker_id"] == "worker"
+    assert replacement["expected_bindings"] == {
+        "iterm_session_id": "iterm-worker",
+        "tty": "/dev/ttys003",
+        "runtime": "codex",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
+    }
+    assert replacement["observed_bindings"] == {
+        "iterm_session_id": "replacement-session",
+        "tty": "/dev/ttys003",
+        "runtime": "codex",
+        "cli_session_id": None,
+        "coord_session_id": None,
+    }
+    assert set(replacement["drifted_fields"]) == {
+        "cli_session_id",
+        "coord_session_id",
+        "iterm_session_id",
+    }
+    assert {item["code"] for item in result["blockers"]} >= {
+        "identity_drift",
+        "no_idle_registered_worker",
+    }
 
 
 def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
@@ -496,6 +614,20 @@ def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
 
     assert result["requires_explicit_rearm"] is True
     assert result["workers"][0]["status"] == "replacement-on-tty"
+    assert result["workers"][0]["observed_bindings"] == [
+        {
+            "iterm_session_id": "replacement-session",
+            "tty": "/dev/ttys003",
+            "runtime": "codex",
+            "cli_session_id": None,
+            "coord_session_id": None,
+        }
+    ]
+    assert set(result["workers"][0]["drifted_fields"]) == {
+        "cli_session_id",
+        "coord_session_id",
+        "iterm_session_id",
+    }
     assert result["unregistered_live_sessions"] == [
         {
             "iterm_session_id": "replacement-session",
@@ -510,6 +642,38 @@ def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
             "readiness": "running",
         },
     ]
+
+
+def test_roster_proposal_surfaces_binding_drift_for_expected_session(tmp_path):
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "iterm_session_id": "iterm-worker",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "cli_session_id": "replacement-cli",
+                        "coord_session_id": "replacement-coord",
+                        "readiness": "idle",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = supervisor.roster_proposal(
+        manifest=manifest(),
+        live_state_path=live_state_path,
+    )
+
+    worker = result["workers"][0]
+    assert worker["status"] == "binding-drift"
+    assert set(worker["drifted_fields"]) == {"cli_session_id", "coord_session_id"}
+    assert worker["expected_bindings"]["cli_session_id"] == "cli-worker"
+    assert worker["observed_bindings"][0]["coord_session_id"] == "replacement-coord"
 
 
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):

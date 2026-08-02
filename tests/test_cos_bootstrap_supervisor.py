@@ -341,6 +341,8 @@ def test_status_includes_read_only_fleet_snapshot(tmp_path):
                         "iterm_session_id": "iterm-worker",
                         "tty": "/dev/ttys003",
                         "runtime": "codex",
+                        "cli_session_id": "cli-worker",
+                        "coord_session_id": "coord-worker",
                         "readiness": "idle",
                     }
                 ],
@@ -405,6 +407,8 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
                         "iterm_session_id": "iterm-worker",
                         "tty": "/dev/ttys003",
                         "runtime": "codex",
+                        "cli_session_id": "cli-worker",
+                        "coord_session_id": "coord-worker",
                         "readiness": "idle",
                     }
                 ],
@@ -485,6 +489,8 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
                         "iterm_session_id": "iterm-worker-3",
                         "tty": "/dev/ttys005",
                         "runtime": "codex",
+                        "cli_session_id": "cli-worker-3",
+                        "coord_session_id": "coord-worker-3",
                         "readiness": "idle",
                     },
                 ],
@@ -508,6 +514,15 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
     assert result["identity_drift"]
     assert result["ready"] is False
     assert "identity_drift" in {item["code"] for item in result["blockers"]}
+    worker_two_drift = next(
+        item
+        for item in result["identity_drift"]
+        if item.get("worker_id") == "worker-2"
+    )
+    assert set(worker_two_drift["drifted_fields"]) >= {
+        "cli_session_id",
+        "coord_session_id",
+    }
 
 
 def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_path):

@@ -260,6 +260,14 @@ classification, actionable coord feed, wake reasons, and a deterministic
 decision digest. It does not reserve workers, dispatch prompts, or change
 coord-api state.
 
+The status fields distinguish a physical `ARMED` file from an effective arm:
+`armed` reports that the marker exists, while `arm_marker_valid` and
+`effective_armed` are only positive after the marker is validated against the
+supplied manifest digest. A stale or malformed marker therefore remains visible
+for diagnosis but cannot appear operationally armed; `armed_but_invalid` and
+`requires_explicit_rearm` make the recovery action explicit. If no manifest is
+provided, the effective value is `null` rather than an unverified claim.
+
 Before a terminal experiment, run `bash scripts/cosctl preflight --manifest
 <path>`. It checks the exact manifest digest, plan paths, required launchd
 registrations, and the iTerm edge health without enabling services or sending
@@ -364,7 +372,8 @@ and visible-reattachment metrics; neither transport is presumed superior.
 The launchd watchdog is a 60-second health/recovery tick. Its installed plist
 pins the selected manifest and state directory in `ProgramArguments` and writes
 both output streams to `<state-dir>/watchdog.log`. It remains inert without the
-state-local `ARMED` file. A fresh process heartbeat is not sufficient health
+state-local `ARMED` file, and it refuses all work when that marker is stale or
+does not match the pinned manifest digest. A fresh process heartbeat is not sufficient health
 when the current action generation is due or unacknowledged. The watchdog
 distinguishes terminal injection, model acknowledgment, and a rewritten
 checkpoint. It waits 90 seconds for the exact digest/generation/epoch ACK and

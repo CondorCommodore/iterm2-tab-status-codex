@@ -812,10 +812,19 @@ def status(
             "wake_reasons": fleet_decision["wake_reasons"],
             "error": fleet_error,
         }
+    marker_checked = marker is not None
+    marker_valid = bool(marker and marker.get("valid") is True) if marker_checked else None
     return {
+        # `armed` preserves the physical marker fact for compatibility.  The
+        # effective fields make the safety decision explicit: a stale or
+        # malformed marker is never an armed supervisor, even if the file was
+        # left behind by an older process.
         "armed": armed,
+        "arm_marker_valid": marker_valid if armed else False,
+        "effective_armed": (bool(armed and marker_valid) if marker_checked else None),
         "service_readiness": observed_readiness,
         "armed_but_unserviced": armed and observed_readiness.get("ready") is not True,
+        "armed_but_invalid": bool(armed and marker_checked and not marker_valid),
         "arm_marker": marker,
         "requires_explicit_rearm": bool(armed and marker and marker.get("requires_explicit_rearm")),
         "state": state,

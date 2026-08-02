@@ -8,6 +8,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import cos_bootstrap_supervisor as supervisor  # noqa: E402
 import cos_bootstrap_watchdog as watchdog  # noqa: E402
 import cos_current_actions as current_actions  # noqa: E402
 from c2_contract import load_manifest  # noqa: E402
@@ -97,7 +98,18 @@ class CountingClient(Client):
 
 
 def arm_stale(state_dir: Path):
-    (state_dir / "ARMED").write_text("armed\n", encoding="utf-8")
+    manifest_path = state_dir / "manifest.json"
+    if manifest_path.exists():
+        manifest = load_manifest(manifest_path)
+        (state_dir / "ARMED").write_text(
+            supervisor.render_arm_marker(
+                manifest_id=manifest.manifest_id,
+                manifest_sha256=supervisor.manifest_file_sha256(manifest_path),
+            ),
+            encoding="utf-8",
+        )
+    else:
+        (state_dir / "ARMED").write_text("armed\n", encoding="utf-8")
     (state_dir / "supervisor-state.json").write_text(
         json.dumps({"mode": "bootstrap-authoritative"}), encoding="utf-8"
     )
@@ -242,6 +254,59 @@ def test_fresh_heartbeat_is_healthy_without_coord_provider(tmp_path):
 
     assert result["action"] == "healthy"
     assert result["heartbeat_age"] == 10
+
+
+def test_stale_arm_marker_refuses_watchdog_before_coord_or_edge_access(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest)
+    arm_stale(tmp_path)
+    (tmp_path / "ARMED").write_text("legacy marker\n", encoding="utf-8")
+    calls = []
+
+    result = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=CountingClient({"holder": "mikebook_codex", "epoch": 7}),
+        edge_health_fn=lambda: calls.append("edge") or {"ok": True},
+        now_ts=500,
+    )
+
+    assert result["ok"] is False
+    assert result["armed"] is True
+    assert result["effective_armed"] is False
+    assert result["action"] == "requires-explicit-rearm"
+    assert result["arm_marker"]["requires_explicit_rearm"] is True
+    assert calls == []
+
+
+def test_cli_armed_marker_is_accepted_by_watchdog(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    write_manifest(manifest_path)
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("# plan\n", encoding="utf-8")
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_data["plan_paths"] = [str(plan_path)]
+    manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+    manifest = load_manifest(manifest_path)
+    readiness = {"ready": True, "services": {}}
+    supervisor.arm_from_cli(
+        manifest=manifest,
+        state_dir=tmp_path,
+        readiness=readiness,
+        manifest_sha256=supervisor.manifest_file_sha256(manifest_path),
+    )
+    (tmp_path / "supervisor-heartbeat.json").write_text(
+        json.dumps({"recorded_ts": 490}), encoding="utf-8"
+    )
+
+    result = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=500,
+    )
+
+    assert result["action"] == "healthy"
 
 
 def test_transient_edge_failure_recovers_without_restart(tmp_path):
@@ -610,7 +675,13 @@ def prepare_action_loop(
         epoch=7,
         now_ts=now_ts,
     )
-    (tmp_path / "ARMED").write_text("armed\n", encoding="utf-8")
+    (tmp_path / "ARMED").write_text(
+        supervisor.render_arm_marker(
+            manifest_id=m.manifest_id,
+            manifest_sha256=supervisor.manifest_file_sha256(manifest_path),
+        ),
+        encoding="utf-8",
+    )
     (tmp_path / "supervisor-state.json").write_text(
         json.dumps({"mode": "bootstrap-authoritative"}), encoding="utf-8"
     )

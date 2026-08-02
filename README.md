@@ -260,6 +260,14 @@ classification, actionable coord feed, wake reasons, and a deterministic
 decision digest. It does not reserve workers, dispatch prompts, or change
 coord-api state.
 
+The status fields distinguish a physical `ARMED` file from an effective arm:
+`armed` reports that the marker exists, while `arm_marker_valid` and
+`effective_armed` are only positive after the marker is validated against the
+supplied manifest digest. A stale or malformed marker therefore remains visible
+for diagnosis but cannot appear operationally armed; `armed_but_invalid` and
+`requires_explicit_rearm` make the recovery action explicit. If no manifest is
+provided, the effective value is `null` rather than an unverified claim.
+
 Before a terminal experiment, run `bash scripts/cosctl preflight --manifest
 <path>`. It checks the exact manifest digest, plan paths, required launchd
 registrations, and the iTerm edge health without enabling services or sending

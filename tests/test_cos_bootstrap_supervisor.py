@@ -284,6 +284,50 @@ def test_status_reports_armed_but_unserviced_without_mutating_state(tmp_path):
     assert (tmp_path / "ARMED").read_bytes() == marker_before
 
 
+def test_status_distinguishes_valid_arm_from_stale_marker(tmp_path):
+    supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
+    valid = supervisor.status(
+        client=FakeClient(),
+        state_dir=tmp_path,
+        manifest=manifest(),
+        readiness=readiness(watchdog=True, edge=True),
+    )
+
+    assert valid["armed"] is True
+    assert valid["arm_marker_valid"] is True
+    assert valid["effective_armed"] is True
+    assert valid["armed_but_invalid"] is False
+
+    (tmp_path / "ARMED").write_text("legacy marker\n", encoding="utf-8")
+    stale = supervisor.status(
+        client=FakeClient(),
+        state_dir=tmp_path,
+        manifest=manifest(),
+        readiness=readiness(watchdog=True, edge=True),
+    )
+
+    assert stale["armed"] is True  # physical marker remains observable
+    assert stale["arm_marker_valid"] is False
+    assert stale["effective_armed"] is False
+    assert stale["armed_but_invalid"] is True
+    assert stale["requires_explicit_rearm"] is True
+
+
+def test_status_does_not_claim_effective_arm_without_manifest(tmp_path):
+    supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
+
+    result = supervisor.status(
+        client=FakeClient(),
+        state_dir=tmp_path,
+        readiness=readiness(watchdog=True, edge=True),
+    )
+
+    assert result["armed"] is True
+    assert result["arm_marker_valid"] is None
+    assert result["effective_armed"] is None
+    assert result["armed_but_invalid"] is False
+
+
 def test_status_includes_read_only_fleet_snapshot(tmp_path):
     supervisor.arm(manifest=manifest(), state_dir=tmp_path, validate_plan_paths=False)
     live_state = tmp_path / "live.json"

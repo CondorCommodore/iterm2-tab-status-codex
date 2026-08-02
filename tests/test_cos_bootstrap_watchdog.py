@@ -104,7 +104,7 @@ def arm_stale(state_dir: Path):
         (state_dir / "ARMED").write_text(
             supervisor.render_arm_marker(
                 manifest_id=manifest.manifest_id,
-                manifest_sha256=supervisor.manifest_contract_sha256(manifest),
+                manifest_sha256=supervisor.manifest_file_sha256(manifest_path),
             ),
             encoding="utf-8",
         )
@@ -277,6 +277,36 @@ def test_stale_arm_marker_refuses_watchdog_before_coord_or_edge_access(tmp_path)
     assert result["action"] == "requires-explicit-rearm"
     assert result["arm_marker"]["requires_explicit_rearm"] is True
     assert calls == []
+
+
+def test_cli_armed_marker_is_accepted_by_watchdog(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    write_manifest(manifest_path)
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("# plan\n", encoding="utf-8")
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_data["plan_paths"] = [str(plan_path)]
+    manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+    manifest = load_manifest(manifest_path)
+    readiness = {"ready": True, "services": {}}
+    supervisor.arm_from_cli(
+        manifest=manifest,
+        state_dir=tmp_path,
+        readiness=readiness,
+        manifest_sha256=supervisor.manifest_file_sha256(manifest_path),
+    )
+    (tmp_path / "supervisor-heartbeat.json").write_text(
+        json.dumps({"recorded_ts": 490}), encoding="utf-8"
+    )
+
+    result = watchdog.run_once(
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        client=Client(None),
+        now_ts=500,
+    )
+
+    assert result["action"] == "healthy"
 
 
 def test_transient_edge_failure_recovers_without_restart(tmp_path):
@@ -648,7 +678,7 @@ def prepare_action_loop(
     (tmp_path / "ARMED").write_text(
         supervisor.render_arm_marker(
             manifest_id=m.manifest_id,
-            manifest_sha256=supervisor.manifest_contract_sha256(m),
+            manifest_sha256=supervisor.manifest_file_sha256(manifest_path),
         ),
         encoding="utf-8",
     )

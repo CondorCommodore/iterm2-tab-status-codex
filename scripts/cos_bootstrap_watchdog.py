@@ -21,7 +21,7 @@ from cos_bootstrap_supervisor import (
     _iso,
     _load_json,
     _marker_status,
-    manifest_contract_sha256,
+    manifest_file_sha256,
     state_paths,
 )
 from cos_current_actions import action_wake_due, parse_actions, record_coord_acceptance
@@ -247,7 +247,10 @@ def run_once(
     marker = _marker_status(
         paths["armed"],
         manifest=manifest,
-        manifest_sha256=manifest_contract_sha256(manifest),
+        # CLI arming binds the marker to the exact manifest file bytes.  Use
+        # that same representation here; the normalized contract digest is a
+        # different value and would reject every normally armed watchdog.
+        manifest_sha256=manifest_file_sha256(manifest_path),
     )
     if marker.get("valid") is not True:
         # A leftover marker is diagnostic state, not authority.  Refuse all

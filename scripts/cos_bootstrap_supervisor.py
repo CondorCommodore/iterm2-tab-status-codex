@@ -934,14 +934,19 @@ def preflight(
             {
                 "code": "identity_drift",
                 "sessions": identity_drift,
-                "action": "inspect roster-proposal; adoption requires explicit manifest edit and re-arm",
+                "action": (
+                    "inspect roster-proposal; adoption requires explicit manifest edit and re-arm"
+                ),
             }
         )
     if not idle_workers:
         blockers.append(
             {
                 "code": "no_idle_registered_worker",
-                "action": "wait for or explicitly enroll an idle registered worker; never inject into a replacement",
+                "action": (
+                    "wait for or explicitly enroll an idle registered worker; "
+                    "never inject into a replacement"
+                ),
             }
         )
     if edge.get("ready") is not True:

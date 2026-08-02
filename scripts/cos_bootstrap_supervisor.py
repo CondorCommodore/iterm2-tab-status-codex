@@ -871,18 +871,44 @@ def preflight(
     idle_workers = [worker for worker in workers if worker["state"] == "idle"]
     registered_ttys = {worker.tty for worker in manifest.workers}
     registered_sessions = {worker.iterm_session_id for worker in manifest.workers}
-    identity_drift = [
-        {
-            "tty": str(session.get("tty") or ""),
-            "observed_session_id": str(session.get("iterm_session_id") or ""),
-            "runtime": str(session.get("runtime") or "unknown"),
-            "readiness": str(session.get("readiness") or "unknown"),
-        }
-        for session in live_state.get("sessions", [])
-        if isinstance(session, dict)
-        and session.get("tty") in registered_ttys
-        and session.get("iterm_session_id") not in registered_sessions
-    ]
+    identity_drift: list[dict[str, Any]] = []
+    for session in live_state.get("sessions", []):
+        if (
+            not isinstance(session, dict)
+            or session.get("tty") not in registered_ttys
+            or session.get("iterm_session_id") in registered_sessions
+        ):
+            continue
+        expected_worker = next(
+            worker for worker in manifest.workers if worker.tty == session.get("tty")
+        )
+        required_fields = [
+            "iterm_session_id",
+            "tty",
+            "runtime",
+            "cli_session_id",
+            "coord_session_id",
+        ]
+        if expected_worker.observation_profile_id:
+            required_fields.extend(("observation_profile_id", "observation_profile_version"))
+        expected_bindings = {field: getattr(expected_worker, field) for field in required_fields}
+        observed_bindings = {field: session.get(field) for field in required_fields}
+        identity_drift.append(
+            {
+                "worker_id": expected_worker.worker_id,
+                "drifted_fields": [
+                    field
+                    for field in required_fields
+                    if observed_bindings[field] != expected_bindings[field]
+                ],
+                "expected_bindings": expected_bindings,
+                "observed_bindings": observed_bindings,
+                "tty": str(session.get("tty") or ""),
+                "observed_session_id": str(session.get("iterm_session_id") or ""),
+                "runtime": str(session.get("runtime") or "unknown"),
+                "readiness": str(session.get("readiness") or "unknown"),
+            }
+        )
     for worker in workers:
         observed = worker.get("observed")
         if not isinstance(observed, dict):

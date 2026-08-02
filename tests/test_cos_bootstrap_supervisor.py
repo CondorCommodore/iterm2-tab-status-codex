@@ -556,14 +556,27 @@ def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_pa
 
     assert result["ready"] is False
     assert result["worker_roster_ready"] is False
-    assert result["identity_drift"] == [
-        {
-            "tty": "/dev/ttys003",
-            "observed_session_id": "replacement-session",
-            "runtime": "codex",
-            "readiness": "idle",
-        }
-    ]
+    replacement = result["identity_drift"][0]
+    assert replacement["worker_id"] == "worker"
+    assert replacement["expected_bindings"] == {
+        "iterm_session_id": "iterm-worker",
+        "tty": "/dev/ttys003",
+        "runtime": "codex",
+        "cli_session_id": "cli-worker",
+        "coord_session_id": "coord-worker",
+    }
+    assert replacement["observed_bindings"] == {
+        "iterm_session_id": "replacement-session",
+        "tty": "/dev/ttys003",
+        "runtime": "codex",
+        "cli_session_id": None,
+        "coord_session_id": None,
+    }
+    assert set(replacement["drifted_fields"]) == {
+        "cli_session_id",
+        "coord_session_id",
+        "iterm_session_id",
+    }
     assert {item["code"] for item in result["blockers"]} >= {
         "identity_drift",
         "no_idle_registered_worker",

@@ -443,7 +443,21 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
         coord_session_id="coord-worker-2",
         coord_agent_id="mikebook_codex",
     )
-    m = replace(base, workers=(base.workers[0], second), terminal_actions_enabled=True)
+    third = WorkerRegistration(
+        worker_id="worker-3",
+        host="macbook",
+        runtime="codex",
+        iterm_session_id="iterm-worker-3",
+        tty="/dev/ttys005",
+        cli_session_id="cli-worker-3",
+        coord_session_id="coord-worker-3",
+        coord_agent_id="mikebook_codex",
+    )
+    m = replace(
+        base,
+        workers=(base.workers[0], second, third),
+        terminal_actions_enabled=True,
+    )
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text("manifest-bytes\n", encoding="utf-8")
     digest = supervisor.manifest_file_sha256(manifest_path)
@@ -462,6 +476,12 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
                     {
                         "iterm_session_id": "iterm-worker-2",
                         "tty": "/dev/ttys004",
+                        "runtime": "claude",
+                        "readiness": "running",
+                    },
+                    {
+                        "iterm_session_id": "iterm-worker-3",
+                        "tty": "/dev/ttys005",
                         "runtime": "codex",
                         "readiness": "idle",
                     },
@@ -482,7 +502,7 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
         },
     )
 
-    assert result["idle_worker_ids"] == ["worker-2"]
+    assert result["idle_worker_ids"] == ["worker-3"]
     assert result["identity_drift"]
     assert result["ready"] is False
     assert "identity_drift" in {item["code"] for item in result["blockers"]}

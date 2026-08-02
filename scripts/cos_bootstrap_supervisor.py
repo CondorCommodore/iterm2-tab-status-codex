@@ -879,6 +879,25 @@ def preflight(
         and session.get("tty") in registered_ttys
         and session.get("iterm_session_id") not in registered_sessions
     ]
+    for worker in workers:
+        observed = worker.get("observed")
+        if not isinstance(observed, dict):
+            continue
+        if observed.get("tty") != worker["tty"] or (
+            observed.get("runtime") not in {worker["runtime"], "unknown"}
+        ):
+            identity_drift.append(
+                {
+                    "worker_id": worker["worker_id"],
+                    "expected_session_id": worker["iterm_session_id"],
+                    "expected_tty": worker["tty"],
+                    "expected_runtime": worker["runtime"],
+                    "observed_session_id": observed.get("iterm_session_id"),
+                    "observed_tty": observed.get("tty"),
+                    "observed_runtime": observed.get("runtime"),
+                    "readiness": observed.get("readiness"),
+                }
+            )
     edge: dict[str, Any]
     if not manifest.terminal_actions_enabled:
         edge = {

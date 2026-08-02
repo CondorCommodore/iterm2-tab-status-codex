@@ -895,25 +895,17 @@ def preflight(
             "coord_session_id",
         ]
         if worker["observation_profile_id"]:
-            required_fields.extend(
-                ("observation_profile_id", "observation_profile_version")
-            )
+            required_fields.extend(("observation_profile_id", "observation_profile_version"))
         drifted_fields = [
-            field
-            for field in required_fields
-            if observed.get(field) != worker.get(field)
+            field for field in required_fields if observed.get(field) != worker.get(field)
         ]
         if drifted_fields:
             identity_drift.append(
                 {
                     "worker_id": worker["worker_id"],
                     "drifted_fields": drifted_fields,
-                    "expected_bindings": {
-                        field: worker.get(field) for field in required_fields
-                    },
-                    "observed_bindings": {
-                        field: observed.get(field) for field in required_fields
-                    },
+                    "expected_bindings": {field: worker.get(field) for field in required_fields},
+                    "observed_bindings": {field: observed.get(field) for field in required_fields},
                     "expected_session_id": worker["iterm_session_id"],
                     "expected_tty": worker["tty"],
                     "expected_runtime": worker["runtime"],
@@ -1043,6 +1035,26 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
             ),
             None,
         )
+        required_fields = [
+            "iterm_session_id",
+            "tty",
+            "runtime",
+            "cli_session_id",
+            "coord_session_id",
+        ]
+        if worker.observation_profile_id:
+            required_fields.extend(("observation_profile_id", "observation_profile_version"))
+        expected_bindings = {field: getattr(worker, field) for field in required_fields}
+        observed_bindings = (
+            {field: expected.get(field) for field in required_fields}
+            if expected is not None
+            else None
+        )
+        drifted_fields = (
+            [field for field in required_fields if expected.get(field) != expected_bindings[field]]
+            if expected is not None
+            else []
+        )
         workers.append(
             {
                 "worker_id": worker.worker_id,
@@ -1051,6 +1063,9 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
                     "tty": worker.tty,
                     "runtime": worker.runtime,
                 },
+                "expected_bindings": expected_bindings,
+                "observed_bindings": observed_bindings,
+                "drifted_fields": drifted_fields,
                 "observed_on_expected_tty": [
                     {
                         "iterm_session_id": str(session.get("iterm_session_id")),
@@ -1060,7 +1075,9 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
                     for session in candidates
                 ],
                 "status": (
-                    "unchanged"
+                    "binding-drift"
+                    if expected is not None and drifted_fields
+                    else "unchanged"
                     if expected is not None
                     else "replacement-on-tty"
                     if candidates

@@ -515,9 +515,7 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
     assert result["ready"] is False
     assert "identity_drift" in {item["code"] for item in result["blockers"]}
     worker_two_drift = next(
-        item
-        for item in result["identity_drift"]
-        if item.get("worker_id") == "worker-2"
+        item for item in result["identity_drift"] if item.get("worker_id") == "worker-2"
     )
     assert set(worker_two_drift["drifted_fields"]) >= {
         "cli_session_id",
@@ -617,6 +615,38 @@ def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
             "readiness": "running",
         },
     ]
+
+
+def test_roster_proposal_surfaces_binding_drift_for_expected_session(tmp_path):
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "iterm_session_id": "iterm-worker",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "cli_session_id": "replacement-cli",
+                        "coord_session_id": "replacement-coord",
+                        "readiness": "idle",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = supervisor.roster_proposal(
+        manifest=manifest(),
+        live_state_path=live_state_path,
+    )
+
+    worker = result["workers"][0]
+    assert worker["status"] == "binding-drift"
+    assert set(worker["drifted_fields"]) == {"cli_session_id", "coord_session_id"}
+    assert worker["expected_bindings"]["cli_session_id"] == "cli-worker"
+    assert worker["observed_bindings"]["coord_session_id"] == "replacement-coord"
 
 
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):

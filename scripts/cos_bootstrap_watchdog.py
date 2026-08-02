@@ -20,6 +20,8 @@ from cos_bootstrap_supervisor import (
     _atomic_json,
     _iso,
     _load_json,
+    _marker_status,
+    manifest_contract_sha256,
     state_paths,
 )
 from cos_current_actions import action_wake_due, parse_actions, record_coord_acceptance
@@ -242,6 +244,21 @@ def run_once(
     outcomes_path = state_dir / "recovery-receipts.jsonl"
     if not paths["armed"].exists():
         return {"ok": True, "armed": False, "action": "inert"}
+    marker = _marker_status(
+        paths["armed"],
+        manifest=manifest,
+        manifest_sha256=manifest_contract_sha256(manifest),
+    )
+    if marker.get("valid") is not True:
+        # A leftover marker is diagnostic state, not authority.  Refuse all
+        # watchdog work before touching the edge, coord-api, or recovery state.
+        return {
+            "ok": False,
+            "armed": True,
+            "effective_armed": False,
+            "action": "requires-explicit-rearm",
+            "arm_marker": marker,
+        }
     supervisor_state = _load_json(paths["state"])
     if supervisor_state.get("mode") == "bootstrap-standby":
         return {"ok": True, "armed": True, "action": "standby"}

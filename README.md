@@ -372,7 +372,8 @@ and visible-reattachment metrics; neither transport is presumed superior.
 The launchd watchdog is a 60-second health/recovery tick. Its installed plist
 pins the selected manifest and state directory in `ProgramArguments` and writes
 both output streams to `<state-dir>/watchdog.log`. It remains inert without the
-state-local `ARMED` file. A fresh process heartbeat is not sufficient health
+state-local `ARMED` file, and it refuses all work when that marker is stale or
+does not match the pinned manifest digest. A fresh process heartbeat is not sufficient health
 when the current action generation is due or unacknowledged. The watchdog
 distinguishes terminal injection, model acknowledgment, and a rewritten
 checkpoint. It waits 90 seconds for the exact digest/generation/epoch ACK and

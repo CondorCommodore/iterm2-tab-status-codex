@@ -476,8 +476,10 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
                     {
                         "iterm_session_id": "iterm-worker-2",
                         "tty": "/dev/ttys004",
-                        "runtime": "claude",
-                        "readiness": "running",
+                        "runtime": "codex",
+                        "cli_session_id": "stale-cli-worker-2",
+                        "coord_session_id": "stale-coord-worker-2",
+                        "readiness": "idle",
                     },
                     {
                         "iterm_session_id": "iterm-worker-3",
@@ -502,7 +504,7 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
         },
     )
 
-    assert result["idle_worker_ids"] == ["worker-3"]
+    assert result["idle_worker_ids"] == ["worker-2", "worker-3"]
     assert result["identity_drift"]
     assert result["ready"] is False
     assert "identity_drift" in {item["code"] for item in result["blockers"]}

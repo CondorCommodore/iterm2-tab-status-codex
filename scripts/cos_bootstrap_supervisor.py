@@ -297,6 +297,10 @@ def classify_registered_workers(
                 "runtime": worker.runtime,
                 "iterm_session_id": worker.iterm_session_id,
                 "tty": worker.tty,
+                "cli_session_id": worker.cli_session_id,
+                "coord_session_id": worker.coord_session_id,
+                "observation_profile_id": worker.observation_profile_id,
+                "observation_profile_version": worker.observation_profile_version,
                 "state": state,
                 "observed": observed or None,
             }
@@ -885,6 +889,14 @@ def preflight(
             continue
         if observed.get("tty") != worker["tty"] or (
             observed.get("runtime") not in {worker["runtime"], "unknown"}
+        ) or any(
+            field in observed and observed.get(field) != worker.get(field)
+            for field in (
+                "cli_session_id",
+                "coord_session_id",
+                "observation_profile_id",
+                "observation_profile_version",
+            )
         ):
             identity_drift.append(
                 {

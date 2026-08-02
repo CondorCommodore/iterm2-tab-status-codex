@@ -1045,15 +1045,16 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
         if worker.observation_profile_id:
             required_fields.extend(("observation_profile_id", "observation_profile_version"))
         expected_bindings = {field: getattr(worker, field) for field in required_fields}
-        observed_bindings = (
-            {field: expected.get(field) for field in required_fields}
-            if expected is not None
-            else None
-        )
-        drifted_fields = (
-            [field for field in required_fields if expected.get(field) != expected_bindings[field]]
-            if expected is not None
-            else []
+        observed_bindings = [
+            {field: session.get(field) for field in required_fields} for session in candidates
+        ]
+        drifted_fields = sorted(
+            {
+                field
+                for observed_candidate in observed_bindings
+                for field in required_fields
+                if observed_candidate.get(field) != expected_bindings[field]
+            }
         )
         workers.append(
             {

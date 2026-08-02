@@ -601,6 +601,20 @@ def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
 
     assert result["requires_explicit_rearm"] is True
     assert result["workers"][0]["status"] == "replacement-on-tty"
+    assert result["workers"][0]["observed_bindings"] == [
+        {
+            "iterm_session_id": "replacement-session",
+            "tty": "/dev/ttys003",
+            "runtime": "codex",
+            "cli_session_id": None,
+            "coord_session_id": None,
+        }
+    ]
+    assert set(result["workers"][0]["drifted_fields"]) == {
+        "cli_session_id",
+        "coord_session_id",
+        "iterm_session_id",
+    }
     assert result["unregistered_live_sessions"] == [
         {
             "iterm_session_id": "replacement-session",
@@ -646,7 +660,7 @@ def test_roster_proposal_surfaces_binding_drift_for_expected_session(tmp_path):
     assert worker["status"] == "binding-drift"
     assert set(worker["drifted_fields"]) == {"cli_session_id", "coord_session_id"}
     assert worker["expected_bindings"]["cli_session_id"] == "cli-worker"
-    assert worker["observed_bindings"]["coord_session_id"] == "replacement-coord"
+    assert worker["observed_bindings"][0]["coord_session_id"] == "replacement-coord"
 
 
 def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):

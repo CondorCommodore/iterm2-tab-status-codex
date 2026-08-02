@@ -905,6 +905,53 @@ def preflight(
                 "reason": "edge_unavailable",
                 "error": f"{type(exc).__name__}: {exc}",
             }
+    blockers: list[dict[str, Any]] = []
+    if observed_readiness.get("ready") is not True:
+        blockers.append(
+            {
+                "code": "service_not_ready",
+                "detail": observed_readiness.get("reason") or "required services are not ready",
+                "action": "inspect service registration; do not arm or dispatch",
+            }
+        )
+    if plan_missing:
+        blockers.append(
+            {
+                "code": "plan_missing",
+                "paths": plan_missing,
+                "action": "restore or replace plan paths, then re-run preflight",
+            }
+        )
+    if not manifest.terminal_actions_enabled:
+        blockers.append(
+            {
+                "code": "terminal_actions_disabled",
+                "action": "operator must explicitly edit the manifest and re-arm",
+            }
+        )
+    if identity_drift:
+        blockers.append(
+            {
+                "code": "identity_drift",
+                "sessions": identity_drift,
+                "action": "inspect roster-proposal; adoption requires explicit manifest edit and re-arm",
+            }
+        )
+    if not idle_workers:
+        blockers.append(
+            {
+                "code": "no_idle_registered_worker",
+                "action": "wait for or explicitly enroll an idle registered worker; never inject into a replacement",
+            }
+        )
+    if edge.get("ready") is not True:
+        blockers.append(
+            {
+                "code": "edge_not_ready",
+                "detail": edge.get("reason") or "terminal edge is not ready",
+                "action": "repair or load the pinned edge; do not use a fallback transport",
+            }
+        )
     return {
         "ready": (
             observed_readiness.get("ready") is True
@@ -922,6 +969,7 @@ def preflight(
         "service_readiness": observed_readiness,
         "edge": edge,
         "terminal_actions_enabled": manifest.terminal_actions_enabled,
+        "blockers": blockers,
     }
 
 

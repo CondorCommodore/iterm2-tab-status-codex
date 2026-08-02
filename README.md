@@ -271,7 +271,12 @@ provided, the effective value is `null` rather than an unverified claim.
 Before a terminal experiment, run `bash scripts/cosctl preflight --manifest
 <path>`. It checks the exact manifest digest, plan paths, required launchd
 registrations, and the iTerm edge health without enabling services or sending
-input. A nonzero result is a hard stop for delivery.
+input. A nonzero result is a hard stop for delivery. The JSON response includes
+ordered `blockers` with stable codes (`terminal_actions_disabled`,
+`identity_drift`, `no_idle_registered_worker`, `edge_not_ready`, and related
+service/plan failures) plus bounded remediation text. The COS decision loop can
+consume those codes directly; it must not infer permission to edit a manifest
+or adopt a replacement identity from the diagnostic output.
 
 When preflight reports identity drift, inspect the non-mutating proposal with
 `bash scripts/cosctl roster-proposal --manifest <path>`. It compares expected

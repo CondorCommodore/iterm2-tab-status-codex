@@ -379,6 +379,11 @@ def test_preflight_fails_closed_when_terminal_actions_are_disabled(tmp_path):
 
     assert result["ready"] is False
     assert result["edge"]["reason"] == "terminal_actions_disabled_in_manifest"
+    assert [item["code"] for item in result["blockers"]] == [
+        "terminal_actions_disabled",
+        "no_idle_registered_worker",
+        "edge_not_ready",
+    ]
 
 
 def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
@@ -420,6 +425,7 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
 
     assert result["ready"] is True
     assert result["idle_worker_ids"] == ["worker"]
+    assert result["blockers"] == []
 
 
 def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_path):
@@ -463,6 +469,10 @@ def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_pa
             "readiness": "idle",
         }
     ]
+    assert {item["code"] for item in result["blockers"]} >= {
+        "identity_drift",
+        "no_idle_registered_worker",
+    }
 
 
 def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):

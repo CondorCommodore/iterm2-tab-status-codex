@@ -887,15 +887,17 @@ def preflight(
         observed = worker.get("observed")
         if not isinstance(observed, dict):
             continue
-        if observed.get("tty") != worker["tty"] or (
-            observed.get("runtime") not in {worker["runtime"], "unknown"}
-        ) or any(
-            field in observed and observed.get(field) != worker.get(field)
-            for field in (
-                "cli_session_id",
-                "coord_session_id",
-                "observation_profile_id",
-                "observation_profile_version",
+        if (
+            observed.get("tty") != worker["tty"]
+            or observed.get("runtime") not in {worker["runtime"], "unknown"}
+            or any(
+                field in observed and observed.get(field) != worker.get(field)
+                for field in (
+                    "cli_session_id",
+                    "coord_session_id",
+                    "observation_profile_id",
+                    "observation_profile_version",
+                )
             )
         ):
             identity_drift.append(

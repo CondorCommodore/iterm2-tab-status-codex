@@ -243,6 +243,7 @@ class EdgeDaemon:
                         manifest=self.manifest,
                         envelope=envelope,
                         verify_epoch=self.client.verify_live_epoch,
+                        verify_hook_authenticity=self.client.verify_runtime_observation,
                         receipts=self.dispatch_receipts,
                         reservation=reservation_receipt,
                     )

@@ -71,7 +71,8 @@ These may run against synthetic or explicitly authorized low-risk fixtures, but 
 expand V1 authority:
 
 - BCA Precedence queue ordering, ML suggestions, response-obligation automation, and digest summaries;
-- tab injection versus bounded headless resume or tmux mirroring;
+- tab injection versus headless **routine-assignment transport** or tmux mirroring (the bounded
+  watchdog recovery resume in V1 is not part of this A/B experiment);
 - Escape-based Immediate/Flash interruption and input-buffer sensing;
 - model-assisted screenshot classification;
 - Claude/Codex delivery parity; and

@@ -370,10 +370,15 @@ def latest_cos_work_order(items: list[dict[str, Any]]) -> dict[str, Any] | None:
         candidates.append(candidate)
     if not candidates:
         return None
-    return max(candidates, key=lambda value: (value["generation"], str(value.get("source_message_id") or "")))
+    return max(
+        candidates,
+        key=lambda value: (value["generation"], str(value.get("source_message_id") or "")),
+    )
 
 
-def order_actionable_items(items: list[dict[str, Any]], work_order: dict[str, Any] | None) -> list[dict[str, Any]]:
+def order_actionable_items(
+    items: list[dict[str, Any]], work_order: dict[str, Any] | None
+) -> list[dict[str, Any]]:
     """Put matching task feed entries in COS order, preserving the remainder."""
     if not work_order:
         return list(items)

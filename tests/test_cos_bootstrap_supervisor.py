@@ -77,6 +77,33 @@ def test_reconcile_wakes_for_idle_refill_and_exact_session():
     assert "assignment decision" in decision["wake_reasons"][0]
 
 
+def test_reconcile_extracts_latest_durable_cos_direction():
+    decision = supervisor.reconcile(
+        manifest=manifest(),
+        actionable={
+            "items": [
+                {
+                    "kind": "message",
+                    "message_id": 11,
+                    "provenance_source": "cos",
+                    "content": json.dumps({
+                        "schema": "cos.direction.v1",
+                        "direction_id": "dir-2",
+                        "plan_id": "plan-1",
+                        "generation": 2,
+                        "precedence": "priority",
+                    }),
+                }
+            ]
+        },
+        live_state={"generated_ts": 100, "sessions": []},
+        now_ts=100,
+    )
+    assert decision["latest_direction"]["generation"] == 2
+    assert decision["latest_direction"]["message_id"] == 11
+    assert "durable COS direction" in decision["wake_reasons"][-1]
+
+
 def test_reconcile_marks_reused_tty_with_wrong_session_lost():
     decision = supervisor.reconcile(
         manifest=manifest(),

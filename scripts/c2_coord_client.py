@@ -396,6 +396,94 @@ class CoordClient:
         _status, payload = self.call("GET", f"/messages/{message_id}")
         return payload if isinstance(payload, dict) else {}
 
+    def post_direction(self, direction: dict[str, Any]) -> dict[str, Any]:
+        """Persist one versioned COS direction through the existing message API."""
+        if not isinstance(direction, dict) or direction.get("schema") != "cos.direction.v1":
+            raise CoordError("direction must be a cos.direction.v1 object")
+        plan_id = str(direction.get("plan_id") or "").strip()
+        generation = direction.get("generation")
+        direction_id = str(direction.get("direction_id") or "").strip()
+        if not plan_id or not direction_id or isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+            raise CoordError("direction requires plan_id, direction_id, and positive generation")
+        external_id = f"cos-direction:{plan_id}:{generation}"
+        content = json.dumps(direction, sort_keys=True, separators=(",", ":"))
+        _status, payload = self.call(
+            "POST",
+            "/messages",
+            payload={
+                "from_agent": self.config.principal_id,
+                "to_agent": self.config.principal_id,
+                "msg_type": "instruction",
+                "subject": "COS direction",
+                "content": content,
+                "provenance_source": "cos",
+                "external_id": external_id,
+                "correlation_id": plan_id,
+                "intent": "cos-direction",
+                "required_ack": False,
+            },
+            write=True,
+            idempotency_key=external_id,
+            allowed=(200, 201),
+        )
+        response = payload if isinstance(payload, dict) else {}
+        if response.get("external_id") != external_id:
+            raise CoordError("coord-api direction response lost external_id")
+        return response
+
+    def directions(self, plan_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        if not plan_id.strip():
+            raise CoordError("plan_id is required")
+        _status, payload = self.call(
+            "GET",
+            "/messages?" + urllib.parse.urlencode(
+                {"correlation_id": plan_id, "msg_type": "instruction", "limit": limit}
+            ),
+        )
+        return [dict(item) for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+
+    def get_attempt(self, attempt_id: str) -> dict[str, Any] | None:
+        status, payload = self.call(
+            "GET",
+            f"/attempts/{urllib.parse.quote(attempt_id, safe='')}",
+            allowed=(200, 404),
+        )
+        if status == 404:
+            return None
+        return payload if isinstance(payload, dict) else {}
+
+    def ensure_attempt(self, *, attempt_id: str, task_id: str, session_id: str) -> dict[str, Any]:
+        existing = self.get_attempt(attempt_id)
+        if existing is not None:
+            if existing.get("task_id") != task_id or existing.get("session_id") != session_id:
+                raise CoordError("attempt id is already bound to a different task/session")
+            return existing
+        _status, payload = self.call(
+            "POST",
+            "/attempts",
+            payload={"attempt_id": attempt_id, "task_id": task_id, "session_id": session_id},
+            write=True,
+            idempotency_key=f"attempt:{attempt_id}",
+            allowed=(201, 409),
+        )
+        if isinstance(payload, dict) and payload.get("attempt_id"):
+            return payload
+        existing = self.get_attempt(attempt_id)
+        if existing is None:
+            raise CoordError("coord-api did not return or persist the attempt")
+        return existing
+
+    def end_attempt(self, attempt_id: str, *, outcome: str, error: str | None = None, files_changed: list[str] | None = None) -> dict[str, Any]:
+        _status, payload = self.call(
+            "PATCH",
+            f"/attempts/{urllib.parse.quote(attempt_id, safe='')}/end",
+            payload={"outcome": outcome, "error": error, "files_changed": files_changed or []},
+            write=True,
+            idempotency_key=f"attempt-end:{attempt_id}:{outcome}",
+            allowed=(200, 409),
+        )
+        return payload if isinstance(payload, dict) else {}
+
     def verify_receipt_readback(self, receipt: dict[str, Any], message_id: int) -> dict[str, Any]:
         expected_content = json.dumps(
             {"c2_dispatch_receipt": receipt}, sort_keys=True, separators=(",", ":")

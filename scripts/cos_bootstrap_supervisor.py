@@ -50,6 +50,7 @@ from cos_current_actions import (
     rebind_actions,
     record_coord_acceptance,
     seed_actions,
+    update_projection_header,
 )
 from cos_iterm_edge_client import poke_controller, request_edge
 
@@ -318,6 +319,32 @@ def reconcile(
     now_ts = time.time() if now_ts is None else now_ts
     workers = classify_registered_workers(manifest, live_state, now_ts=now_ts)
     items = [item for item in actionable.get("items", []) if isinstance(item, dict)]
+    directions = []
+    for item in items:
+        if item.get("kind") not in {"message", "direction"}:
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("schema") != "cos.direction.v1" or item.get("provenance_source") not in {"cos", None}:
+            continue
+        generation = payload.get("generation")
+        if isinstance(generation, int) and generation > 0:
+            directions.append({
+                "message_id": item.get("message_id") or item.get("id"),
+                "direction_id": payload.get("direction_id"),
+                "plan_id": payload.get("plan_id"),
+                "generation": generation,
+                "precedence": payload.get("precedence"),
+                "digest": hashlib.sha256(
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+            })
+    directions.sort(key=lambda item: (str(item.get("plan_id") or ""), int(item["generation"])))
     idle = [item for item in workers if item["state"] == "idle"]
     exceptions = [
         item
@@ -333,12 +360,16 @@ def reconcile(
         reasons.append("worker exception requires recovery decision")
     if message_items:
         reasons.append("actionable coordination message requires model decision")
+    if directions:
+        reasons.append("new durable COS direction requires reconciliation")
     return {
         "generated_at": _iso(now_ts),
         "generated_ts": now_ts,
         "manifest_id": manifest.manifest_id,
         "workers": workers,
         "actionable_items": items,
+        "directions": directions,
+        "latest_direction": directions[-1] if directions else None,
         "idle_worker_ids": [item["worker_id"] for item in idle],
         "exception_worker_ids": [item["worker_id"] for item in exceptions],
         "wake_required": bool(reasons),
@@ -517,6 +548,33 @@ def run_tick(
             epoch=handle.epoch,
             ownership=ownership,
         )
+    latest_direction = decision.get("latest_direction") or {}
+    if latest_direction:
+        action_header = dict(current_actions.header)
+        action_header.update(
+            {
+                "direction_message_id": latest_direction.get("message_id"),
+                "direction_digest": latest_direction.get("digest") or "",
+                "plan_generation": int(latest_direction.get("generation") or 0),
+            }
+        )
+        if action_header != current_actions.header:
+            current_actions = rebind_actions(
+                current=current_actions,
+                path=paths["actions"],
+                manifest=manifest,
+                decision_digest=digest,
+                epoch=handle.epoch,
+                ownership=ownership,
+            )
+            # rebind_actions intentionally preserves the prior header; attach
+            # the direction projection atomically while retaining its chain.
+            current_actions = update_projection_header(
+                current=current_actions,
+                path=paths["actions"],
+                manifest=manifest,
+                updates=action_header,
+            )
     poked = False
     poke_result: dict[str, Any] | None = None
     already_delivered = (

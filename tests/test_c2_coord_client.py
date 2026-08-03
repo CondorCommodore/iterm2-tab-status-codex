@@ -96,6 +96,43 @@ def test_claim_and_renew_preserve_epoch_and_principal_headers():
     assert "%3A" in calls[0][1]
 
 
+def test_post_direction_is_idempotent_and_uses_cos_provenance():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        payload = json.loads(body) if body else None
+        calls.append((method, url, headers, payload))
+        return 201, {"id": 101, "external_id": payload["external_id"]}
+
+    client = coord.CoordClient(config(), request=request)
+    response = client.post_direction(
+        {
+            "schema": "cos.direction.v1",
+            "direction_id": "dir-1",
+            "plan_id": "plan-1",
+            "generation": 2,
+        }
+    )
+    assert response["external_id"] == "cos-direction:plan-1:2"
+    assert calls[0][3]["provenance_source"] == "cos"
+    assert calls[0][3]["msg_type"] == "instruction"
+    assert calls[0][2]["Idempotency-Key"] == "cos-direction:plan-1:2"
+
+
+def test_ensure_attempt_reads_existing_before_creating():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        calls.append((method, url))
+        if method == "GET":
+            return 200, {"attempt_id": "a-1", "task_id": "t-1", "session_id": "s-1"}
+        raise AssertionError("existing attempt should not be recreated")
+
+    client = coord.CoordClient(config(), request=request)
+    assert client.ensure_attempt(attempt_id="a-1", task_id="t-1", session_id="s-1")["attempt_id"] == "a-1"
+    assert calls == [("GET", "http://coord/attempts/a-1")]
+
+
 def test_claim_distinguishes_live_holder_contention_from_contract_rejection():
     responses = iter(
         [

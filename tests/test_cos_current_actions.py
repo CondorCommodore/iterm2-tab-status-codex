@@ -464,6 +464,7 @@ def test_rebind_advances_generation_and_preserves_intent_chain(tmp_path):
         ({"status": "unknown"}, "status is unsupported"),
         ({"written_at": "2100-01-01T00:00:00Z"}, "too far in the future"),
         ({"status": "complete"}, "durable completion_refs"),
+        ({"completion_refs": ""}, "completion_refs must be a list"),
     ],
 )
 def test_unsafe_checkpoint_mutations_fail_closed(tmp_path, changes, match):

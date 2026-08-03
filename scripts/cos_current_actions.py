@@ -108,12 +108,16 @@ def _validate_durable_reference_lines(
         if not text:
             continue
         if not text.startswith("- "):
-            raise ContractError("current actions durable references must stay in bounded bullet format")
+            raise ContractError(
+                "current actions durable references must stay in bounded bullet format"
+            )
         payload = text[2:]
         if payload.startswith("plan_path="):
             value = payload[len("plan_path=") :].strip()
             if value not in expected_plan_paths:
-                raise ContractError("current actions durable references contain out-of-bound plan path")
+                raise ContractError(
+                    "current actions durable references contain out-of-bound plan path"
+                )
             seen_plan_paths.append(value)
             continue
         if payload.startswith("completion_ref="):
@@ -280,10 +284,12 @@ def parse_actions(
     for line in body.splitlines():
         if len(line) > 512:
             raise ContractError("current actions body line exceeds 512 characters")
-    completion_refs = header.get("completion_refs") or []
+    completion_refs = header.get("completion_refs")
     if header["status"] == "complete":
         if not isinstance(completion_refs, list) or not completion_refs:
             raise ContractError("complete current actions require durable completion_refs")
+    elif completion_refs is None:
+        completion_refs = []
     elif not isinstance(completion_refs, list):
         raise ContractError("current actions completion_refs must be a list when present")
     references = header["references"]

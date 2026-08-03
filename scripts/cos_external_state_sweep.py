@@ -7,6 +7,7 @@ import hashlib
 import json
 import subprocess
 import time
+import urllib.parse
 from typing import Any, Callable
 
 ProbeFn = Callable[[str, dict[str, Any]], dict[str, Any]]
@@ -93,8 +94,9 @@ def gh_probe(kind: str, target: dict[str, Any]) -> dict[str, Any]:
     if kind == "branch":
         repo = target["repo"]
         branch = target["branch"]
+        encoded_branch = urllib.parse.quote(branch, safe="")
         result = subprocess.run(
-            ["gh", "api", f"repos/{repo}/branches/{branch}"],
+            ["gh", "api", f"repos/{repo}/branches/{encoded_branch}"],
             capture_output=True,
             text=True,
             check=False,

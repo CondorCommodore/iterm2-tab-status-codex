@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -111,3 +112,18 @@ def test_sweep_blocks_when_external_probe_fails():
     assert result["finding_count"] == 2
     assert {item["probe_kind"] for item in result["findings"]} == {"pr", "branch"}
     assert {item["kind"] for item in result["findings"]} == {"tracked_state_probe_failed"}
+
+
+def test_gh_probe_url_encodes_branch_names_with_slashes(monkeypatch):
+    captured = {}
+
+    def fake_run(args, capture_output, text, check):
+        captured["args"] = args
+        return SimpleNamespace(returncode=0, stdout='{"commit":{"sha":"a"}}', stderr="")
+
+    monkeypatch.setattr(sweep.subprocess, "run", fake_run)
+
+    result = sweep.gh_probe("branch", {"repo": "acme/repo", "branch": "feature/test"})
+
+    assert result["ok"] is True
+    assert captured["args"] == ["gh", "api", "repos/acme/repo/branches/feature%2Ftest"]

@@ -78,6 +78,213 @@ def test_live_goal_dispatch_is_denied_without_envelope(tmp_path, monkeypatch, ca
     assert "live dispatch requires --envelope" in capsys.readouterr().out
 
 
+def test_live_focus_dispatch_requires_worker_receipt_adapter(tmp_path, monkeypatch, capsys):
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    manifest_path = tmp_path / "manifest.json"
+    current_focus_path = tmp_path / "current-focus.md"
+    decision_path = tmp_path / "decision-current.json"
+    state_path = tmp_path / "state.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    current_focus_path.write_text("focus", encoding="utf-8")
+    decision_path.write_text("{}", encoding="utf-8")
+    state_path.write_text("{}", encoding="utf-8")
+
+    manifest = type("Manifest", (), {"controller_coord_agent_id": "mikebook_codex"})()
+    envelope = type(
+        "Envelope",
+        (),
+        {
+            "task_id": "task-1",
+            "worker_id": "worker-1",
+            "controller_epoch": 3,
+            "generation": 4,
+            "authorization_limits": ("no-deploy",),
+            "plan_id": "cos_work_order",
+            "direction_digest": "d" * 64,
+            "__dict__": {},
+        },
+    )()
+    plan = orchestrator.DispatchPlan(
+        ok=True,
+        tty="/dev/ttys003",
+        text="do work",
+        reason="focused dispatch selected worker-1",
+        dashboard_action="",
+        dry_run_payload="{}",
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "build_focus_dispatch_plan",
+        lambda **kwargs: (plan, envelope, manifest),
+    )
+
+    result = orchestrator.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--current-focus",
+            str(current_focus_path),
+            "--decision",
+            str(decision_path),
+            "--state-path",
+            str(state_path),
+            "--report-dir",
+            str(report_dir),
+        ]
+    )
+
+    assert result == 2
+    assert "focused live dispatch requires --worker-receipt-adapter" in capsys.readouterr().out
+
+
+def test_live_focus_dispatch_uses_durable_assignment_path(tmp_path, monkeypatch, capsys):
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    manifest_path = tmp_path / "manifest.json"
+    current_focus_path = tmp_path / "current-focus.md"
+    decision_path = tmp_path / "decision-current.json"
+    state_path = tmp_path / "state.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    current_focus_path.write_text("focus", encoding="utf-8")
+    decision_path.write_text("{}", encoding="utf-8")
+    state_path.write_text("{}", encoding="utf-8")
+
+    manifest = type("Manifest", (), {"controller_coord_agent_id": "mikebook_codex"})()
+    envelope = type(
+        "Envelope",
+        (),
+        {
+            "task_id": "task-1",
+            "worker_id": "worker-1",
+            "controller_epoch": 3,
+            "generation": 4,
+            "authorization_limits": ("no-deploy", "no-merge"),
+            "plan_id": "cos_work_order",
+            "direction_digest": "d" * 64,
+            "__dict__": {},
+        },
+    )()
+    plan = orchestrator.DispatchPlan(
+        ok=True,
+        tty="/dev/ttys003",
+        text="do work",
+        reason="focused dispatch selected worker-1",
+        dashboard_action="",
+        dry_run_payload="{}",
+    )
+    calls = []
+    monkeypatch.setattr(
+        orchestrator,
+        "build_focus_dispatch_plan",
+        lambda **kwargs: (plan, envelope, manifest),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "dispatch_focus_plan",
+        lambda **kwargs: (
+            calls.append(kwargs) or {"ok": True, "assignment_id": "assignment:task-1:4:worker-1"}
+        ),
+    )
+
+    result = orchestrator.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--current-focus",
+            str(current_focus_path),
+            "--decision",
+            str(decision_path),
+            "--state-path",
+            str(state_path),
+            "--report-dir",
+            str(report_dir),
+            "--worker-receipt-adapter",
+            "receipt_module:commit_receipt",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "manifest": manifest,
+            "envelope": envelope,
+            "worker_receipt_adapter": "receipt_module:commit_receipt",
+        }
+    ]
+    payload = capsys.readouterr().out
+    assert '"assignment_id": "assignment:task-1:4:worker-1"' in payload
+
+
+def test_live_focus_dispatch_returns_nonzero_on_dispatch_error(tmp_path, monkeypatch, capsys):
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    manifest_path = tmp_path / "manifest.json"
+    current_focus_path = tmp_path / "current-focus.md"
+    decision_path = tmp_path / "decision-current.json"
+    state_path = tmp_path / "state.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    current_focus_path.write_text("focus", encoding="utf-8")
+    decision_path.write_text("{}", encoding="utf-8")
+    state_path.write_text("{}", encoding="utf-8")
+
+    manifest = type("Manifest", (), {"controller_coord_agent_id": "mikebook_codex"})()
+    envelope = type(
+        "Envelope",
+        (),
+        {
+            "task_id": "task-1",
+            "worker_id": "worker-1",
+            "controller_epoch": 3,
+            "generation": 4,
+            "authorization_limits": ("no-deploy", "no-merge"),
+            "plan_id": "cos_work_order",
+            "direction_digest": "d" * 64,
+            "__dict__": {},
+        },
+    )()
+    plan = orchestrator.DispatchPlan(
+        ok=True,
+        tty="/dev/ttys003",
+        text="do work",
+        reason="focused dispatch selected worker-1",
+        dashboard_action="",
+        dry_run_payload="{}",
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "build_focus_dispatch_plan",
+        lambda **kwargs: (plan, envelope, manifest),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "dispatch_focus_plan",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("adapter import failed")),
+    )
+
+    result = orchestrator.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--current-focus",
+            str(current_focus_path),
+            "--decision",
+            str(decision_path),
+            "--state-path",
+            str(state_path),
+            "--report-dir",
+            str(report_dir),
+            "--worker-receipt-adapter",
+            "receipt_module:commit_receipt",
+        ]
+    )
+
+    assert result == 1
+    payload = capsys.readouterr().out
+    assert '"ok": false' in payload.lower()
+    assert "adapter import failed" in payload
+
+
 def test_envelope_plan_validates_worker_and_manifest(tmp_path):
     manifest = {
         "manifest_id": "m1",

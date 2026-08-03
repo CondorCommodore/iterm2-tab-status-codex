@@ -1,7 +1,8 @@
 # COS capability boundary: V1 core and later experiments
 
-This document scopes the Mac-local, principal-neutral implementation of the enduring COS strategist
-contract. Codex and Claude are the mandatory initial runtime adapters.
+This document scopes the Mac-local terminal-edge implementation of one principal-neutral COS control
+contract. Codex and Claude are the mandatory initial adapters. That supported-runtime set grants no
+authority: authority still derives from authenticated direction, capability, and the live lease epoch.
 The normative cross-repository authority model is Workspace
 [`C2_SUPERVISOR_CONTRACT.md`](https://github.com/CondorCommodore/workspace/blob/main/docs/fleet-plans/C2_SUPERVISOR_CONTRACT.md).
 This repository supplies a bootstrap actuator, watcher, recovery projections, and terminal edge; it
@@ -9,18 +10,22 @@ does not define a second strategist, scheduler, work-item database, or durable a
 
 ## V1: usable and recoverable bootstrap path
 
-V1 is Mac-local and runtime-agnostic, with Codex and Claude as the mandatory initial conformance set.
-Its acceptance target is to keep one bounded lane moving with every Control Room process stopped,
-survive a supervisor/provider/API interruption, and resume from coord-api without duplicate effects.
-Coord-api/BCA remains authoritative for direction, plan generation, tasks, attempts, messages,
-leases, sessions, evidence, and results. Principal and runtime names are registered coordinates, not
-authority-bearing branches.
+V1 applies one runtime-neutral control contract on this Mac, with Codex and Claude as the mandatory
+initial conformance set. Its acceptance target is to keep one bounded lane moving with every Control
+Room process stopped, survive a supervisor/provider/API interruption, and resume from coord-api
+without duplicate effects. Coord-api/BCA remains authoritative for direction, plan generation,
+tasks, attempts, messages, leases, sessions, evidence, and results. Principal and runtime names are
+registered coordinates, not authority-bearing branches.
 
 **Implementation disclosure (2026-08-03):** the terminal edge enforces the shared lease for bounded
 terminal delivery. The full vertical acceptance target below has not been proven. In particular, the
 projection-content validator and durable-vs-world external-state sweep are requirements, not shipped
 enforcement. Documentation, fixtures, or a successful edge-only test must not be reported as full V1
 acceptance.
+
+The numbered requirements below are **target acceptance gates, not shipped-property claims**. A
+requirement named as unimplemented makes V1 unaccepted until its implementation and adverse evidence
+land; it does not weaken, waive, or make the requirement optional.
 
 ### V1 must do
 
@@ -59,17 +64,19 @@ acceptance.
     or judge routing may change inside policy; strategist capability may not silently downgrade.
 11. Run the one event-gated watchdog while armed. It checks every 60 seconds, performs bounded verified
     pokes, and after two failed acknowledgement windows may resume the same CLI/thread identity
-    headlessly through the registered adapter only after old-epoch absence (`codex exec resume
-    <session-id>` or `claude --resume <session-id> --print`). The resumed turn must obtain a successor
-    epoch, reconcile durable state, publish a successor projection and readback, release the epoch,
-    and exit.
+    headlessly through the registered adapter only after old-epoch absence. The initial adapter
+    mechanics are `codex exec resume <session-id>` and `claude --resume <session-id> --print`; those
+    commands confer no authority and live only behind the shared resume operation. The resumed turn
+    must obtain a successor epoch, reconcile durable state, publish a successor projection and
+    readback, release the epoch, and exit.
 12. During coord-api loss, continue bounded health checks but issue no new assignment, merge decision,
     priority change, or terminal action. End every cycle with durable state or a precise blocker and a
     bounded next check.
 
 ### V1 acceptance evidence
 
-The same deterministic vertical test must pass twice: Codex COS -> Claude worker -> distinct Codex
+A single-runtime test cannot falsify a provider-name or principal-name special case. The same
+deterministic vertical test must therefore pass twice: Codex COS -> Claude worker -> distinct Codex
 reviewer, then Claude COS -> Codex worker -> distinct Claude reviewer. All principals in each run are
 distinct, assignments are sequential, and neither runtime receives special authority. Each run must
 prove:
@@ -105,6 +112,9 @@ expand V1 authority:
 - model-assisted screenshot classification;
 - adapters beyond the required Codex/Claude conformance set; and
 - Control Room shadow projection of the same COS plan.
+
+An additional adapter is unaccepted until it passes the same contract; it does not receive lesser or
+greater authority because of its runtime name.
 
 The sequence remains pure reducer/readback, disposable enrolled-runtime lab, then one separately
 authorized real-work canary. BCA Precedence supplies a typed shadow proposal; the COS/actuator policy

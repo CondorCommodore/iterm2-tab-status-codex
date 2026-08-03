@@ -879,6 +879,66 @@ def test_run_tick_writes_digest_bound_program_and_current_focus_projections(tmp_
     assert "## Worker roster" in body
     assert "## Ordered actionable items" in body
     assert "## Durable direction and references" in body
+    assert tick["program_digest"]
+
+
+def test_status_includes_validated_program_and_current_focus_projections(tmp_path):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=False,
+    )
+
+    result = supervisor.status(
+        client=client,
+        state_dir=tmp_path,
+        manifest=m,
+        readiness=readiness(watchdog=True, edge=True),
+        live_state_path=live,
+    )
+
+    assert result["current_focus"]["digest"] == result["current_actions"]["digest"]
+    assert result["program_projection"]["action_digest"] == result["current_actions"]["digest"]
+
+
+def test_status_rejects_tampered_program_projection_summary(tmp_path):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=False,
+    )
+    program = tmp_path / "program.md"
+    program.write_text(
+        program.read_text(encoding="utf-8") + "\nfreeform drift outside bounded bullets\n",
+        encoding="utf-8",
+    )
+
+    result = supervisor.status(
+        client=client,
+        state_dir=tmp_path,
+        manifest=m,
+        readiness=readiness(watchdog=True, edge=True),
+        live_state_path=live,
+    )
+
+    assert result["current_actions"] is not None
+    assert result["program_projection"] is None
 
 
 @pytest.mark.parametrize("ownership", ["visible", "headless"])

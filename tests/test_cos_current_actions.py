@@ -57,6 +57,62 @@ def rewrite(path: Path, **changes) -> None:
     )
 
 
+def write_program_projection(path: Path, **changes) -> None:
+    header = {
+        "schema": actions.PROGRAM_SCHEMA,
+        "manifest_id": "test",
+        "controller_id": "cos",
+        "controller_cli_session_id": "cli-cos",
+        "controller_coord_session_id": "coord-cos",
+        "controller_iterm_session_id": "iterm-cos",
+        "controller_epoch": 7,
+        "ownership": "visible",
+        "decision_digest": "a" * 64,
+        "action_digest": "b" * 64,
+        "action_generation": 2,
+        "status": "active",
+        "written_at": "1970-01-01T00:03:20Z",
+        "next_check_at": "1970-01-01T00:08:20Z",
+        "references": ["/plan"],
+        "direction_message_id": 11,
+        "direction_digest": "c" * 64,
+        "plan_generation": 3,
+    }
+    header.update(changes)
+    body = """## Current portfolio
+- wake_required=True
+- wake_reasons=idle worker available
+- action_digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+- next_check_at=1970-01-01T00:08:20Z
+
+## Worker roster
+- worker: idle (codex /dev/ttys003)
+
+## Ordered actionable items
+- task task-1 [queued]
+
+## Durable direction and references
+- plan_generation=3
+- direction_message_id=11
+- direction_digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+- plan_path=/plan
+
+## Boundaries
+- This projection is recovery guidance only and grants no authority without coord-api readback.
+- Do not treat local projections as durable task truth or historical record.
+
+## Rewrite or stop condition
+- Rewrite after any material worker, message, PR, evidence, lease, or direction transition.
+- Stop automatic work only when a later checkpoint marks the current actions complete.
+"""
+    path.write_text(
+        f"--- {actions.PROGRAM_SCHEMA}\n"
+        f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{body}",
+        encoding="utf-8",
+    )
+
+
 def test_seed_is_valid_bounded_recovery_checkpoint(tmp_path):
     path = tmp_path / "current-actions.txt"
     current = actions.seed_actions(
@@ -67,6 +123,34 @@ def test_seed_is_valid_bounded_recovery_checkpoint(tmp_path):
     assert current.controller_epoch == 7
     assert current.next_check_ts - current.written_ts == 300
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_parse_program_projection_accepts_bounded_projection(tmp_path):
+    path = tmp_path / "program.md"
+    write_program_projection(path)
+
+    projection = actions.parse_program_projection(path, manifest=manifest(), now_ts=400)
+
+    assert projection.controller_epoch == 7
+    assert projection.action_digest == "b" * 64
+    assert projection.decision_digest == "a" * 64
+
+
+def test_parse_program_projection_rejects_out_of_bound_reference(tmp_path):
+    path = tmp_path / "program.md"
+    write_program_projection(path, references=["/plan", "/unexpected"])
+
+    with pytest.raises(ContractError, match="references do not match manifest"):
+        actions.parse_program_projection(path, manifest=manifest(), now_ts=400)
+
+
+def test_parse_program_projection_rejects_unbounded_body_content(tmp_path):
+    path = tmp_path / "program.md"
+    write_program_projection(path)
+    path.write_text(path.read_text(encoding="utf-8") + "\nThis is freeform history.\n", encoding="utf-8")
+
+    with pytest.raises(ContractError, match="bounded bullet format"):
+        actions.parse_program_projection(path, manifest=manifest(), now_ts=400)
 
 
 def test_checkpoint_requires_monotonic_generation_and_digest_chain(tmp_path):

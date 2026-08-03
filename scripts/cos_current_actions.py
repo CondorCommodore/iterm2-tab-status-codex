@@ -20,6 +20,7 @@ from typing import Any
 from c2_contract import ContractError, ReceiptStore, RunManifest
 
 SCHEMA = "c2-current-actions-v1"
+PROGRAM_SCHEMA = "c2-program-projection-v1"
 STATUSES = {"active", "waiting", "blocked", "complete"}
 MIN_NEXT_CHECK_SECONDS = 60
 MAX_NEXT_CHECK_SECONDS = 1800
@@ -35,6 +36,21 @@ REQUIRED_HEADINGS = (
     "## Durable references",
     "## Rewrite or stop condition",
 )
+PROGRAM_REQUIRED_HEADINGS = (
+    "## Current portfolio",
+    "## Worker roster",
+    "## Ordered actionable items",
+    "## Durable direction and references",
+    "## Boundaries",
+    "## Rewrite or stop condition",
+)
+PROGRAM_BODY_BOUND_FIELDS = {
+    "action_digest": "action_digest",
+    "next_check_at": "next_check_at",
+    "plan_generation": "plan_generation",
+    "direction_message_id": "direction_message_id",
+    "direction_digest": "direction_digest",
+}
 
 
 def _iso(ts: float | None = None) -> str:
@@ -52,6 +68,14 @@ def _timestamp(value: object, field: str) -> float:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.timestamp()
+
+
+def _program_body_value(body: str, key: str) -> str | None:
+    prefix = f"- {key}="
+    for line in body.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    return None
 
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:
@@ -94,6 +118,28 @@ class CurrentActions:
     @property
     def status(self) -> str:
         return str(self.header["status"])
+
+
+@dataclass(frozen=True)
+class ProgramProjection:
+    path: Path
+    raw: bytes
+    header: dict[str, Any]
+    body: str
+    digest: str
+    written_ts: float
+
+    @property
+    def action_digest(self) -> str:
+        return str(self.header["action_digest"])
+
+    @property
+    def decision_digest(self) -> str:
+        return str(self.header["decision_digest"])
+
+    @property
+    def controller_epoch(self) -> int:
+        return int(self.header["controller_epoch"])
 
 
 def parse_actions(
@@ -201,6 +247,144 @@ def parse_actions(
         digest=hashlib.sha256(raw).hexdigest(),
         written_ts=written_ts,
         next_check_ts=next_check_ts,
+    )
+
+
+def parse_program_projection(
+    path: Path,
+    *,
+    manifest: RunManifest | None = None,
+    now_ts: float | None = None,
+) -> ProgramProjection:
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ContractError(f"program projection is unreadable: {path}: {exc}") from exc
+    if not raw or len(raw) > MAX_ACTION_BYTES:
+        raise ContractError("program projection must be non-empty and at most 65536 bytes")
+    if b"\x00" in raw or b"\r" in raw:
+        raise ContractError("program projection contains forbidden control characters")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError("program projection must be UTF-8") from exc
+    lines = text.splitlines()
+    if len(lines) < 4 or lines[0] != f"--- {PROGRAM_SCHEMA}" or lines[2] != "---":
+        raise ContractError("program projection must start with the versioned JSON header")
+    try:
+        header = json.loads(lines[1])
+    except json.JSONDecodeError as exc:
+        raise ContractError("program projection header must be one JSON object") from exc
+    if not isinstance(header, dict):
+        raise ContractError("program projection header must be one JSON object")
+    required = {
+        "schema",
+        "manifest_id",
+        "controller_id",
+        "controller_cli_session_id",
+        "controller_coord_session_id",
+        "controller_iterm_session_id",
+        "controller_epoch",
+        "ownership",
+        "decision_digest",
+        "action_digest",
+        "action_generation",
+        "status",
+        "written_at",
+        "next_check_at",
+        "references",
+        "direction_digest",
+        "plan_generation",
+    }
+    missing = sorted(required - set(header))
+    if missing:
+        raise ContractError("program projection header missing: " + ", ".join(missing))
+    if header["schema"] != PROGRAM_SCHEMA:
+        raise ContractError("program projection schema is unsupported")
+    epoch = header["controller_epoch"]
+    generation = header["action_generation"]
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
+        raise ContractError("program projection controller_epoch must be positive")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        raise ContractError("program projection action_generation must be positive")
+    if header["ownership"] not in {"visible", "headless"}:
+        raise ContractError("program projection ownership must be visible or headless")
+    if header["status"] not in STATUSES:
+        raise ContractError("program projection status is unsupported")
+    for field in ("decision_digest", "action_digest"):
+        if not HEX_256.match(str(header[field])):
+            raise ContractError(f"program projection {field} must be lowercase SHA-256")
+    direction_digest = str(header["direction_digest"] or "")
+    if direction_digest and not HEX_256.match(direction_digest):
+        raise ContractError("program projection direction_digest must be lowercase SHA-256")
+    plan_generation = header["plan_generation"]
+    if (
+        isinstance(plan_generation, bool)
+        or not isinstance(plan_generation, int)
+        or plan_generation < 0
+    ):
+        raise ContractError("program projection plan_generation must be a non-negative integer")
+    references = header["references"]
+    if not isinstance(references, list) or not references:
+        raise ContractError("program projection references must be a non-empty list")
+    if not all(isinstance(item, str) and item.strip() for item in references):
+        raise ContractError("program projection references must contain only non-empty strings")
+    written_ts = _timestamp(header["written_at"], "written_at")
+    now_ts = time.time() if now_ts is None else now_ts
+    if written_ts > now_ts + MAX_CLOCK_SKEW_SECONDS:
+        raise ContractError("program projection written_at is too far in the future")
+    _timestamp(header["next_check_at"], "next_check_at")
+    body = "\n".join(lines[3:]).strip()
+    missing_headings = [heading for heading in PROGRAM_REQUIRED_HEADINGS if heading not in body]
+    if missing_headings:
+        raise ContractError("program projection body missing: " + ", ".join(missing_headings))
+    if "```" in body:
+        raise ContractError("program projection must not contain code fences")
+    for line in body.splitlines():
+        if not line:
+            continue
+        if line.startswith("## "):
+            continue
+        if not line.startswith("- "):
+            raise ContractError("program projection body must stay in bounded bullet format")
+        if len(line) > 512:
+            raise ContractError("program projection body line exceeds 512 characters")
+    for body_key, header_key in PROGRAM_BODY_BOUND_FIELDS.items():
+        actual = _program_body_value(body, body_key)
+        if actual is None:
+            raise ContractError(f"program projection body missing bound field: {body_key}")
+        expected = header.get(header_key)
+        expected_text = "none" if expected in {None, ""} else str(expected)
+        if actual != expected_text:
+            raise ContractError(
+                f"program projection body {body_key} does not match validated header"
+            )
+    if manifest is not None:
+        expected = {
+            "manifest_id": manifest.manifest_id,
+            "controller_id": manifest.controller_id,
+            "controller_cli_session_id": manifest.controller_cli_session_id,
+            "controller_coord_session_id": manifest.controller_coord_session_id,
+            "controller_iterm_session_id": manifest.controller_iterm_session_id,
+        }
+        for field, value in expected.items():
+            if header[field] != value:
+                raise ContractError(f"program projection {field} does not match manifest")
+        expected_refs = list(manifest.plan_paths)
+        if list(references) != expected_refs:
+            raise ContractError("program projection references do not match manifest plan paths")
+        if any(
+            line.startswith("- plan_path=") and line[len("- plan_path=") :] not in expected_refs
+            for line in body.splitlines()
+        ):
+            raise ContractError("program projection contains out-of-bound plan path references")
+    return ProgramProjection(
+        path=path,
+        raw=raw,
+        header=header,
+        body=body,
+        digest=hashlib.sha256(raw).hexdigest(),
+        written_ts=written_ts,
     )
 
 

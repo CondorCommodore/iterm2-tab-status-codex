@@ -47,6 +47,7 @@ from cos_current_actions import (
     checkpoint_actions,
     commit_action_ack,
     parse_actions,
+    parse_program_projection,
     rebind_actions,
     record_coord_acceptance,
     seed_actions,
@@ -245,6 +246,36 @@ def _atomic_text(path: Path, text: str) -> None:
     tmp.write_text(text, encoding="utf-8")
     os.chmod(tmp, 0o600)
     tmp.replace(path)
+
+
+def _write_program_projection(
+    *,
+    path: Path,
+    manifest: RunManifest,
+    decision: dict[str, Any],
+    current_actions: Any,
+    ownership: str,
+    epoch: int,
+) -> dict[str, Any]:
+    payload = render_program_projection(
+        manifest=manifest,
+        decision=decision,
+        current_actions=current_actions,
+        ownership=ownership,
+        epoch=epoch,
+    )
+    _atomic_text(path, payload)
+    projection = parse_program_projection(path, manifest=manifest)
+    if projection.action_digest != current_actions.digest:
+        raise ContractError("program projection action_digest does not match current actions")
+    if projection.decision_digest != str(decision.get("decision_digest") or ""):
+        raise ContractError("program projection decision_digest does not match decision")
+    if projection.controller_epoch != epoch:
+        raise ContractError("program projection controller_epoch does not match live epoch")
+    return {
+        "digest": projection.digest,
+        "written_at": projection.header["written_at"],
+    }
 
 
 def render_program_projection(
@@ -805,15 +836,14 @@ def run_tick(
                 updates=action_header,
             )
     _atomic_bytes(paths["current_focus"], current_actions.raw)
-    _atomic_text(
-        paths["program"],
-        render_program_projection(
-            manifest=manifest,
-            decision=decision,
-            current_actions=current_actions,
-            ownership=ownership,
-            epoch=handle.epoch,
-        ),
+    parse_actions(paths["current_focus"], manifest=manifest)
+    program_projection = _write_program_projection(
+        path=paths["program"],
+        manifest=manifest,
+        decision=decision,
+        current_actions=current_actions,
+        ownership=ownership,
+        epoch=handle.epoch,
     )
     poked = False
     poke_result: dict[str, Any] | None = None
@@ -855,6 +885,7 @@ def run_tick(
         "action_digest": current_actions.digest,
         "action_generation": current_actions.generation,
         "action_next_check_ts": current_actions.next_check_ts,
+        "program_digest": program_projection["digest"],
     }
     _atomic_json(paths["heartbeat"], heartbeat)
     return {"ok": True, "armed": True, **heartbeat, "poke_result": poke_result}
@@ -1143,7 +1174,31 @@ def status(
                 "ownership": actions.header.get("ownership"),
                 "next_check_ts": actions.next_check_ts,
             }
-            if (actions := _status_actions(paths["actions"])) is not None
+            if (actions := _status_actions(paths["actions"], manifest=manifest)) is not None
+            else None
+        ),
+        "current_focus": (
+            {
+                "digest": focus.digest,
+                "generation": focus.generation,
+                "status": focus.status,
+                "decision_digest": focus.decision_digest,
+                "controller_epoch": focus.controller_epoch,
+                "ownership": focus.header.get("ownership"),
+                "next_check_ts": focus.next_check_ts,
+            }
+            if (focus := _status_actions(paths["current_focus"], manifest=manifest)) is not None
+            else None
+        ),
+        "program_projection": (
+            {
+                "digest": projection.digest,
+                "action_digest": projection.action_digest,
+                "decision_digest": projection.decision_digest,
+                "controller_epoch": projection.controller_epoch,
+                "ownership": projection.header.get("ownership"),
+            }
+            if (projection := _status_program(paths["program"], manifest=manifest)) is not None
             else None
         ),
         "action_progress": _load_json(paths["action_progress"]),
@@ -1430,9 +1485,16 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
     }
 
 
-def _status_actions(path: Path):
+def _status_actions(path: Path, *, manifest: RunManifest | None = None):
     try:
-        return parse_actions(path)
+        return parse_actions(path, manifest=manifest)
+    except ContractError:
+        return None
+
+
+def _status_program(path: Path, *, manifest: RunManifest | None = None):
+    try:
+        return parse_program_projection(path, manifest=manifest)
     except ContractError:
         return None
 

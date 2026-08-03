@@ -1,6 +1,7 @@
 # COS capability boundary: V1 core and later experiments
 
-This document scopes the Mac-local Codex implementation of the enduring COS strategist contract.
+This document scopes the Mac-local, principal-neutral implementation of the enduring COS strategist
+contract. Codex and Claude are the mandatory initial runtime adapters.
 The normative cross-repository authority model is Workspace
 [`C2_SUPERVISOR_CONTRACT.md`](https://github.com/CondorCommodore/workspace/blob/main/docs/fleet-plans/C2_SUPERVISOR_CONTRACT.md).
 This repository supplies a bootstrap actuator, watcher, recovery projections, and terminal edge; it
@@ -8,14 +9,22 @@ does not define a second strategist, scheduler, work-item database, or durable a
 
 ## V1: usable and recoverable bootstrap path
 
-V1 is Codex-only and Mac-local. It can keep one bounded lane moving with every Control Room process
-stopped, survive a supervisor/provider/API interruption, and resume from coord-api without duplicate
-effects. Coord-api/BCA remains authoritative for direction, plan generation, tasks, attempts,
-messages, leases, sessions, evidence, and results.
+V1 is Mac-local and runtime-agnostic, with Codex and Claude as the mandatory initial conformance set.
+Its acceptance target is to keep one bounded lane moving with every Control Room process stopped,
+survive a supervisor/provider/API interruption, and resume from coord-api without duplicate effects.
+Coord-api/BCA remains authoritative for direction, plan generation, tasks, attempts, messages,
+leases, sessions, evidence, and results. Principal and runtime names are registered coordinates, not
+authority-bearing branches.
+
+**Implementation disclosure (2026-08-03):** the terminal edge enforces the shared lease for bounded
+terminal delivery. The full vertical acceptance target below has not been proven. In particular, the
+projection-content validator and durable-vs-world external-state sweep are requirements, not shipped
+enforcement. Documentation, fixtures, or a successful edge-only test must not be reported as full V1
+acceptance.
 
 ### V1 must do
 
-1. Join coord-api as the canonical Codex principal and show a read-only fleet snapshot before action.
+1. Join coord-api as the exact registered principal/runtime and show a read-only fleet snapshot before action.
    `cosctl status` reports registered worker states, actionable coord items, wake reasons, active plan
    generation, and a decision digest without mutating state. `cosctl preflight` separately proves the
    manifest, landed plan paths, service registration, and edge health.
@@ -23,14 +32,19 @@ messages, leases, sessions, evidence, and results.
    `program.md` and `current-focus.md` projections containing only durable references, bounded current
    actions, known gates, budget/capability policy, and the next reconciliation deadline. They restore
    context; they never authorize a new effect without coord-api readback.
+   *Enforcement honesty (2026-08-03):* the projection bound is a content convention today—no
+   validator rejects an out-of-bound projection at publish or at rehydration. Until `cosctl
+   checkpoint` (or its reader) enforces the bound, "contains only durable references" is a rule
+   authors follow, not a property the system checks.
 3. Wake the COS model only for a material direction, decision, refill, recovery, or PR/evidence
    transition. Maintain process heartbeat, model acknowledgement, and action-deadline state
    independently.
 4. Acquire and renew the shared `workspace:mikebook:c2-supervisor` actuation lease before reserving a
    worker or changing external state. Loss of its epoch makes the bootstrap path read-only immediately.
-5. Select one eligible registered Codex worker, reserve it before delivery, and issue one complete
-   bounded assignment with objective, repository/worktree, acceptance tests, stopping condition,
-   report destination, authorization limits, plan generation, controller epoch, and idempotency key.
+5. Select one eligible registered Codex or Claude worker through the shared adapter contract, reserve
+   it before delivery, and issue one complete bounded assignment with objective,
+   repository/worktree, acceptance tests, stopping condition, report destination, authorization
+   limits, plan generation, controller epoch, and idempotency key.
 6. Bind the assignment to the verified logical agent, coord session, CLI session, terminal identity,
    worktree, task/attempt, and worker-reservation epoch. Reject self-targeting, stale identity, reused
    TTY identity, duplicate assignment, or any fence mismatch.
@@ -44,16 +58,21 @@ messages, leases, sessions, evidence, and results.
 10. Enforce COS-owned token/model/provider limits and the recorded strategist capability floor. Worker
     or judge routing may change inside policy; strategist capability may not silently downgrade.
 11. Run the one event-gated watchdog while armed. It checks every 60 seconds, performs bounded verified
-    pokes, and after two failed acknowledgement windows may resume the same CLI UUID headlessly only
-    after old-epoch absence. The resumed turn must obtain a successor epoch, reconcile durable state,
-    publish a successor projection and readback, release the epoch, and exit.
+    pokes, and after two failed acknowledgement windows may resume the same CLI/thread identity
+    headlessly through the registered adapter only after old-epoch absence (`codex exec resume
+    <session-id>` or `claude --resume <session-id> --print`). The resumed turn must obtain a successor
+    epoch, reconcile durable state, publish a successor projection and readback, release the epoch,
+    and exit.
 12. During coord-api loss, continue bounded health checks but issue no new assignment, merge decision,
     priority change, or terminal action. End every cycle with durable state or a precise blocker and a
     bounded next check.
 
 ### V1 acceptance evidence
 
-One deterministic vertical test must prove:
+The same deterministic vertical test must pass twice: Codex COS -> Claude worker -> distinct Codex
+reviewer, then Claude COS -> Codex worker -> distinct Claude reviewer. All principals in each run are
+distinct, assignments are sequential, and neither runtime receives special authority. Each run must
+prove:
 
 ```text
 durable operator direction -> COS plan generation -> watcher wake -> reconciled projections
@@ -65,6 +84,15 @@ The adverse bundle includes stale/superseded direction, projection drift, wrong 
 downgrade, budget exhaustion and approved fallback, identity/lease loss immediately before a byte,
 false edge acknowledgement, provider/API outage, stale completion, and failed durable readback.
 
+The adverse bundle must also include **durable-vs-world divergence**: mutate GitHub state behind the
+supervisor's back (close a tracked PR, delete a tracked branch) with no coord-api record, then force
+recovery. A pass requires the recovered supervisor's external-state sweep to surface the mutation as
+an unattributed actuation (typed finding, escalated), not to reconcile cleanly against coord-api and
+proceed as if the work still exists. This is the observed 2026-08-02 failure class: unfenced GitHub
+mutations left no coord-api trace, and coord-api-only reconciliation cannot detect that by
+construction. No current external-state sweep satisfies this case. (Normative statement: workspace
+`C2_SUPERVISOR_CONTRACT.md` §2.)
+
 ## V1 experiments: shadow only
 
 These may run against synthetic or explicitly authorized low-risk fixtures, but passing them does not
@@ -75,7 +103,7 @@ expand V1 authority:
   watchdog recovery resume in V1 is not part of this A/B experiment);
 - Escape-based Immediate/Flash interruption and input-buffer sensing;
 - model-assisted screenshot classification;
-- Claude/Codex delivery parity; and
+- adapters beyond the required Codex/Claude conformance set; and
 - Control Room shadow projection of the same COS plan.
 
 The sequence remains pure reducer/readback, disposable enrolled-runtime lab, then one separately

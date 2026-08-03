@@ -1,117 +1,95 @@
-# COS capability boundary: V1 core and later work
+# COS capability boundary: V1 core and later experiments
 
-This document is the scope boundary for the Codex COS skill. It prevents the
-bootstrap supervisor, the message-delivery experiments, and the future Control
-Room from being treated as one unfinished feature.
+This document scopes the Mac-local Codex implementation of the enduring COS strategist contract.
+The normative cross-repository authority model is Workspace
+[`C2_SUPERVISOR_CONTRACT.md`](https://github.com/CondorCommodore/workspace/blob/main/docs/fleet-plans/C2_SUPERVISOR_CONTRACT.md).
+This repository supplies a bootstrap actuator, watcher, recovery projections, and terminal edge; it
+does not define a second strategist, scheduler, work-item database, or durable authority.
 
-## V1: usable bootstrap supervisor
+## V1: usable and recoverable bootstrap path
 
-V1 is a Codex-only, Mac-local supervisor that can keep one bounded work lane
-moving without Control Room. It uses existing coord-api tasks, attempts,
-messages, leases, sessions, evidence, and results. It does not add a scheduler,
-work-item database, or competing authority.
+V1 is Codex-only and Mac-local. It can keep one bounded lane moving with every Control Room process
+stopped, survive a supervisor/provider/API interruption, and resume from coord-api without duplicate
+effects. Coord-api/BCA remains authoritative for direction, plan generation, tasks, attempts,
+messages, leases, sessions, evidence, and results.
 
 ### V1 must do
 
-1. Join coord-api as the canonical Codex principal and show a read-only fleet
-   snapshot before any action. `cosctl status` is the deterministic snapshot
-   surface: it reports registered worker states, actionable coord items, wake
-   reasons, and a decision digest without mutating state.
-   `cosctl preflight` is the separate read-only terminal gate; it must report
-   a ready manifest, plan paths, service registration, and edge health before
-   any authorized terminal experiment.
-   `cosctl roster-proposal` compares that manifest with the live signal state;
-   it is diagnostic only, requires explicit re-arm for adoption, and never
-   rewrites identities.
-2. Read one landed controlling plan and write a current-focus record containing
-   the active objective, owner/session, expected report, known gate, and next
-   reconciliation action.
-3. Select one eligible registered Codex worker, reserve it before delivery, and
-   issue one complete bounded assignment with objective, repository/worktree,
-   acceptance tests, stopping condition, report destination, and authorization
-   limits.
-   Live delivery must use the validated `DispatchEnvelope` path; legacy goal
-   dispatch is a dry-run/compatibility experiment only.
-4. Bind the assignment to the verified logical agent, coord session, CLI
-   session, terminal identity, worktree, task/attempt, and supervisor epoch.
-5. Record delivery and acknowledgement evidence without creating a numbered
-   message for transport ACKs. An injection/exit code is never treated as model
-   receipt or completion.
-6. Reconcile `idle`, `reserved`, `running`, `needs_input`, `blocked`, `stale`,
-   `lost`, and `unknown` states. On uncertainty, stop delivery, preserve the
-   reservation, and record a precise blocker or recover only after lease expiry.
-7. For an authorized PR lane, verify exact head, run the configured authoritative
-   CI, obtain an independent Codex review, invalidate evidence after head
-   changes, repair/review again, and merge only at the authorized boundary.
-8. Continue health and lease checks during coord/provider failure while issuing
-   no new authoritative assignment, merge decision, or terminal action.
-9. End each cycle with durable task/result/evidence state and a bounded next
-   action. Repeated unchanged blockers are summarized, not endlessly replayed.
-
-### V1 explicitly does not require
-
-- Claude runtime support;
-- Escape-based interruption or input-buffer sensing;
-- automatic terminal actions from screenshots or an LLM classifier;
-- Control Room processes, UI, takeover, or shadow comparison;
-- unattended launchd/watchdog installation;
-- cross-machine SSH delivery;
-- automatic deployment, credential changes, trading, or destructive cleanup.
+1. Join coord-api as the canonical Codex principal and show a read-only fleet snapshot before action.
+   `cosctl status` reports registered worker states, actionable coord items, wake reasons, active plan
+   generation, and a decision digest without mutating state. `cosctl preflight` separately proves the
+   manifest, landed plan paths, service registration, and edge health.
+2. Consume durable BCA direction and the controlling COS plan generation. Publish digest-bound local
+   `program.md` and `current-focus.md` projections containing only durable references, bounded current
+   actions, known gates, budget/capability policy, and the next reconciliation deadline. They restore
+   context; they never authorize a new effect without coord-api readback.
+3. Wake the COS model only for a material direction, decision, refill, recovery, or PR/evidence
+   transition. Maintain process heartbeat, model acknowledgement, and action-deadline state
+   independently.
+4. Acquire and renew the shared `workspace:mikebook:c2-supervisor` actuation lease before reserving a
+   worker or changing external state. Loss of its epoch makes the bootstrap path read-only immediately.
+5. Select one eligible registered Codex worker, reserve it before delivery, and issue one complete
+   bounded assignment with objective, repository/worktree, acceptance tests, stopping condition,
+   report destination, authorization limits, plan generation, controller epoch, and idempotency key.
+6. Bind the assignment to the verified logical agent, coord session, CLI session, terminal identity,
+   worktree, task/attempt, and worker-reservation epoch. Reject self-targeting, stale identity, reused
+   TTY identity, duplicate assignment, or any fence mismatch.
+7. Record delivery and recipient acknowledgement separately. Transport receipts are unnumbered and a
+   successful terminal write is not model receipt, response, task completion, or authority evidence.
+8. Reconcile `idle`, `reserved`, `running`, `needs_input`, `blocked`, `stale`, `lost`, and `unknown`.
+   Preserve reservations on uncertainty and recover or reassign only through the durable lease rules.
+9. For an authorized PR lane, verify exact head, run the repository-configured authoritative CI,
+   obtain independent review, invalidate evidence after every head change, repair and repeat, and
+   issue MERGE disposition only at the authorized boundary.
+10. Enforce COS-owned token/model/provider limits and the recorded strategist capability floor. Worker
+    or judge routing may change inside policy; strategist capability may not silently downgrade.
+11. Run the one event-gated watchdog while armed. It checks every 60 seconds, performs bounded verified
+    pokes, and after two failed acknowledgement windows may resume the same CLI UUID headlessly only
+    after old-epoch absence. The resumed turn must obtain a successor epoch, reconcile durable state,
+    publish a successor projection and readback, release the epoch, and exit.
+12. During coord-api loss, continue bounded health checks but issue no new assignment, merge decision,
+    priority change, or terminal action. End every cycle with durable state or a precise blocker and a
+    bounded next check.
 
 ### V1 acceptance evidence
 
-V1 is useful when the following are demonstrated with Codex only:
+One deterministic vertical test must prove:
 
-- one bounded assignment reaches a registered worker and produces durable result
-  evidence;
-- a stale or failed delivery is handled without duplicate assignment;
-- one exact-head PR completes the CI/review/repair/merge cycle when explicitly
-  authorized; and
-- lease loss, identity drift, and coord-api loss fail closed.
+```text
+durable operator direction -> COS plan generation -> watcher wake -> reconciled projections
+-> fenced bootstrap reserve/dispatch -> bounded worker result -> review/CI/MERGE disposition
+-> forced interruption -> safe same-thread resume -> successor guidance, with no duplicate effect
+```
 
-The enrolled-runtime probe proves session hydration and coord readback. It is a
-startup prerequisite, not proof of fleet supervision or terminal delivery.
+The adverse bundle includes stale/superseded direction, projection drift, wrong generation, capability
+downgrade, budget exhaustion and approved fallback, identity/lease loss immediately before a byte,
+false edge acknowledgement, provider/API outage, stale completion, and failed durable readback.
 
-## V1 shadow extensions: useful experiments, not activation gates
+## V1 experiments: shadow only
 
-The message-delivery hub and session inbox digest are currently shadow/design
-work. They may compare external queueing, precedence, digest summaries,
-headless resume, and tab injection, but they must not become a second authority
-or silently replace the existing message path.
+These may run against synthetic or explicitly authorized low-risk fixtures, but passing them does not
+expand V1 authority:
 
-The current experiment sequence is:
+- BCA Precedence queue ordering, ML suggestions, response-obligation automation, and digest summaries;
+- tab injection versus headless **routine-assignment transport** or tmux mirroring (the bounded
+  watchdog recovery resume in V1 is not part of this A/B experiment);
+- Escape-based Immediate/Flash interruption and input-buffer sensing;
+- model-assisted screenshot classification;
+- Claude/Codex delivery parity; and
+- Control Room shadow projection of the same COS plan.
 
-1. **Test 1:** pure queue/receipt/digest projection and durable producer-stopped
-   readback; no terminal action.
-2. **Test 2:** disposable enrolled-runtime delivery lab; synthetic messages only,
-   with observation before any terminal action.
-3. **Test 3:** one explicitly authorized low-risk real-work canary.
+The sequence remains pure reducer/readback, disposable enrolled-runtime lab, then one separately
+authorized real-work canary. BCA Precedence supplies a typed shadow proposal; the COS/actuator policy
+must explicitly accept it before delivery behavior changes. Delivery never reads an unaudited ML or
+issuer suggestion directly.
 
-No test advances merely because a fixture or local harness passes. Each stage
-needs its named acceptance evidence and explicit operator authorization.
+## Later primary-actuation work
 
-## V2: later capabilities
+After V1 and shadow evidence are accepted, later phases may add multi-machine enrolled adapters,
+full clearinghouse obligation/retry/DLQ behavior, broader fleet refill, and a Control Room
+primary-actuation handoff. Control Room continues to execute the COS plan; the strategist and durable
+direction authority do not transfer. Failback to bootstrap obtains a later epoch under the same rule.
 
-These are deliberately deferred until V1 is stable and the shadow experiments
-show measurable value:
-
-- shared Claude/Codex delivery profiles and parity testing;
-- verified prompt/input-buffer sensing and one-Escape Immediate/Flash delivery;
-- durable inbox-digest and response-obligation API extensions in coord-api;
-- mailman/clearinghouse retry, supersession, DLQ, and session succession;
-- launchd watchdog with bounded poke and same-session headless resume;
-- Control Room shadow, successor lease takeover, and rollback to bootstrap;
-- multi-machine enrolled adapters and transport comparisons (tab, headless,
-  and tmux where applicable);
-- model-assisted visual classification, always subordinate to deterministic
-  identity, lease, and postcondition checks;
-- automatic canaries, merge projection, and broader fleet refill policy.
-
-V2 work must reuse V1 identities and leases. It may not create a parallel COS
-database, scheduler, task model, or authority epoch.
-
-## Operating rule
-
-When a request is not in the V1 list, record it as V2 or an experiment before
-implementing it. A passing experiment can promote a capability into a future
-V1/V2 revision; it does not expand the current authority boundary by itself.
+No phase may create a parallel COS database, task model, scheduler, authority epoch, or local source of
+truth. Deployment, credentials, trading, remote-host mutation, destructive cleanup, and branch-policy
+changes remain separately authorized operator boundaries.

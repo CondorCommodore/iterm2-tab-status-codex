@@ -1,18 +1,21 @@
 # COS Message Delivery Hub and Session Delivery Agent
 
-Status: V1-shadow/V2 design specification; no authority activation implied.
+Status: transport and precedence experiments; no authority activation implied.
 
-The finite bootstrap supervisor contract is in
+The bootstrap implementation boundary is in
 [`COS_V1_V2_BOUNDARY.md`](COS_V1_V2_BOUNDARY.md). This document does not expand
-the V1 COS core. It specifies experiments and later transport capabilities that
-must reuse the V1 coord-api identities, leases, attempts, and evidence.
+the V1 COS core. Durable BCA direction and plan-generation readback are V1, but
+the queue, precedence, interruption, response-obligation automation, and adaptive
+delivery mechanisms below are experiments that must reuse V1 identities, leases,
+attempts, and evidence.
 
 ## 1. Purpose and non-goals
 
 ### Scope rule
 
-The current operational COS does not depend on this delivery hub. Until Tests 1
-and 2 pass and the operator authorizes the next stage, the hub is a shadow
+The current operational COS depends on coord-api/BCA for durable direction, not
+on this proposed delivery hub. Until Tests 1 and 2 pass and the operator
+authorizes the next stage, the hub is a shadow
 projection and the existing bounded delivery path remains the control. A design
 element below is not an implementation requirement merely because it has an API
 shape or a reducer test.
@@ -91,18 +94,27 @@ different session holds the task lease.
 
 ### 2.2 Single authority and fencing
 
-Only the holder of the live supervisor lease may authorize terminal presentation.
-The machine-local adapter verifies the expected supervisor epoch and the target
+Only the holder of the live actuation lease may authorize terminal presentation.
+The machine-local adapter verifies the expected actuation epoch and the target
 worker/session reservation epoch immediately before every state-changing byte,
 including Escape, prompt text, CR, LF, or recovery keystroke. Lease loss between
-steps aborts the sequence. A successor controller uses a higher epoch; receipts
+steps aborts the sequence. A successor actuator uses a higher epoch; receipts
 and late completions from an older epoch cannot advance delivery-hub state.
 
-The session delivery agent is an adapter, not a controller. It cannot claim
-tasks, change urgency, synthesize instructions, acquire supervisor authority, or
-choose a new recipient outside the delivery hub's fenced delivery instruction.
+The delivery hub is a coord-api projection/service role and cannot own or originate
+the instruction it projects. The session delivery agent is an adapter, not an
+actuator or strategist. It cannot claim tasks, change urgency, synthesize
+instructions, acquire actuation authority, or choose a new recipient outside the
+COS plan and live actuator's fenced delivery instruction.
 
 ## 3. Message precedence
+
+This section defines a **shadow treatment proposal**, not a direct input to the
+terminal edge. BCA Precedence writes a typed, audited effective-precedence
+projection. COS policy decides whether that proposal is admissible for the active
+plan generation; only the fenced actuator may translate the accepted treatment
+into a delivery instruction. Delivery never reads issuer suggestion, classifier
+output, or precedence tables directly.
 
 The canonical ordered vocabulary selected by the operator is:
 
@@ -589,7 +601,7 @@ does not claim that the pure reducer has durably exercised those routes.
 | handoff/session receipt destination | lease ACK validates the original sender session is still active before publishing the receipt | Reuse sender-session validation and exact destination. | The receipt is an inbox record, not a producer-stopped SQL delivery manifest. |
 | delivery failure and DLQ | bus `queued_dead_letter`, session dead-letter drain, existing dispatch receipts | Reuse as failure inputs and comparison telemetry. | No single message-delivery obligation currently binds retry exhaustion, target session, controller epoch, and final disposition. |
 | proposed urgency policy | Test 1 `urgency`, `requires_response`, `supersedes_message_id` | Shadow-only policy metadata keyed by the existing message ID. | These are not current `MessageCreate` authority fields and must not be written back before reviewed API evolution. |
-| proposed receipt fencing | `actor_id`, verified `actor_session_id`, target `session_id`, `controller_epoch`, idempotency key | Derive from current authenticated principal/session registry, exact target, supervisor epoch, and existing idempotency coordinates. | The target-session UUID must never be reused as proof of the receipt producer's session. |
+| proposed receipt fencing | `actor_id`, verified `actor_session_id`, target `session_id`, `controller_epoch`, idempotency key | Derive from current authenticated principal/session registry, exact target, live actuation epoch (stored in the compatibility `controller_epoch` field), and existing idempotency coordinates. | The target-session UUID must never be reused as proof of the receipt producer's session. |
 
 The compatibility rule is therefore additive: reuse current message IDs,
 correlation, exact-session authentication, bus idempotency, execution guards,
@@ -1195,7 +1207,7 @@ and does not activate delivery or interruption policy.
 - Run shadow decisions alongside current instantaneous delivery and compare
   urgency ordering, chosen action, presentation result, response correlation, and
   message-volume reduction.
-- Prove authority takeover and rollback across successive supervisor epochs.
+- Prove primary-actuation handoff and failback across successive actuation epochs.
 - Complete an unattended canary with mixed Claude/Codex recipients, all four
   precedence levels, one supersession, one session succession, one forced stall, one
   controller interruption, required replies, zero numbered ACKs, and zero

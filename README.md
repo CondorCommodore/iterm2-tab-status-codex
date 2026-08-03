@@ -333,21 +333,24 @@ iTerm Python runtime. `KeepAlive` restarts the API transport after a crash with
 launchd throttling. An advisory lock tied to the socket rejects any second edge
 process before it can unlink or replace the live endpoint. The service does not
 dispatch or interpret terminal state by itself.
-The supervisor lease and per-worker reservation still fence every input action.
+The shared actuation lease and per-worker reservation still fence every input action.
 
 `arm` is a deliberate unattended-work boundary; installation alone does not
-arm anything. The bootstrap lease is
+arm anything. The actuation lease is
 `workspace:mikebook:c2-supervisor` (180-second TTL, 60-second renewal), and a
 30-second tick reconciles the registered fleet and writes a deterministic
 decision. The launchd watchdog is the sole automatic wake actuator, preventing
 the supervisor and watchdog from racing to inject the same decision.
 
-The model publishes `<state-dir>/current-actions.txt` as a machine-local
-recovery checkpoint. It is UTF-8 Markdown with a versioned JSON header binding
+The model publishes digest-bound `program.md` and `current-focus.md` recovery
+projections in the state directory. `<state-dir>/current-actions.txt` remains a
+compatibility name for the current-focus payload during migration. These are
+UTF-8 Markdown with a versioned JSON header binding
 the manifest, exact controller sessions, epoch, generation, decision digest,
 previous action digest, status, durable references, and next-check deadline.
-It contains bounded intent and coord-api identifiers, never a second task
-database or raw untrusted message bodies. Publish a staged update with:
+They contain bounded intent and coord-api identifiers, never a second task
+database, authority grant, or raw untrusted message bodies. Publish a staged
+current-focus update with:
 
 ```bash
 scripts/cosctl checkpoint --from-file /path/to/staged-current-actions.txt

@@ -165,7 +165,9 @@ def dispatch_task(
     plan_id: str = "legacy",
     direction_digest: str = "",
     edge_dispatch: Callable[[dict[str, Any]], dict[str, Any]] = default_edge_dispatch,
-    worker_receipt: Callable[[DispatchEnvelope, dict[str, Any]], dict[str, Any]] | None = None,
+    worker_receipt: (
+        Callable[[DispatchEnvelope], Callable[[dict[str, Any]], dict[str, Any]]] | None
+    ) = None,
 ) -> dict[str, Any]:
     client.verify_live_epoch(SUPERVISOR_RESOURCE, controller_epoch)
     task = client.task(task_id)
@@ -217,11 +219,17 @@ def dispatch_task(
     reservation = client.reserve_bca(json.loads(envelope.canonical_json()))
     if not reservation.get("ok"):
         raise ContractError("BCA delivery reservation was not durably accepted")
+    try:
+        receipt_sink = worker_receipt(envelope)
+    except Exception as exc:
+        raise ContractError(f"worker receipt channel could not be established: {exc}") from exc
+    if not callable(receipt_sink):
+        raise ContractError("worker receipt adapter did not return a completion sink")
     # The edge performs the final supervisor and worker-reservation fencing.
     result = edge_dispatch(envelope=json.loads(envelope.canonical_json()))
     # The edge is controller-owned transport evidence.  Only the enrolled worker
-    # runtime may emit the BCA terminal receipt, using its session capability.
-    receipt = worker_receipt(envelope, result)
+    # runtime may commit the BCA terminal receipt, using its session capability.
+    receipt = receipt_sink(result)
     if not isinstance(receipt, dict) or not receipt.get("ok", True):
         raise ContractError("worker runtime did not durably submit a BCA receipt")
     readback = client.wait_for_bca_terminal(envelope.idempotency_key)

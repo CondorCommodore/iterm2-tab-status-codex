@@ -111,9 +111,14 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         calls.append(("edge", envelope))
         return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}
 
-    def worker_receipt(envelope, result):
-        calls.append(("worker-receipt", envelope.assignment_id))
-        return {"ok": True, "delivery_state": "acknowledged"}
+    def worker_receipt(envelope):
+        calls.append(("worker-receipt-open", envelope.assignment_id))
+
+        def complete(result):
+            calls.append(("worker-receipt-commit", result["receipt"]["assignment_id"]))
+            return {"ok": True, "delivery_state": "acknowledged"}
+
+        return complete
 
     result = coordinator.dispatch_task(
         client=Client(),
@@ -133,8 +138,9 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         "claim-readback",
         "attempt",
         "bca-reserve",
+        "worker-receipt-open",
         "edge",
-        "worker-receipt",
+        "worker-receipt-commit",
         "bca-readback",
     ]
 

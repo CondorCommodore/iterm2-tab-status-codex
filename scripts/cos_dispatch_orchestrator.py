@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ import cos_assignment_coordinator
 import cos_assignment_policy
 import cos_dashboard
 from c2_contract import ContractError, DispatchEnvelope, RunManifest, load_envelope, load_manifest
+from c2_coord_client import CoordClient, CoordConfig
 from cos_current_actions import parse_current_focus_projection
 from cos_iterm_edge_client import dispatch_envelope as dispatch_envelope_via_edge
 
@@ -277,6 +279,37 @@ def build_focus_dispatch_plan(
     )
 
 
+def _load_worker_receipt_adapter(adapter_spec: str):
+    module_name, separator, callable_name = adapter_spec.partition(":")
+    if not separator or not module_name or not callable_name:
+        raise ContractError("worker receipt adapter must be MODULE:CALLABLE")
+    adapter = getattr(importlib.import_module(module_name), callable_name, None)
+    if not callable(adapter):
+        raise ContractError("worker receipt adapter callable was not found")
+    return adapter
+
+
+def dispatch_focus_plan(
+    *,
+    manifest: RunManifest,
+    envelope: DispatchEnvelope,
+    worker_receipt_adapter: str,
+) -> dict[str, object]:
+    config = CoordConfig.load(expected_principal_id=manifest.controller_coord_agent_id)
+    return cos_assignment_coordinator.dispatch_task(
+        client=CoordClient(config),
+        manifest=manifest,
+        task_id=envelope.task_id,
+        worker_id=envelope.worker_id,
+        controller_epoch=envelope.controller_epoch,
+        generation=envelope.generation,
+        authorization_limits=list(envelope.authorization_limits),
+        plan_id=envelope.plan_id,
+        direction_digest=envelope.direction_digest,
+        worker_receipt=_load_worker_receipt_adapter(worker_receipt_adapter),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Plan or run COS worker dispatch.")
     parser.add_argument("--goal", default="")
@@ -303,6 +336,11 @@ def main(argv: list[str] | None = None) -> int:
         "--decision",
         type=Path,
         help="decision-current.json for ordered actionable feed",
+    )
+    parser.add_argument(
+        "--worker-receipt-adapter",
+        default="",
+        help="MODULE:CALLABLE worker-authenticated receipt adapter for durable live dispatch",
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -381,11 +419,34 @@ def main(argv: list[str] | None = None) -> int:
 
     assert envelope is not None and manifest is not None
     try:
-        result = dispatch_envelope_via_edge(envelope.__dict__)
+        if args.current_focus or args.decision:
+            if not args.worker_receipt_adapter.strip():
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": (
+                                "focused live dispatch requires --worker-receipt-adapter; "
+                                "the controller may not manufacture worker completion"
+                            ),
+                            "plan": asdict(plan),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return 2
+            result = dispatch_focus_plan(
+                manifest=manifest,
+                envelope=envelope,
+                worker_receipt_adapter=args.worker_receipt_adapter.strip(),
+            )
+        else:
+            result = dispatch_envelope_via_edge(envelope.__dict__)
     except Exception as exc:
         result = {"ok": False, "error": str(exc)}
     print(json.dumps({"plan": asdict(plan), "dispatch": result}, indent=2, sort_keys=True))
-    return 0
+    return 0 if result.get("ok") else 1
 
 
 if __name__ == "__main__":

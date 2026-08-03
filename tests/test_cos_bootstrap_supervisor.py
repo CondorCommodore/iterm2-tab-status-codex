@@ -827,6 +827,60 @@ def test_arm_run_no_wake_standby_and_stop_are_explicit(tmp_path):
     assert stopped["armed"] is False
 
 
+def test_run_tick_writes_digest_bound_program_and_current_focus_projections(tmp_path):
+    m = manifest()
+    client = FakeClient()
+    client.actionable = lambda _agent: {
+        "items": [
+            {"kind": "task", "task_id": "task-1", "status": "queued"},
+            {
+                "kind": "message",
+                "message_id": 11,
+                "provenance_source": "cos",
+                "content": json.dumps(
+                    {
+                        "schema": "cos.direction.v1",
+                        "direction_id": "dir-2",
+                        "plan_id": "plan-1",
+                        "generation": 2,
+                        "precedence": "priority",
+                    }
+                ),
+            },
+        ]
+    }
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+
+    tick = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=False,
+    )
+
+    assert tick["authority"] is True
+    actions_path = tmp_path / "current-actions.txt"
+    focus_path = tmp_path / "current-focus.md"
+    program_path = tmp_path / "program.md"
+    assert focus_path.read_bytes() == actions_path.read_bytes()
+    program_lines = program_path.read_text(encoding="utf-8").splitlines()
+    assert program_lines[0] == "--- c2-program-projection-v1"
+    header = json.loads(program_lines[1])
+    assert header["decision_digest"] == tick["decision_digest"]
+    assert header["action_digest"] == tick["action_digest"]
+    assert header["direction_message_id"] == 11
+    assert header["plan_generation"] == 2
+    body = "\n".join(program_lines[3:])
+    assert "## Current portfolio" in body
+    assert "## Worker roster" in body
+    assert "## Ordered actionable items" in body
+    assert "## Durable direction and references" in body
+
+
 @pytest.mark.parametrize("ownership", ["visible", "headless"])
 def test_run_tick_claims_coord_compatible_controller_producer(tmp_path, ownership):
     m = manifest()

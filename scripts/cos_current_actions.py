@@ -128,11 +128,17 @@ def _validate_durable_reference_lines(
                 )
             seen_completion_refs.append(value)
             continue
-        raise ContractError("current actions durable references must project only bound references")
+        raise ContractError(
+            "current actions durable references must project only bound references"
+        )
     if sorted(seen_plan_paths) != sorted(expected_plan_paths):
-        raise ContractError("current actions durable references must project every plan path")
+        raise ContractError(
+            "current actions durable references must project every plan path"
+        )
     if sorted(seen_completion_refs) != sorted(expected_completion_refs):
-        raise ContractError("current actions durable references must project every completion_ref")
+        raise ContractError(
+            "current actions durable references must project every completion_ref"
+        )
 
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:

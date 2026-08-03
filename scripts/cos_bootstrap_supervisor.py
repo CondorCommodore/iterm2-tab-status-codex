@@ -330,23 +330,25 @@ def reconcile(
             payload = json.loads(content)
         except json.JSONDecodeError:
             continue
-        if (
-            payload.get("schema") != "cos.direction.v1"
-            or item.get("provenance_source") not in {"cos", None}
-        ):
+        if payload.get("schema") != "cos.direction.v1" or item.get("provenance_source") not in {
+            "cos",
+            None,
+        }:
             continue
         generation = payload.get("generation")
         if isinstance(generation, int) and generation > 0:
-            directions.append({
-                "message_id": item.get("message_id") or item.get("id"),
-                "direction_id": payload.get("direction_id"),
-                "plan_id": payload.get("plan_id"),
-                "generation": generation,
-                "precedence": payload.get("precedence"),
-                "digest": hashlib.sha256(
-                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-                ).hexdigest(),
-            })
+            directions.append(
+                {
+                    "message_id": item.get("message_id") or item.get("id"),
+                    "direction_id": payload.get("direction_id"),
+                    "plan_id": payload.get("plan_id"),
+                    "generation": generation,
+                    "precedence": payload.get("precedence"),
+                    "digest": hashlib.sha256(
+                        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+                    ).hexdigest(),
+                }
+            )
     directions.sort(key=lambda item: (str(item.get("plan_id") or ""), int(item["generation"])))
     idle = [item for item in workers if item["state"] == "idle"]
     exceptions = [

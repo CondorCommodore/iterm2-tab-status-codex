@@ -86,13 +86,15 @@ def test_reconcile_extracts_latest_durable_cos_direction():
                     "kind": "message",
                     "message_id": 11,
                     "provenance_source": "cos",
-                    "content": json.dumps({
-                        "schema": "cos.direction.v1",
-                        "direction_id": "dir-2",
-                        "plan_id": "plan-1",
-                        "generation": 2,
-                        "precedence": "priority",
-                    }),
+                    "content": json.dumps(
+                        {
+                            "schema": "cos.direction.v1",
+                            "direction_id": "dir-2",
+                            "plan_id": "plan-1",
+                            "generation": 2,
+                            "precedence": "priority",
+                        }
+                    ),
                 }
             ]
         },

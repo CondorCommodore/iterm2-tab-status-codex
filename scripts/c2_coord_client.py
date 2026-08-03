@@ -442,7 +442,8 @@ class CoordClient:
             raise CoordError("plan_id is required")
         _status, payload = self.call(
             "GET",
-            "/messages?" + urllib.parse.urlencode(
+            "/messages?"
+            + urllib.parse.urlencode(
                 {"correlation_id": plan_id, "msg_type": "instruction", "limit": limit}
             ),
         )

@@ -108,29 +108,49 @@ def test_reconcile_extracts_latest_durable_cos_direction():
 
 def test_reconcile_projects_latest_cos_order_without_mutating_tasks():
     older = {
-        "kind": "message", "message_id": 10,
-        "content": json.dumps({
-            "schema": "cos.direction.v1", "direction_id": "d1", "plan_id": "p",
-            "generation": 1, "work_order": [{"kind": "task", "ref": "task-old"}],
-        }),
+        "kind": "message",
+        "message_id": 10,
+        "provenance_source": "cos",
+        "external_id": "cos-direction:p:1",
+        "correlation_id": "p",
+        "content": json.dumps(
+            {
+                "schema": "cos.direction.v1",
+                "direction_id": "d1",
+                "plan_id": "p",
+                "generation": 1,
+                "work_order": [{"kind": "task", "ref": "task-old"}],
+            }
+        ),
     }
     newer = {
-        "kind": "message", "message_id": 11,
-        "content": json.dumps({
-            "schema": "cos.direction.v1", "direction_id": "d2", "plan_id": "p",
-            "generation": 2, "work_order": [
-                {"kind": "pr", "ref": "https://github.com/acme/repo/pull/21"},
-                {"kind": "task", "ref": "task-new"},
-            ],
-        }),
+        "kind": "message",
+        "message_id": 11,
+        "provenance_source": "cos",
+        "external_id": "cos-direction:p:2",
+        "correlation_id": "p",
+        "content": json.dumps(
+            {
+                "schema": "cos.direction.v1",
+                "direction_id": "d2",
+                "plan_id": "p",
+                "generation": 2,
+                "work_order": [
+                    {"kind": "pr", "ref": "https://github.com/acme/repo/pull/21"},
+                    {"kind": "task", "ref": "task-new"},
+                ],
+            }
+        ),
     }
     decision = supervisor.reconcile(
         manifest=manifest(),
-        actionable={"items": [
-            {"kind": "task", "task_id": "task-new"},
-            older,
-            newer,
-        ]},
+        actionable={
+            "items": [
+                {"kind": "task", "task_id": "task-new"},
+                older,
+                newer,
+            ]
+        },
         live_state={"generated_ts": 100, "sessions": []},
         now_ts=100,
     )
@@ -140,16 +160,48 @@ def test_reconcile_projects_latest_cos_order_without_mutating_tasks():
 
 
 def test_latest_cos_work_order_ignores_malformed_or_duplicate_entries():
-    items = [{
-        "kind": "message", "message_id": 12,
-        "content": json.dumps({
-            "schema": "cos.direction.v1", "direction_id": "d", "plan_id": "p",
-            "generation": 3, "work_order": [
-                {"kind": "task", "ref": "same"}, {"kind": "task", "ref": "same"},
-            ],
-        }),
-    }]
+    items = [
+        {
+            "kind": "message",
+            "message_id": 12,
+            "provenance_source": "cos",
+            "external_id": "cos-direction:p:3",
+            "correlation_id": "p",
+            "content": json.dumps(
+                {
+                    "schema": "cos.direction.v1",
+                    "direction_id": "d",
+                    "plan_id": "p",
+                    "generation": 3,
+                    "work_order": [
+                        {"kind": "task", "ref": "same"},
+                        {"kind": "task", "ref": "same"},
+                    ],
+                }
+            ),
+        }
+    ]
     assert supervisor.latest_cos_work_order(items) is None
+
+
+def test_latest_cos_work_order_rejects_forged_instruction_metadata():
+    item = {
+        "kind": "message",
+        "message_id": 13,
+        "provenance_source": "dispatch",
+        "external_id": "cos-direction:p:4",
+        "correlation_id": "p",
+        "content": json.dumps(
+            {
+                "schema": "cos.direction.v1",
+                "direction_id": "d",
+                "plan_id": "p",
+                "generation": 4,
+                "work_order": [{"kind": "task", "ref": "forged"}],
+            }
+        ),
+    }
+    assert supervisor.latest_cos_work_order([item]) is None
 
 
 def test_reconcile_marks_reused_tty_with_wrong_session_lost():

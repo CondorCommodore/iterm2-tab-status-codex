@@ -367,6 +367,14 @@ def latest_cos_work_order(items: list[dict[str, Any]]) -> dict[str, Any] | None:
         }
         if not candidate["direction_id"] or not candidate["plan_id"]:
             continue
+        if item.get("provenance_source") != "cos":
+            continue
+        if item.get("external_id") != (
+            f"cos-direction:{candidate['plan_id']}:{candidate['generation']}"
+        ):
+            continue
+        if item.get("correlation_id") != candidate["plan_id"]:
+            continue
         candidates.append(candidate)
     if not candidates:
         return None
@@ -391,7 +399,8 @@ def order_actionable_items(
             continue
         index = next(
             (
-                index for index, item in enumerate(remaining)
+                index
+                for index, item in enumerate(remaining)
                 if (kind == "task" and str(item.get("task_id") or "") == ref)
                 or (kind == "pr" and str(item.get("pr_url") or "") == ref)
             ),

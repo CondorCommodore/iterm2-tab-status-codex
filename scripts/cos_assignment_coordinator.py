@@ -137,6 +137,7 @@ def build_envelope(
         worker_id=worker.worker_id,
         cli_session_id=worker.cli_session_id,
         coord_session_id=worker.coord_session_id,
+        coord_agent_id=worker.coord_agent_id,
         objective=objective,
         repo=repo,
         worktree=_first(task.get("worktree") or task.get("branch_name") or repo),

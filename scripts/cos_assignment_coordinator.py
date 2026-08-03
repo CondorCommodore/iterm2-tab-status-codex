@@ -235,16 +235,23 @@ def dispatch_task(
         raise ContractError("worker runtime did not durably submit a BCA receipt")
     readback = client.wait_for_bca_terminal(envelope.idempotency_key)
     events = readback.get("events") if isinstance(readback, dict) else None
-    terminal = any(
-        isinstance(event, dict)
-        and (event.get("event_payload") or {}).get("delivery_state")
-        in {"acknowledged", "refused", "dead_lettered"}
+    terminal_states = [
+        (event.get("event_payload") or {}).get("delivery_state")
         for event in (events or [])
-    )
-    if not terminal:
+        if isinstance(event, dict)
+    ]
+    terminal_states = [
+        str(state)
+        for state in terminal_states
+        if state in {"acknowledged", "refused", "dead_lettered"}
+    ]
+    if not terminal_states:
         raise ContractError("dispatch has no terminal worker receipt in BCA readback")
+    final_state = terminal_states[-1]
+    if final_state != "acknowledged":
+        raise ContractError(f"dispatch ended with negative worker receipt state: {final_state}")
     return {
-        "ok": bool(result.get("ok")) and terminal,
+        "ok": bool(result.get("ok")) and final_state == "acknowledged",
         "assignment_id": envelope.assignment_id,
         "attempt_id": envelope.attempt_id,
         "payload_digest": envelope.digest(),
@@ -252,6 +259,7 @@ def dispatch_task(
         "bca_reservation": reservation,
         "bca_readback": readback,
         "result": result,
+        "delivery_state": final_state,
     }
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -146,8 +148,6 @@ def test_dispatch_task_creates_attempt_before_edge_call():
 
 
 def test_preflight_rejects_ambiguous_candidate():
-    import pytest
-
     with pytest.raises(coordinator.CandidateSelectionError) as error:
         coordinator.preflight_candidate(
             manifest=manifest(),
@@ -155,3 +155,172 @@ def test_preflight_rejects_ambiguous_candidate():
             worker_id="worker",
         )
     assert error.value.code == "selection_underdetermined"
+
+
+def test_dispatch_task_rejects_nonterminal_bca_readback():
+    class Client:
+        def verify_live_epoch(self, resource, epoch):
+            return None
+
+        def task(self, task_id):
+            return {
+                "id": task_id,
+                "status": "assigned",
+                "to_agent": "worker-agent",
+                "repo": "owner/repo",
+                "summary": "work",
+            }
+
+        def post_claim_request(self, envelope):
+            return {"id": 1}
+
+        def wait_for_claim(self, **kwargs):
+            return {
+                **self.task(kwargs["task_id"]),
+                "status": "in_progress",
+                "claimed_by": kwargs["worker_id"],
+                "claimed_by_session": kwargs["session_id"],
+            }
+
+        def ensure_attempt(self, **kwargs):
+            return kwargs
+
+        def reserve_bca(self, envelope):
+            return {"ok": True, "item": {"event_type": "reserved"}}
+
+        def wait_for_bca_terminal(self, key):
+            return {"events": [{"event_payload": {"delivery_state": "queued"}}]}
+
+    def edge_dispatch(*, envelope):
+        return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}
+
+    def worker_receipt(_envelope):
+        return lambda _result: {"ok": True, "delivery_state": "acknowledged"}
+
+    with pytest.raises(coordinator.ContractError, match="no terminal worker receipt"):
+        coordinator.dispatch_task(
+            client=Client(),
+            manifest=manifest(),
+            task_id="task-1",
+            worker_id="worker",
+            controller_epoch=7,
+            generation=3,
+            authorization_limits=["no-deploy"],
+            edge_dispatch=edge_dispatch,
+            worker_receipt=worker_receipt,
+        )
+
+
+def test_dispatch_task_rejects_unsuccessful_worker_receipt():
+    class Client:
+        def verify_live_epoch(self, resource, epoch):
+            return None
+
+        def task(self, task_id):
+            return {
+                "id": task_id,
+                "status": "assigned",
+                "to_agent": "worker-agent",
+                "repo": "owner/repo",
+                "summary": "work",
+            }
+
+        def post_claim_request(self, envelope):
+            return {"id": 1}
+
+        def wait_for_claim(self, **kwargs):
+            return {
+                **self.task(kwargs["task_id"]),
+                "status": "in_progress",
+                "claimed_by": kwargs["worker_id"],
+                "claimed_by_session": kwargs["session_id"],
+            }
+
+        def ensure_attempt(self, **kwargs):
+            return kwargs
+
+        def reserve_bca(self, envelope):
+            return {"ok": True, "item": {"event_type": "reserved"}}
+
+        def wait_for_bca_terminal(self, key):
+            raise AssertionError("terminal readback should not be queried after a failed receipt")
+
+    def edge_dispatch(*, envelope):
+        return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}
+
+    def worker_receipt(_envelope):
+        return lambda _result: {"ok": False, "delivery_state": "refused"}
+
+    with pytest.raises(
+        coordinator.ContractError,
+        match="worker runtime did not durably submit a BCA receipt",
+    ):
+        coordinator.dispatch_task(
+            client=Client(),
+            manifest=manifest(),
+            task_id="task-1",
+            worker_id="worker",
+            controller_epoch=7,
+            generation=3,
+            authorization_limits=["no-deploy"],
+            edge_dispatch=edge_dispatch,
+            worker_receipt=worker_receipt,
+        )
+
+
+@pytest.mark.parametrize("delivery_state", ["refused", "dead_lettered"])
+def test_dispatch_task_rejects_negative_terminal_bca_readback(delivery_state):
+    class Client:
+        def verify_live_epoch(self, resource, epoch):
+            return None
+
+        def task(self, task_id):
+            return {
+                "id": task_id,
+                "status": "assigned",
+                "to_agent": "worker-agent",
+                "repo": "owner/repo",
+                "summary": "work",
+            }
+
+        def post_claim_request(self, envelope):
+            return {"id": 1}
+
+        def wait_for_claim(self, **kwargs):
+            return {
+                **self.task(kwargs["task_id"]),
+                "status": "in_progress",
+                "claimed_by": kwargs["worker_id"],
+                "claimed_by_session": kwargs["session_id"],
+            }
+
+        def ensure_attempt(self, **kwargs):
+            return kwargs
+
+        def reserve_bca(self, envelope):
+            return {"ok": True, "item": {"event_type": "reserved"}}
+
+        def wait_for_bca_terminal(self, key):
+            return {"events": [{"event_payload": {"delivery_state": delivery_state}}]}
+
+    def edge_dispatch(*, envelope):
+        return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}
+
+    def worker_receipt(_envelope):
+        return lambda _result: {"ok": True, "delivery_state": "acknowledged"}
+
+    with pytest.raises(
+        coordinator.ContractError,
+        match=f"negative worker receipt state: {delivery_state}",
+    ):
+        coordinator.dispatch_task(
+            client=Client(),
+            manifest=manifest(),
+            task_id="task-1",
+            worker_id="worker",
+            controller_epoch=7,
+            generation=3,
+            authorization_limits=["no-deploy"],
+            edge_dispatch=edge_dispatch,
+            worker_receipt=worker_receipt,
+        )

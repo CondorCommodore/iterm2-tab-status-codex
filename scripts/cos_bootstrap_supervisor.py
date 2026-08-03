@@ -47,6 +47,7 @@ from cos_current_actions import (
     checkpoint_actions,
     commit_action_ack,
     parse_actions,
+    parse_current_focus_projection,
     parse_program_projection,
     rebind_actions,
     record_coord_acceptance,
@@ -278,6 +279,177 @@ def _write_program_projection(
         "digest": projection.digest,
         "written_at": projection.header["written_at"],
     }
+
+
+def _focus_entry(decision: dict[str, Any]) -> dict[str, Any]:
+    items = decision.get("actionable_items", [])
+    if not isinstance(items, list):
+        items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in {"task", "pr", "message"}:
+            continue
+        if kind == "task":
+            ref = str(item.get("task_id") or item.get("id") or "").strip()
+            display = str(item.get("display_id") or ref or "task").strip()
+        elif kind == "pr":
+            ref = str(item.get("pr_url") or item.get("id") or "").strip()
+            display = str(item.get("display_id") or ref or "pr").strip()
+        else:
+            ref = str(item.get("message_id") or item.get("id") or "").strip()
+            display = str(item.get("display_id") or ref or "message").strip()
+        if not ref:
+            continue
+        source = (
+            "cos_work_order"
+            if _item_matches_work_order(item, decision.get("cos_work_order"))
+            else "actionable_feed"
+        )
+        return {
+            "kind": kind,
+            "ref": ref,
+            "display": display,
+            "status": str(item.get("status") or "unknown"),
+            "owner_session_id": str(item.get("to_session_id") or ""),
+            "known_gate": str(item.get("status") or "unknown"),
+            "source": source,
+        }
+    return {
+        "kind": "none",
+        "ref": "",
+        "display": "none",
+        "status": "none",
+        "owner_session_id": "",
+        "known_gate": "none",
+        "source": "none",
+    }
+
+
+def _item_matches_work_order(item: dict[str, Any], work_order: dict[str, Any] | None) -> bool:
+    if not work_order:
+        return False
+    for entry in work_order.get("work_order", []):
+        if not isinstance(entry, dict):
+            continue
+        kind = str(entry.get("kind") or "").strip().lower()
+        ref = str(entry.get("ref") or "").strip()
+        if kind == "task" and str(item.get("task_id") or "") == ref:
+            return True
+        if kind == "pr" and str(item.get("pr_url") or "") == ref:
+            return True
+    return False
+
+
+def _write_current_focus_projection(
+    *,
+    path: Path,
+    manifest: RunManifest,
+    decision: dict[str, Any],
+    current_actions: Any,
+    ownership: str,
+    epoch: int,
+) -> dict[str, Any]:
+    payload = render_current_focus_projection(
+        manifest=manifest,
+        decision=decision,
+        current_actions=current_actions,
+        ownership=ownership,
+        epoch=epoch,
+    )
+    _atomic_text(path, payload)
+    projection = parse_current_focus_projection(path, manifest=manifest)
+    if projection.action_digest != current_actions.digest:
+        raise ContractError("current focus projection action_digest does not match current actions")
+    if projection.decision_digest != str(decision.get("decision_digest") or ""):
+        raise ContractError("current focus projection decision_digest does not match decision")
+    if projection.controller_epoch != epoch:
+        raise ContractError("current focus projection controller_epoch does not match live epoch")
+    return {
+        "digest": projection.digest,
+        "written_at": projection.header["written_at"],
+        "focus_kind": projection.focus_kind,
+        "focus_ref": projection.focus_ref,
+    }
+
+
+def render_current_focus_projection(
+    *,
+    manifest: RunManifest,
+    decision: dict[str, Any],
+    current_actions: Any,
+    ownership: str,
+    epoch: int,
+) -> str:
+    latest_direction = decision.get("latest_direction") or {}
+    focus = _focus_entry(decision)
+    header = {
+        "schema": "c2-current-focus-v1",
+        "manifest_id": manifest.manifest_id,
+        "controller_id": manifest.controller_id,
+        "controller_cli_session_id": manifest.controller_cli_session_id,
+        "controller_coord_session_id": manifest.controller_coord_session_id,
+        "controller_iterm_session_id": manifest.controller_iterm_session_id,
+        "controller_epoch": epoch,
+        "ownership": ownership,
+        "decision_digest": str(decision.get("decision_digest") or ""),
+        "action_digest": current_actions.digest,
+        "action_generation": current_actions.generation,
+        "status": current_actions.status,
+        "written_at": decision.get("generated_at") or _iso(),
+        "next_check_at": current_actions.header.get("next_check_at"),
+        "references": list(manifest.plan_paths),
+        "focus_kind": focus["kind"],
+        "focus_ref": focus["ref"],
+        "focus_source": focus["source"],
+        "owner_session_id": focus["owner_session_id"],
+        "known_gate": focus["known_gate"],
+        "direction_message_id": latest_direction.get("message_id"),
+        "direction_digest": latest_direction.get("digest") or "",
+        "plan_generation": int(latest_direction.get("generation") or 0),
+    }
+    body = "\n".join(
+        [
+            "## Current objective",
+            f"- objective={focus['display']}",
+            f"- focus_kind={header['focus_kind']}",
+            f"- focus_ref={header['focus_ref'] or 'none'}",
+            f"- focus_source={header['focus_source']}",
+            "",
+            "## Selected focus",
+            f"- selected_status={focus['status']}",
+            f"- owner_session_id={header['owner_session_id'] or 'none'}",
+            (f"- next_reconciliation={'; '.join(decision.get('wake_reasons', [])) or 'none'}"),
+            "",
+            "## Expected report or gate",
+            f"- action_digest={current_actions.digest}",
+            f"- known_gate={header['known_gate'] or 'none'}",
+            f"- direction_message_id={latest_direction.get('message_id') or 'none'}",
+            "",
+            "## Boundaries",
+            "- This projection is bounded recovery guidance, not durable task authority.",
+            (
+                "- Claims, leases, merges, and transport remain fenced by "
+                "coord-api and the live epoch."
+            ),
+            "",
+            "## Durable references",
+            *[f"- plan_path={path}" for path in manifest.plan_paths],
+            "",
+            "## Rewrite or stop condition",
+            "- Rewrite after a focus, worker, gate, or direction transition.",
+            (
+                "- Stop automatic work only when a later checkpoint marks the "
+                "current actions complete."
+            ),
+        ]
+    )
+    return (
+        "--- c2-current-focus-v1\n"
+        f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{body}\n"
+    )
 
 
 def render_program_projection(
@@ -844,8 +1016,14 @@ def run_tick(
                 manifest=manifest,
                 updates=action_header,
             )
-    _atomic_bytes(paths["current_focus"], current_actions.raw)
-    parse_actions(paths["current_focus"], manifest=manifest)
+    current_focus = _write_current_focus_projection(
+        path=paths["current_focus"],
+        manifest=manifest,
+        decision=decision,
+        current_actions=current_actions,
+        ownership=ownership,
+        epoch=handle.epoch,
+    )
     program_projection = _write_program_projection(
         path=paths["program"],
         manifest=manifest,
@@ -895,6 +1073,9 @@ def run_tick(
         "action_digest": current_actions.digest,
         "action_generation": current_actions.generation,
         "action_next_check_ts": current_actions.next_check_ts,
+        "current_focus_digest": current_focus["digest"],
+        "current_focus_kind": current_focus["focus_kind"],
+        "current_focus_ref": current_focus["focus_ref"],
         "program_digest": program_projection["digest"],
         "external_state_blocked": external_state["blocked"],
         "external_state_findings_digest": external_state["findings_digest"],
@@ -1204,14 +1385,16 @@ def status(
         "current_focus": (
             {
                 "digest": focus.digest,
-                "generation": focus.generation,
-                "status": focus.status,
+                "action_digest": focus.action_digest,
+                "focus_kind": focus.focus_kind,
+                "focus_ref": focus.focus_ref,
+                "status": focus.header.get("status"),
                 "decision_digest": focus.decision_digest,
                 "controller_epoch": focus.controller_epoch,
                 "ownership": focus.header.get("ownership"),
-                "next_check_ts": focus.next_check_ts,
+                "focus_source": focus.header.get("focus_source"),
             }
-            if (focus := _status_actions(paths["current_focus"], manifest=manifest)) is not None
+            if (focus := _status_focus(paths["current_focus"], manifest=manifest)) is not None
             else None
         ),
         "program_projection": (
@@ -1521,6 +1704,13 @@ def _status_actions(path: Path, *, manifest: RunManifest | None = None):
 def _status_program(path: Path, *, manifest: RunManifest | None = None):
     try:
         return parse_program_projection(path, manifest=manifest)
+    except ContractError:
+        return None
+
+
+def _status_focus(path: Path, *, manifest: RunManifest | None = None):
+    try:
+        return parse_current_focus_projection(path, manifest=manifest)
     except ContractError:
         return None
 

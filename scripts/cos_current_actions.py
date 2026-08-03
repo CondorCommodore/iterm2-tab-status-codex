@@ -21,6 +21,7 @@ from c2_contract import ContractError, ReceiptStore, RunManifest
 
 SCHEMA = "c2-current-actions-v1"
 PROGRAM_SCHEMA = "c2-program-projection-v1"
+FOCUS_SCHEMA = "c2-current-focus-v1"
 STATUSES = {"active", "waiting", "blocked", "complete"}
 MIN_NEXT_CHECK_SECONDS = 60
 MAX_NEXT_CHECK_SECONDS = 1800
@@ -44,12 +45,29 @@ PROGRAM_REQUIRED_HEADINGS = (
     "## Boundaries",
     "## Rewrite or stop condition",
 )
+FOCUS_REQUIRED_HEADINGS = (
+    "## Current objective",
+    "## Selected focus",
+    "## Expected report or gate",
+    "## Boundaries",
+    "## Durable references",
+    "## Rewrite or stop condition",
+)
 PROGRAM_BODY_BOUND_FIELDS = {
     "action_digest": "action_digest",
     "next_check_at": "next_check_at",
     "plan_generation": "plan_generation",
     "direction_message_id": "direction_message_id",
     "direction_digest": "direction_digest",
+}
+FOCUS_BODY_BOUND_FIELDS = {
+    "action_digest": "action_digest",
+    "focus_kind": "focus_kind",
+    "focus_ref": "focus_ref",
+    "focus_source": "focus_source",
+    "owner_session_id": "owner_session_id",
+    "known_gate": "known_gate",
+    "direction_message_id": "direction_message_id",
 }
 
 
@@ -76,6 +94,11 @@ def _program_body_value(body: str, key: str) -> str | None:
         if line.startswith(prefix):
             return line[len(prefix) :].strip()
     return None
+
+
+def _bounded_body_values(body: str, key: str) -> list[str]:
+    prefix = f"- {key}="
+    return [line[len(prefix) :].strip() for line in body.splitlines() if line.startswith(prefix)]
 
 
 def _body_sections(body: str, required_headings: tuple[str, ...]) -> dict[str, list[str]]:
@@ -177,6 +200,36 @@ class CurrentActions:
     @property
     def status(self) -> str:
         return str(self.header["status"])
+
+
+@dataclass(frozen=True)
+class CurrentFocusProjection:
+    path: Path
+    raw: bytes
+    header: dict[str, Any]
+    body: str
+    digest: str
+    written_ts: float
+
+    @property
+    def controller_epoch(self) -> int:
+        return int(self.header["controller_epoch"])
+
+    @property
+    def decision_digest(self) -> str:
+        return str(self.header["decision_digest"])
+
+    @property
+    def action_digest(self) -> str:
+        return str(self.header["action_digest"])
+
+    @property
+    def focus_kind(self) -> str:
+        return str(self.header["focus_kind"])
+
+    @property
+    def focus_ref(self) -> str:
+        return str(self.header["focus_ref"])
 
 
 @dataclass(frozen=True)
@@ -454,6 +507,184 @@ def parse_program_projection(
         ):
             raise ContractError("program projection contains out-of-bound plan path references")
     return ProgramProjection(
+        path=path,
+        raw=raw,
+        header=header,
+        body=body,
+        digest=hashlib.sha256(raw).hexdigest(),
+        written_ts=written_ts,
+    )
+
+
+def parse_current_focus_projection(
+    path: Path,
+    *,
+    manifest: RunManifest | None = None,
+    now_ts: float | None = None,
+) -> CurrentFocusProjection:
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ContractError(f"current focus projection is unreadable: {path}: {exc}") from exc
+    if not raw or len(raw) > MAX_ACTION_BYTES:
+        raise ContractError("current focus projection must be non-empty and at most 65536 bytes")
+    if b"\x00" in raw or b"\r" in raw:
+        raise ContractError("current focus projection contains forbidden control characters")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError("current focus projection must be UTF-8") from exc
+    lines = text.splitlines()
+    if len(lines) < 4 or lines[0] != f"--- {FOCUS_SCHEMA}" or lines[2] != "---":
+        raise ContractError("current focus projection must start with the versioned JSON header")
+    try:
+        header = json.loads(lines[1])
+    except json.JSONDecodeError as exc:
+        raise ContractError("current focus projection header must be one JSON object") from exc
+    if not isinstance(header, dict):
+        raise ContractError("current focus projection header must be one JSON object")
+    required = {
+        "schema",
+        "manifest_id",
+        "controller_id",
+        "controller_cli_session_id",
+        "controller_coord_session_id",
+        "controller_iterm_session_id",
+        "controller_epoch",
+        "ownership",
+        "decision_digest",
+        "action_digest",
+        "action_generation",
+        "status",
+        "written_at",
+        "next_check_at",
+        "references",
+        "focus_kind",
+        "focus_ref",
+        "focus_source",
+        "owner_session_id",
+        "known_gate",
+        "direction_message_id",
+        "direction_digest",
+        "plan_generation",
+    }
+    missing = sorted(required - set(header))
+    if missing:
+        raise ContractError("current focus projection header missing: " + ", ".join(missing))
+    if header["schema"] != FOCUS_SCHEMA:
+        raise ContractError("current focus projection schema is unsupported")
+    epoch = header["controller_epoch"]
+    generation = header["action_generation"]
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
+        raise ContractError("current focus projection controller_epoch must be positive")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        raise ContractError("current focus projection action_generation must be positive")
+    if header["ownership"] not in {"visible", "headless"}:
+        raise ContractError("current focus projection ownership must be visible or headless")
+    if header["status"] not in STATUSES:
+        raise ContractError("current focus projection status is unsupported")
+    for field in ("decision_digest", "action_digest"):
+        if not HEX_256.match(str(header[field])):
+            raise ContractError(f"current focus projection {field} must be lowercase SHA-256")
+    direction_digest = str(header["direction_digest"] or "")
+    if direction_digest and not HEX_256.match(direction_digest):
+        raise ContractError("current focus projection direction_digest must be lowercase SHA-256")
+    plan_generation = header["plan_generation"]
+    if (
+        isinstance(plan_generation, bool)
+        or not isinstance(plan_generation, int)
+        or plan_generation < 0
+    ):
+        raise ContractError(
+            "current focus projection plan_generation must be a non-negative integer"
+        )
+    references = header["references"]
+    if not isinstance(references, list) or not references:
+        raise ContractError("current focus projection references must be a non-empty list")
+    if not all(isinstance(item, str) and item.strip() for item in references):
+        raise ContractError(
+            "current focus projection references must contain only non-empty strings"
+        )
+    focus_kind = str(header["focus_kind"] or "")
+    if focus_kind not in {"task", "pr", "message", "none"}:
+        raise ContractError("current focus projection focus_kind is unsupported")
+    if not isinstance(header["focus_ref"], str):
+        raise ContractError("current focus projection focus_ref must be a string")
+    if not isinstance(header["focus_source"], str) or not header["focus_source"]:
+        raise ContractError("current focus projection focus_source must be a non-empty string")
+    if not isinstance(header["owner_session_id"], str):
+        raise ContractError("current focus projection owner_session_id must be a string")
+    if not isinstance(header["known_gate"], str):
+        raise ContractError("current focus projection known_gate must be a string")
+    direction_message_id = header["direction_message_id"]
+    if direction_message_id is not None and not isinstance(direction_message_id, (int, str)):
+        raise ContractError(
+            "current focus projection direction_message_id must be a string, int, or null"
+        )
+    written_ts = _timestamp(header["written_at"], "written_at")
+    now_ts = time.time() if now_ts is None else now_ts
+    if written_ts > now_ts + MAX_CLOCK_SKEW_SECONDS:
+        raise ContractError("current focus projection written_at is too far in the future")
+    _timestamp(header["next_check_at"], "next_check_at")
+    body = "\n".join(lines[3:]).strip()
+    try:
+        _body_sections(body, FOCUS_REQUIRED_HEADINGS)
+    except ContractError as exc:
+        raise ContractError(str(exc).replace("body", "current focus projection body")) from exc
+    if "```" in body:
+        raise ContractError("current focus projection must not contain code fences")
+    for line in body.splitlines():
+        if not line:
+            continue
+        if line.startswith("## "):
+            continue
+        if not line.startswith("- "):
+            raise ContractError("current focus projection body must stay in bounded bullet format")
+        if len(line) > 512:
+            raise ContractError("current focus projection body line exceeds 512 characters")
+    for body_key, header_key in FOCUS_BODY_BOUND_FIELDS.items():
+        actual_values = _bounded_body_values(body, body_key)
+        if not actual_values:
+            raise ContractError(f"current focus projection body missing bound field: {body_key}")
+        if len(actual_values) != 1:
+            raise ContractError(
+                f"current focus projection body has duplicate bound field: {body_key}"
+            )
+        actual = actual_values[0]
+        expected = header.get(header_key)
+        expected_text = "none" if expected in {None, ""} else str(expected)
+        if actual != expected_text:
+            raise ContractError(
+                f"current focus projection body {body_key} does not match validated header"
+            )
+    if manifest is not None:
+        expected = {
+            "manifest_id": manifest.manifest_id,
+            "controller_id": manifest.controller_id,
+            "controller_cli_session_id": manifest.controller_cli_session_id,
+            "controller_coord_session_id": manifest.controller_coord_session_id,
+            "controller_iterm_session_id": manifest.controller_iterm_session_id,
+        }
+        for field, value in expected.items():
+            if header[field] != value:
+                raise ContractError(f"current focus projection {field} does not match manifest")
+        expected_refs = list(manifest.plan_paths)
+        if list(references) != expected_refs:
+            raise ContractError(
+                "current focus projection references do not match manifest plan paths"
+            )
+        seen_plan_paths = [
+            line[len("- plan_path=") :].strip()
+            for line in body.splitlines()
+            if line.startswith("- plan_path=")
+        ]
+        if seen_plan_paths != expected_refs:
+            raise ContractError("current focus projection must project every plan path")
+        if any(path not in expected_refs for path in seen_plan_paths):
+            raise ContractError(
+                "current focus projection contains out-of-bound plan path references"
+            )
+    return CurrentFocusProjection(
         path=path,
         raw=raw,
         header=header,

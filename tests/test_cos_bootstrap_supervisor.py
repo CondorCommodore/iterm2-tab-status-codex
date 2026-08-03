@@ -866,7 +866,14 @@ def test_run_tick_writes_digest_bound_program_and_current_focus_projections(tmp_
     actions_path = tmp_path / "current-actions.txt"
     focus_path = tmp_path / "current-focus.md"
     program_path = tmp_path / "program.md"
-    assert focus_path.read_bytes() == actions_path.read_bytes()
+    assert focus_path.read_bytes() != actions_path.read_bytes()
+    focus_lines = focus_path.read_text(encoding="utf-8").splitlines()
+    assert focus_lines[0] == "--- c2-current-focus-v1"
+    focus_header = json.loads(focus_lines[1])
+    assert focus_header["decision_digest"] == tick["decision_digest"]
+    assert focus_header["action_digest"] == tick["action_digest"]
+    assert focus_header["focus_kind"] == "task"
+    assert focus_header["focus_ref"] == "task-1"
     program_lines = program_path.read_text(encoding="utf-8").splitlines()
     assert program_lines[0] == "--- c2-program-projection-v1"
     header = json.loads(program_lines[1])
@@ -905,7 +912,9 @@ def test_status_includes_validated_program_and_current_focus_projections(tmp_pat
         live_state_path=live,
     )
 
-    assert result["current_focus"]["digest"] == result["current_actions"]["digest"]
+    assert result["current_focus"]["action_digest"] == result["current_actions"]["digest"]
+    assert result["current_focus"]["focus_kind"] == "none"
+    assert result["current_focus"]["focus_ref"] == ""
     assert result["program_projection"]["action_digest"] == result["current_actions"]["digest"]
 
 

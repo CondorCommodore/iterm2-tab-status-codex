@@ -120,6 +120,68 @@ def write_program_projection(path: Path, **changes) -> None:
     )
 
 
+def write_current_focus_projection(path: Path, **changes) -> None:
+    header = {
+        "schema": actions.FOCUS_SCHEMA,
+        "manifest_id": "test",
+        "controller_id": "cos",
+        "controller_cli_session_id": "cli-cos",
+        "controller_coord_session_id": "coord-cos",
+        "controller_iterm_session_id": "iterm-cos",
+        "controller_epoch": 7,
+        "ownership": "visible",
+        "decision_digest": "a" * 64,
+        "action_digest": "b" * 64,
+        "action_generation": 2,
+        "status": "active",
+        "written_at": "1970-01-01T00:03:20Z",
+        "next_check_at": "1970-01-01T00:08:20Z",
+        "references": ["/plan"],
+        "focus_kind": "task",
+        "focus_ref": "task-1",
+        "focus_source": "cos_work_order",
+        "owner_session_id": "coord-worker",
+        "known_gate": "queued",
+        "direction_message_id": 11,
+        "direction_digest": "c" * 64,
+        "plan_generation": 3,
+    }
+    header.update(changes)
+    body = """## Current objective
+- objective=task-1
+- focus_kind=task
+- focus_ref=task-1
+- focus_source=cos_work_order
+
+## Selected focus
+- selected_status=queued
+- owner_session_id=coord-worker
+- next_reconciliation=idle worker and actionable task require assignment decision
+
+## Expected report or gate
+- action_digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+- known_gate=queued
+- direction_message_id=11
+
+## Boundaries
+- This projection is bounded recovery guidance, not durable task authority.
+- Claims, leases, merges, and transport remain fenced by coord-api and the live epoch.
+
+## Durable references
+- plan_path=/plan
+
+## Rewrite or stop condition
+- Rewrite after a focus, worker, gate, or direction transition.
+- Stop automatic work only when a later checkpoint marks the current actions complete.
+"""
+    path.write_text(
+        f"--- {actions.FOCUS_SCHEMA}\n"
+        f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{body}",
+        encoding="utf-8",
+    )
+
+
 def test_seed_is_valid_bounded_recovery_checkpoint(tmp_path):
     path = tmp_path / "current-actions.txt"
     current = actions.seed_actions(
@@ -186,6 +248,74 @@ def test_parse_program_projection_rejects_out_of_bound_reference(tmp_path):
 
     with pytest.raises(ContractError, match="references do not match manifest"):
         actions.parse_program_projection(path, manifest=manifest(), now_ts=400)
+
+
+def test_parse_current_focus_projection_accepts_bounded_projection(tmp_path):
+    path = tmp_path / "current-focus.md"
+    write_current_focus_projection(path)
+
+    projection = actions.parse_current_focus_projection(path, manifest=manifest(), now_ts=400)
+
+    assert projection.controller_epoch == 7
+    assert projection.action_digest == "b" * 64
+    assert projection.focus_kind == "task"
+    assert projection.focus_ref == "task-1"
+
+
+def test_parse_current_focus_projection_rejects_out_of_bound_reference(tmp_path):
+    path = tmp_path / "current-focus.md"
+    write_current_focus_projection(path, references=["/plan", "/unexpected"])
+
+    with pytest.raises(ContractError, match="references do not match manifest"):
+        actions.parse_current_focus_projection(path, manifest=manifest(), now_ts=400)
+
+
+def test_parse_current_focus_projection_rejects_missing_projected_plan_path(tmp_path):
+    path = tmp_path / "current-focus.md"
+    write_current_focus_projection(path)
+    replace_body(path, "- plan_path=/plan\n", "")
+
+    with pytest.raises(ContractError, match="must project every plan path"):
+        actions.parse_current_focus_projection(path, manifest=manifest(), now_ts=400)
+
+
+def test_parse_current_focus_projection_rejects_duplicate_bound_field(tmp_path):
+    path = tmp_path / "current-focus.md"
+    write_current_focus_projection(path)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "- focus_ref=task-1\n", "- focus_ref=task-1\n- focus_ref=task-evil\n", 1
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="duplicate bound field: focus_ref"):
+        actions.parse_current_focus_projection(path, manifest=manifest(), now_ts=400)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement", "field"),
+    [
+        ("focus_kind=task", "focus_kind=pr", "focus_kind"),
+        ("focus_ref=task-1", "focus_ref=task-99", "focus_ref"),
+        ("focus_source=cos_work_order", "focus_source=actionable_feed", "focus_source"),
+        ("owner_session_id=coord-worker", "owner_session_id=coord-other", "owner_session_id"),
+        ("known_gate=queued", "known_gate=blocked", "known_gate"),
+        ("direction_message_id=11", "direction_message_id=999", "direction_message_id"),
+    ],
+)
+def test_parse_current_focus_projection_rejects_body_header_drift(
+    tmp_path, needle: str, replacement: str, field: str
+):
+    path = tmp_path / "current-focus.md"
+    write_current_focus_projection(path)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(needle, replacement),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match=rf"body {field} does not match validated header"):
+        actions.parse_current_focus_projection(path, manifest=manifest(), now_ts=400)
 
 
 def test_parse_program_projection_rejects_unbounded_body_content(tmp_path):

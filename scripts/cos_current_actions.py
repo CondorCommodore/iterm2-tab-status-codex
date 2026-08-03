@@ -610,8 +610,9 @@ def parse_current_focus_projection(
         raise ContractError("current focus projection focus_kind is unsupported")
     if not isinstance(header["focus_ref"], str):
         raise ContractError("current focus projection focus_ref must be a string")
-    if not isinstance(header["focus_source"], str) or not header["focus_source"]:
-        raise ContractError("current focus projection focus_source must be a non-empty string")
+    focus_source = str(header["focus_source"] or "")
+    if focus_source not in {"cos_work_order", "actionable_feed", "none"}:
+        raise ContractError("current focus projection focus_source is unsupported")
     if not isinstance(header["owner_session_id"], str):
         raise ContractError("current focus projection owner_session_id must be a string")
     if not isinstance(header["known_gate"], str):

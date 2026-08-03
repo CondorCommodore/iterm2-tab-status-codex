@@ -1174,7 +1174,7 @@ def status(
                 "ownership": actions.header.get("ownership"),
                 "next_check_ts": actions.next_check_ts,
             }
-            if (actions := _status_actions(paths["actions"])) is not None
+            if (actions := _status_actions(paths["actions"], manifest=manifest)) is not None
             else None
         ),
         "current_focus": (
@@ -1187,7 +1187,7 @@ def status(
                 "ownership": focus.header.get("ownership"),
                 "next_check_ts": focus.next_check_ts,
             }
-            if (focus := _status_actions(paths["current_focus"])) is not None
+            if (focus := _status_actions(paths["current_focus"], manifest=manifest)) is not None
             else None
         ),
         "program_projection": (
@@ -1198,7 +1198,7 @@ def status(
                 "controller_epoch": projection.controller_epoch,
                 "ownership": projection.header.get("ownership"),
             }
-            if (projection := _status_program(paths["program"])) is not None
+            if (projection := _status_program(paths["program"], manifest=manifest)) is not None
             else None
         ),
         "action_progress": _load_json(paths["action_progress"]),
@@ -1485,16 +1485,16 @@ def roster_proposal(*, manifest: RunManifest, live_state_path: Path) -> dict[str
     }
 
 
-def _status_actions(path: Path):
+def _status_actions(path: Path, *, manifest: RunManifest | None = None):
     try:
-        return parse_actions(path)
+        return parse_actions(path, manifest=manifest)
     except ContractError:
         return None
 
 
-def _status_program(path: Path):
+def _status_program(path: Path, *, manifest: RunManifest | None = None):
     try:
-        return parse_program_projection(path)
+        return parse_program_projection(path, manifest=manifest)
     except ContractError:
         return None
 

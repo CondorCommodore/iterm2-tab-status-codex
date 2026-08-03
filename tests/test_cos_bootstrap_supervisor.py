@@ -941,6 +941,33 @@ def test_status_rejects_tampered_program_projection_summary(tmp_path):
     assert result["program_projection"] is None
 
 
+def test_status_rejects_program_projection_for_other_manifest(tmp_path):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=False,
+    )
+    mismatched = replace(m, controller_cli_session_id="other-cli")
+
+    result = supervisor.status(
+        client=client,
+        state_dir=tmp_path,
+        manifest=mismatched,
+        readiness=readiness(watchdog=True, edge=True),
+        live_state_path=live,
+    )
+
+    assert result["program_projection"] is None
+
+
 @pytest.mark.parametrize("ownership", ["visible", "headless"])
 def test_run_tick_claims_coord_compatible_controller_producer(tmp_path, ownership):
     m = manifest()

@@ -53,6 +53,7 @@ from cos_current_actions import (
     seed_actions,
     update_projection_header,
 )
+from cos_external_state_sweep import sweep as sweep_external_state
 from cos_iterm_edge_client import poke_controller, request_edge
 
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
@@ -126,6 +127,7 @@ def state_paths(state_dir: Path) -> dict[str, Path]:
         "action_progress": state_dir / "action-progress.json",
         "action_receipts": state_dir / "action-receipts.jsonl",
         "recovery_hold": state_dir / "recovery-hold.json",
+        "external_state_sweep": state_dir / "external-state-sweep.json",
         "pokes": state_dir / "poke-receipts.jsonl",
     }
 
@@ -782,11 +784,18 @@ def run_tick(
     live_state = _load_json(live_state_path)
     decision = reconcile(manifest=manifest, actionable=actionable, live_state=live_state)
     digest = decision_digest(decision)
+    external_state = sweep_external_state(items=decision["actionable_items"])
     previous = _load_json(paths["decision"])
     decision["decision_digest"] = digest
     decision["controller_epoch"] = handle.epoch
     decision["wake_delivered"] = False
+    decision["external_state_sweep"] = {
+        "finding_count": external_state["finding_count"],
+        "blocked": external_state["blocked"],
+        "findings_digest": external_state["findings_digest"],
+    }
     _atomic_json(paths["decision"], decision)
+    _atomic_json(paths["external_state_sweep"], external_state)
     if paths["actions"].exists():
         current_actions = parse_actions(paths["actions"], manifest=manifest)
     else:
@@ -853,6 +862,7 @@ def run_tick(
     if (
         wake
         and decision["wake_required"]
+        and not external_state["blocked"]
         and not already_delivered
         and manifest.controller_has_visible_terminal()
     ):
@@ -886,9 +896,20 @@ def run_tick(
         "action_generation": current_actions.generation,
         "action_next_check_ts": current_actions.next_check_ts,
         "program_digest": program_projection["digest"],
+        "external_state_blocked": external_state["blocked"],
+        "external_state_findings_digest": external_state["findings_digest"],
+        "external_state_finding_count": external_state["finding_count"],
     }
     _atomic_json(paths["heartbeat"], heartbeat)
-    return {"ok": True, "armed": True, **heartbeat, "poke_result": poke_result}
+    action = "external-divergence" if external_state["blocked"] else None
+    return {
+        "ok": True,
+        "armed": True,
+        **heartbeat,
+        "action": action,
+        "external_state_sweep": external_state,
+        "poke_result": poke_result,
+    }
 
 
 def arm(
@@ -914,6 +935,7 @@ def arm(
         paths["actions"],
         paths["action_progress"],
         paths["recovery_hold"],
+        paths["external_state_sweep"],
     ):
         stale_path.unlink(missing_ok=True)
     recovery_sequence = max(
@@ -1121,6 +1143,7 @@ def status(
     marker = None
     fleet_snapshot: dict[str, Any] | None = None
     fleet_error: str | None = None
+    external_state_live: dict[str, Any] | None = None
     if manifest is not None:
         effective_manifest_sha256 = manifest_sha256 or manifest_contract_sha256(manifest)
         marker = _marker_status(
@@ -1147,6 +1170,7 @@ def status(
             "wake_reasons": fleet_decision["wake_reasons"],
             "error": fleet_error,
         }
+        external_state_live = sweep_external_state(items=fleet_decision["actionable_items"])
     marker_checked = marker is not None
     marker_valid = bool(marker and marker.get("valid") is True) if marker_checked else None
     return {
@@ -1203,6 +1227,8 @@ def status(
         ),
         "action_progress": _load_json(paths["action_progress"]),
         "recovery_hold": _load_json(paths["recovery_hold"]),
+        "external_state_sweep": _load_json(paths["external_state_sweep"]),
+        "external_state_sweep_live": external_state_live,
         "live_lease": lease,
         "coord_error": error,
         "fleet_snapshot": fleet_snapshot,

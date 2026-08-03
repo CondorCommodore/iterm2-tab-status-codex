@@ -968,6 +968,110 @@ def test_status_rejects_program_projection_for_other_manifest(tmp_path):
     assert result["program_projection"] is None
 
 
+def test_run_tick_persists_external_divergence_and_suppresses_wake(tmp_path, monkeypatch):
+    m = manifest()
+    client = FakeClient()
+    client.actionable = lambda _agent: {
+        "items": [
+            {
+                "kind": "task",
+                "task_id": "task-1",
+                "status": "queued",
+                "pr_url": "https://github.com/acme/repo/pull/21",
+                "branch_repo": "acme/repo",
+                "branch_name": "feature/test",
+            }
+        ]
+    }
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    monkeypatch.setattr(
+        supervisor,
+        "sweep_external_state",
+        lambda **kwargs: {
+            "generated_at": "1970-01-01T00:01:40Z",
+            "generated_ts": 100,
+            "finding_count": 1,
+            "blocked": True,
+            "findings_digest": "d" * 64,
+            "findings": [
+                {
+                    "kind": "tracked_pr_closed_unattributed",
+                    "task_id": "task-1",
+                    "pr_url": "https://github.com/acme/repo/pull/21",
+                }
+            ],
+        },
+    )
+    pokes = []
+    monkeypatch.setattr(
+        supervisor,
+        "poke_controller",
+        lambda **kwargs: pokes.append(kwargs) or {"ok": True},
+    )
+
+    tick = supervisor.run_tick(
+        manifest=m,
+        client=client,
+        state_dir=tmp_path,
+        live_state_path=live,
+        ownership="visible",
+        wake=True,
+    )
+
+    assert tick["action"] == "external-divergence"
+    assert tick["poked"] is False
+    assert pokes == []
+    persisted = json.loads((tmp_path / "external-state-sweep.json").read_text(encoding="utf-8"))
+    assert persisted["blocked"] is True
+    assert persisted["findings"][0]["kind"] == "tracked_pr_closed_unattributed"
+
+
+def test_status_reports_persisted_and_live_external_state_sweep(tmp_path, monkeypatch):
+    m = manifest()
+    client = FakeClient()
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"generated_ts": 100, "sessions": []}), encoding="utf-8")
+    supervisor.arm(manifest=m, state_dir=tmp_path, validate_plan_paths=False)
+    (tmp_path / "external-state-sweep.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "1970-01-01T00:01:40Z",
+                "generated_ts": 100,
+                "finding_count": 1,
+                "blocked": True,
+                "findings_digest": "d" * 64,
+                "findings": [{"kind": "tracked_branch_missing_unattributed"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "sweep_external_state",
+        lambda **kwargs: {
+            "generated_at": "1970-01-01T00:03:20Z",
+            "generated_ts": 200,
+            "finding_count": 0,
+            "blocked": False,
+            "findings_digest": "e" * 64,
+            "findings": [],
+        },
+    )
+
+    result = supervisor.status(
+        client=client,
+        state_dir=tmp_path,
+        manifest=m,
+        readiness=readiness(watchdog=True, edge=True),
+        live_state_path=live,
+    )
+
+    assert result["external_state_sweep"]["blocked"] is True
+    assert result["external_state_sweep_live"]["blocked"] is False
+
+
 @pytest.mark.parametrize("ownership", ["visible", "headless"])
 def test_run_tick_claims_coord_compatible_controller_producer(tmp_path, ownership):
     m = manifest()

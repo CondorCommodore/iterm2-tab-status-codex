@@ -127,6 +127,18 @@ def sweep(
         pr_url = target.get("pr_url") or ""
         if pr_url:
             pr_state = probe("pr", target)
+            if not pr_state.get("ok"):
+                findings.append(
+                    {
+                        "kind": "tracked_state_probe_failed",
+                        "severity": "error",
+                        "probe_kind": "pr",
+                        "task_id": target.get("task_id"),
+                        "pr_url": pr_url,
+                        "error": _first(pr_state.get("error"), "unknown probe failure"),
+                    }
+                )
+                pr_state = {}
             if pr_state.get("ok") and pr_state.get("exists") and pr_state.get("state") == "CLOSED":
                 findings.append(
                     {
@@ -163,6 +175,19 @@ def sweep(
         branch = target.get("branch") or ""
         if repo and branch:
             branch_state = probe("branch", target)
+            if not branch_state.get("ok"):
+                findings.append(
+                    {
+                        "kind": "tracked_state_probe_failed",
+                        "severity": "error",
+                        "probe_kind": "branch",
+                        "task_id": target.get("task_id"),
+                        "repo": repo,
+                        "branch": branch,
+                        "error": _first(branch_state.get("error"), "unknown probe failure"),
+                    }
+                )
+                branch_state = {}
             if branch_state.get("ok") and branch_state.get("exists") is False:
                 findings.append(
                     {

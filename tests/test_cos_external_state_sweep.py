@@ -87,3 +87,27 @@ def test_sweep_is_clear_when_world_matches_tracked_coordinates():
 
     assert result["blocked"] is False
     assert result["findings"] == []
+
+
+def test_sweep_blocks_when_external_probe_fails():
+    def probe(kind: str, target: dict[str, object]) -> dict[str, object]:
+        return {"ok": False, "exists": False, "error": f"{kind} auth failed"}
+
+    result = sweep.sweep(
+        items=[
+            {
+                "kind": "task",
+                "task_id": "task-1",
+                "pr_url": "https://github.com/acme/repo/pull/21",
+                "branch_repo": "acme/repo",
+                "branch_name": "feature/test",
+            }
+        ],
+        probe=probe,
+        now_ts=100,
+    )
+
+    assert result["blocked"] is True
+    assert result["finding_count"] == 2
+    assert {item["probe_kind"] for item in result["findings"]} == {"pr", "branch"}
+    assert {item["kind"] for item in result["findings"]} == {"tracked_state_probe_failed"}

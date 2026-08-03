@@ -1,18 +1,21 @@
 # COS Message Delivery Hub and Session Delivery Agent
 
-Status: V1-shadow/V2 design specification; no authority activation implied.
+Status: transport and precedence experiments; no authority activation implied.
 
-The finite bootstrap supervisor contract is in
+The bootstrap implementation boundary is in
 [`COS_V1_V2_BOUNDARY.md`](COS_V1_V2_BOUNDARY.md). This document does not expand
-the V1 COS core. It specifies experiments and later transport capabilities that
-must reuse the V1 coord-api identities, leases, attempts, and evidence.
+the V1 COS core. Durable BCA direction and plan-generation readback are V1, but
+the queue, precedence, interruption, response-obligation automation, and adaptive
+delivery mechanisms below are experiments that must reuse V1 identities, leases,
+attempts, and evidence.
 
 ## 1. Purpose and non-goals
 
 ### Scope rule
 
-The current operational COS does not depend on this delivery hub. Until Tests 1
-and 2 pass and the operator authorizes the next stage, the hub is a shadow
+The current operational COS depends on coord-api/BCA for durable direction, not
+on this proposed delivery hub. Until Tests 1 and 2 pass and the operator
+authorizes the next stage, the hub is a shadow
 projection and the existing bounded delivery path remains the control. A design
 element below is not an implementation requirement merely because it has an API
 shape or a reducer test.
@@ -103,6 +106,13 @@ tasks, change urgency, synthesize instructions, acquire supervisor authority, or
 choose a new recipient outside the delivery hub's fenced delivery instruction.
 
 ## 3. Message precedence
+
+This section defines a **shadow treatment proposal**, not a direct input to the
+terminal edge. BCA Precedence writes a typed, audited effective-precedence
+projection. COS policy decides whether that proposal is admissible for the active
+plan generation; only the fenced actuator may translate the accepted treatment
+into a delivery instruction. Delivery never reads issuer suggestion, classifier
+output, or precedence tables directly.
 
 The canonical ordered vocabulary selected by the operator is:
 
@@ -1195,7 +1205,7 @@ and does not activate delivery or interruption policy.
 - Run shadow decisions alongside current instantaneous delivery and compare
   urgency ordering, chosen action, presentation result, response correlation, and
   message-volume reduction.
-- Prove authority takeover and rollback across successive supervisor epochs.
+- Prove primary-actuation handoff and failback across successive actuation epochs.
 - Complete an unattended canary with mixed Claude/Codex recipients, all four
   precedence levels, one supersession, one session succession, one forced stall, one
   controller interruption, required replies, zero numbered ACKs, and zero

@@ -320,6 +320,7 @@ def test_envelope_plan_validates_worker_and_manifest(tmp_path):
         "worker_id": "w1",
         "cli_session_id": "cli-w1",
         "coord_session_id": "coord-w1",
+        "coord_agent_id": "mikebook_codex",
         "objective": "inspect",
         "repo": "CondorCommodore/home-lab",
         "worktree": str(tmp_path),

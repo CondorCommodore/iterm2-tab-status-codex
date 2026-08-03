@@ -65,6 +65,7 @@ def test_build_envelope_is_bound_to_existing_assigned_task():
     assert envelope.task_id == "task-1"
     assert envelope.attempt_id == "attempt:task-1:3:worker"
     assert envelope.controller_epoch == 7
+    assert envelope.coord_agent_id == "worker-agent"
     assert envelope.scope == ("src/a.py",)
 
 

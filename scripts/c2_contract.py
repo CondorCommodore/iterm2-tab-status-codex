@@ -382,6 +382,7 @@ class DispatchEnvelope:
     worker_id: str
     cli_session_id: str
     coord_session_id: str
+    coord_agent_id: str
     objective: str
     repo: str
     worktree: str
@@ -416,6 +417,7 @@ class DispatchEnvelope:
             worker_id=_required(value.get("worker_id"), "worker_id"),
             cli_session_id=_required(value.get("cli_session_id"), "cli_session_id"),
             coord_session_id=_required(value.get("coord_session_id"), "coord_session_id"),
+            coord_agent_id=_required(value.get("coord_agent_id"), "coord_agent_id"),
             objective=_required(value.get("objective"), "objective"),
             repo=_required(value.get("repo"), "repo"),
             worktree=_required(value.get("worktree"), "worktree"),
@@ -440,6 +442,8 @@ class DispatchEnvelope:
             raise ContractError("dispatch cli_session_id does not match registration")
         if self.coord_session_id != worker.coord_session_id:
             raise ContractError("dispatch coord_session_id does not match registration")
+        if self.coord_agent_id != worker.coord_agent_id:
+            raise ContractError("dispatch coord_agent_id does not match registration")
         collisions = manifest.controller_collides_with_worker(worker)
         if collisions:
             raise ContractError(

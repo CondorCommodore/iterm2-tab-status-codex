@@ -147,7 +147,10 @@ def test_parse_program_projection_rejects_out_of_bound_reference(tmp_path):
 def test_parse_program_projection_rejects_unbounded_body_content(tmp_path):
     path = tmp_path / "program.md"
     write_program_projection(path)
-    path.write_text(path.read_text(encoding="utf-8") + "\nThis is freeform history.\n", encoding="utf-8")
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nThis is freeform history.\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(ContractError, match="bounded bullet format"):
         actions.parse_program_projection(path, manifest=manifest(), now_ts=400)

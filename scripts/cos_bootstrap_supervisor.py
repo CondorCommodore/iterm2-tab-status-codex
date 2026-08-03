@@ -330,7 +330,10 @@ def reconcile(
             payload = json.loads(content)
         except json.JSONDecodeError:
             continue
-        if payload.get("schema") != "cos.direction.v1" or item.get("provenance_source") not in {"cos", None}:
+        if (
+            payload.get("schema") != "cos.direction.v1"
+            or item.get("provenance_source") not in {"cos", None}
+        ):
             continue
         generation = payload.get("generation")
         if isinstance(generation, int) and generation > 0:

@@ -7,7 +7,13 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from c2_contract import SUPERVISOR_RESOURCE, ContractError, DispatchEnvelope, RunManifest, load_manifest
+from c2_contract import (
+    SUPERVISOR_RESOURCE,
+    ContractError,
+    DispatchEnvelope,
+    RunManifest,
+    load_manifest,
+)
 from c2_coord_client import CoordClient, CoordConfig
 from cos_iterm_edge_client import dispatch_envelope as default_edge_dispatch
 

@@ -403,7 +403,13 @@ class CoordClient:
         plan_id = str(direction.get("plan_id") or "").strip()
         generation = direction.get("generation")
         direction_id = str(direction.get("direction_id") or "").strip()
-        if not plan_id or not direction_id or isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        if (
+            not plan_id
+            or not direction_id
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or generation < 1
+        ):
             raise CoordError("direction requires plan_id, direction_id, and positive generation")
         external_id = f"cos-direction:{plan_id}:{generation}"
         content = json.dumps(direction, sort_keys=True, separators=(",", ":"))
@@ -440,7 +446,11 @@ class CoordClient:
                 {"correlation_id": plan_id, "msg_type": "instruction", "limit": limit}
             ),
         )
-        return [dict(item) for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+        return (
+            [dict(item) for item in payload if isinstance(item, dict)]
+            if isinstance(payload, list)
+            else []
+        )
 
     def get_attempt(self, attempt_id: str) -> dict[str, Any] | None:
         status, payload = self.call(
@@ -473,7 +483,14 @@ class CoordClient:
             raise CoordError("coord-api did not return or persist the attempt")
         return existing
 
-    def end_attempt(self, attempt_id: str, *, outcome: str, error: str | None = None, files_changed: list[str] | None = None) -> dict[str, Any]:
+    def end_attempt(
+        self,
+        attempt_id: str,
+        *,
+        outcome: str,
+        error: str | None = None,
+        files_changed: list[str] | None = None,
+    ) -> dict[str, Any]:
         _status, payload = self.call(
             "PATCH",
             f"/attempts/{urllib.parse.quote(attempt_id, safe='')}/end",

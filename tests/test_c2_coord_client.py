@@ -129,7 +129,10 @@ def test_ensure_attempt_reads_existing_before_creating():
         raise AssertionError("existing attempt should not be recreated")
 
     client = coord.CoordClient(config(), request=request)
-    assert client.ensure_attempt(attempt_id="a-1", task_id="t-1", session_id="s-1")["attempt_id"] == "a-1"
+    assert (
+        client.ensure_attempt(attempt_id="a-1", task_id="t-1", session_id="s-1")["attempt_id"]
+        == "a-1"
+    )
     assert calls == [("GET", "http://coord/attempts/a-1")]
 
 

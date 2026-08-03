@@ -74,7 +74,13 @@ def test_dispatch_task_creates_attempt_before_edge_call():
             calls.append(("verify", resource, epoch))
 
         def task(self, task_id):
-            return {"id": task_id, "status": "assigned", "to_agent": "worker-agent", "repo": "owner/repo", "summary": "work"}
+            return {
+                "id": task_id,
+                "status": "assigned",
+                "to_agent": "worker-agent",
+                "repo": "owner/repo",
+                "summary": "work",
+            }
 
         def ensure_attempt(self, **kwargs):
             calls.append(("attempt", kwargs))

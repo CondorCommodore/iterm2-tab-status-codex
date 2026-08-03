@@ -57,7 +57,11 @@ def extract_targets(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             target = _task_target(item)
             if not any((target["repo"], target["branch"], target["pr_url"])):
                 continue
-            key = ("task", target["task_id"], target["pr_url"] or f"{target['repo']}:{target['branch']}")
+            key = (
+                "task",
+                target["task_id"],
+                target["pr_url"] or f"{target['repo']}:{target['branch']}",
+            )
         else:
             continue
         if key in seen:

@@ -126,7 +126,7 @@ class EdgeDaemon:
 
     async def audit_receipt(self, result: dict[str, Any], receipt: dict[str, Any]) -> None:
         try:
-            await asyncio.to_thread(self.client.post_receipt, receipt)
+            await asyncio.to_thread(self.client.post_transport_receipt, receipt)
         except Exception as exc:
             result["coord_audit_error"] = str(exc)
 
@@ -158,6 +158,12 @@ class EdgeDaemon:
             if not isinstance(raw, dict):
                 return {"ok": False, "error": "dispatch envelope must be an object"}
             envelope = DispatchEnvelope.from_dict(raw)
+            if envelope.plan_id == "legacy" or not envelope.direction_digest:
+                return {
+                    "ok": False,
+                    "error": "dispatch envelope requires a durable COS direction correlation tuple",
+                    "reason": "missing_direction_correlation",
+                }
             transport = self.manifest.transport_for(envelope.assignment_id)
             worker = envelope.validate_for(self.manifest)
             if worker.role != "worker":
@@ -314,7 +320,7 @@ class EdgeDaemon:
                     receipt = {**result, "receipt_version": 1}
                     self.poke_receipts.append(receipt)
                     try:
-                        await asyncio.to_thread(self.client.post_receipt, receipt)
+                        await asyncio.to_thread(self.client.post_transport_receipt, receipt)
                     except Exception as exc:
                         result["coord_audit_error"] = str(exc)
                 return result

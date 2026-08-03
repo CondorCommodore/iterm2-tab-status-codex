@@ -393,12 +393,22 @@ class DispatchEnvelope:
     permitted_actions: tuple[str, ...]
     controller_epoch: int
     idempotency_key: str
+    plan_id: str = "legacy"
+    generation: int = 1
+    direction_digest: str = ""
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DispatchEnvelope":
         raw_epoch = value.get("controller_epoch")
         if isinstance(raw_epoch, bool) or not isinstance(raw_epoch, int) or raw_epoch < 1:
             raise ContractError("controller_epoch must be a positive integer")
+        raw_generation = value.get("generation", 1)
+        if (
+            isinstance(raw_generation, bool)
+            or not isinstance(raw_generation, int)
+            or raw_generation < 1
+        ):
+            raise ContractError("generation must be a positive integer")
         return cls(
             assignment_id=_required(value.get("assignment_id"), "assignment_id"),
             task_id=_required(value.get("task_id"), "task_id"),
@@ -419,6 +429,9 @@ class DispatchEnvelope:
             permitted_actions=_strings(value.get("permitted_actions"), "permitted_actions"),
             controller_epoch=raw_epoch,
             idempotency_key=_required(value.get("idempotency_key"), "idempotency_key"),
+            plan_id=str(value.get("plan_id") or "legacy").strip(),
+            generation=raw_generation,
+            direction_digest=str(value.get("direction_digest") or "").strip(),
         )
 
     def validate_for(self, manifest: RunManifest) -> WorkerRegistration:

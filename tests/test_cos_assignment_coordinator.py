@@ -82,13 +82,43 @@ def test_dispatch_task_creates_attempt_before_edge_call():
                 "summary": "work",
             }
 
+        def post_claim_request(self, envelope):
+            calls.append(("claim-request", envelope["assignment_id"]))
+            return {"id": 1}
+
+        def wait_for_claim(self, **kwargs):
+            calls.append(("claim-readback", kwargs))
+            return {
+                **self.task(kwargs["task_id"]),
+                "status": "in_progress",
+                "claimed_by": kwargs["worker_id"],
+                "claimed_by_session": kwargs["session_id"],
+            }
+
         def ensure_attempt(self, **kwargs):
             calls.append(("attempt", kwargs))
             return kwargs
 
+        def reserve_bca(self, envelope):
+            calls.append(("bca-reserve", envelope["assignment_id"]))
+            return {"ok": True, "item": {"event_type": "reserved"}}
+
+        def wait_for_bca_terminal(self, key):
+            calls.append(("bca-readback", key))
+            return {"events": [{"event_payload": {"delivery_state": "acknowledged"}}]}
+
     def edge_dispatch(*, envelope):
         calls.append(("edge", envelope))
         return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}
+
+    def worker_receipt(envelope):
+        calls.append(("worker-receipt-open", envelope.assignment_id))
+
+        def complete(result):
+            calls.append(("worker-receipt-commit", result["receipt"]["assignment_id"]))
+            return {"ok": True, "delivery_state": "acknowledged"}
+
+        return complete
 
     result = coordinator.dispatch_task(
         client=Client(),
@@ -99,6 +129,29 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         generation=3,
         authorization_limits=["no-deploy"],
         edge_dispatch=edge_dispatch,
+        worker_receipt=worker_receipt,
     )
     assert result["ok"] is True
-    assert [item[0] for item in calls] == ["verify", "attempt", "edge"]
+    assert [item[0] for item in calls] == [
+        "verify",
+        "claim-request",
+        "claim-readback",
+        "attempt",
+        "bca-reserve",
+        "worker-receipt-open",
+        "edge",
+        "worker-receipt-commit",
+        "bca-readback",
+    ]
+
+
+def test_preflight_rejects_ambiguous_candidate():
+    import pytest
+
+    with pytest.raises(coordinator.CandidateSelectionError) as error:
+        coordinator.preflight_candidate(
+            manifest=manifest(),
+            task={"id": "task-1", "status": "assigned", "repo": "owner/repo", "priority": "???"},
+            worker_id="worker",
+        )
+    assert error.value.code == "selection_underdetermined"

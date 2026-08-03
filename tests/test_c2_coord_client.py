@@ -136,6 +136,32 @@ def test_ensure_attempt_reads_existing_before_creating():
     assert calls == [("GET", "http://coord/attempts/a-1")]
 
 
+def test_worker_claim_binds_exact_session_capability_and_idempotency():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        payload = json.loads(body) if body else None
+        calls.append((method, url, headers, payload))
+        return 200, {"admitted": True, "refusal": None}
+
+    client = coord.CoordClient(config(), request=request)
+    result = client.claim_task(
+        "task-1",
+        session_id="session-1",
+        session_capability="capability-1",
+        envelope_ref="envelope-1",
+        runtime_hint="codex",
+    )
+    assert result["admitted"] is True
+    method, url, headers, payload = calls[0]
+    assert method == "POST"
+    assert url.endswith("/tasks/task-1/claim")
+    assert headers["X-Session-Id"] == "session-1"
+    assert headers["X-Session-Capability"] == "capability-1"
+    assert headers["Idempotency-Key"] == "claim:task-1:session-1"
+    assert payload["envelope_ref"] == "envelope-1"
+
+
 def test_claim_distinguishes_live_holder_contention_from_contract_rejection():
     responses = iter(
         [

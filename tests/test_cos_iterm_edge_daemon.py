@@ -83,6 +83,9 @@ def envelope() -> dict[str, object]:
         "authorization_limits": ["no deploy"],
         "permitted_actions": ["inspect", "test"],
         "controller_epoch": 7,
+        "plan_id": "plan-1",
+        "generation": 1,
+        "direction_digest": "b" * 64,
         "idempotency_key": "dispatch-task-1-attempt-1",
     }
 
@@ -137,6 +140,9 @@ class FakeCoordClient:
         self.events.append(("verify", (resource, epoch)))
 
     def post_receipt(self, receipt):
+        self.events.append(("post", receipt))
+
+    def post_transport_receipt(self, receipt):
         self.events.append(("post", receipt))
 
     def create_runtime_interrupt_challenge(self, request):

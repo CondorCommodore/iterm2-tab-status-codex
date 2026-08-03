@@ -18,10 +18,11 @@ tasks, attempts, messages, leases, sessions, evidence, and results. Principal an
 registered coordinates, not authority-bearing branches.
 
 **Implementation disclosure (2026-08-03):** the terminal edge enforces the shared lease for bounded
-terminal delivery. The full vertical acceptance target below has not been proven. In particular, the
-projection-content validator and durable-vs-world external-state sweep are requirements, not shipped
-enforcement. Documentation, fixtures, or a successful edge-only test must not be reported as full V1
-acceptance.
+terminal delivery. The projection-content validator now enforces manifest-bound current-actions and
+program projection content, and the durable-vs-world external-state sweep now persists typed
+divergence findings and suppresses continuation on unattributed external mutation. The full vertical
+acceptance target below has still not been proven. Documentation, fixtures, or a successful
+edge-only test must not be reported as full V1 acceptance.
 
 The numbered requirements below are **target acceptance gates, not shipped-property claims**. A
 requirement named as unimplemented makes V1 unaccepted until its implementation and adverse evidence
@@ -37,10 +38,10 @@ land; it does not weaken, waive, or make the requirement optional.
    `program.md` and `current-focus.md` projections containing only durable references, bounded current
    actions, known gates, budget/capability policy, and the next reconciliation deadline. They restore
    context; they never authorize a new effect without coord-api readback.
-   *Enforcement honesty (2026-08-03):* the projection bound is a content convention today—no
-   validator rejects an out-of-bound projection at publish or at rehydration. Until `cosctl
-   checkpoint` (or its reader) enforces the bound, "contains only durable references" is a rule
-   authors follow, not a property the system checks.
+   *Enforcement honesty (2026-08-03):* `program.md`, `current-focus.md`, and `current-actions.txt`
+   now reject out-of-bound manifest references and header/body drift at readback. What remains
+   unproven is the full runtime path from durable direction through recovery, interruption, resume,
+   and merge evidence—not the local projection-content reader itself.
 3. Wake the COS model only for a material direction, decision, refill, recovery, or PR/evidence
    transition. Maintain process heartbeat, model acknowledgement, and action-deadline state
    independently.
@@ -97,8 +98,9 @@ recovery. A pass requires the recovered supervisor's external-state sweep to sur
 an unattributed actuation (typed finding, escalated), not to reconcile cleanly against coord-api and
 proceed as if the work still exists. This is the observed 2026-08-02 failure class: unfenced GitHub
 mutations left no coord-api trace, and coord-api-only reconciliation cannot detect that by
-construction. No current external-state sweep satisfies this case. (Normative statement: workspace
-`C2_SUPERVISOR_CONTRACT.md` §2.)
+construction. The current implementation persists typed findings and blocks continuation wakeups on
+that divergence class, but the full adverse-bundle acceptance run named above remains outstanding.
+(Normative statement: workspace `C2_SUPERVISOR_CONTRACT.md` §2.)
 
 ## V1 experiments: shadow only
 

@@ -51,8 +51,6 @@ PROGRAM_BODY_BOUND_FIELDS = {
     "direction_message_id": "direction_message_id",
     "direction_digest": "direction_digest",
 }
-
-
 def _iso(ts: float | None = None) -> str:
     value = time.time() if ts is None else ts
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -76,6 +74,61 @@ def _program_body_value(body: str, key: str) -> str | None:
         if line.startswith(prefix):
             return line[len(prefix) :].strip()
     return None
+
+
+def _body_sections(body: str, required_headings: tuple[str, ...]) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in body.splitlines():
+        if line.startswith("## "):
+            current = line.strip()
+            sections.setdefault(current, [])
+            continue
+        if current is None:
+            continue
+        sections[current].append(line)
+    missing = [heading for heading in required_headings if heading not in sections]
+    if missing:
+        raise ContractError("body missing: " + ", ".join(missing))
+    return sections
+
+
+def _validate_durable_reference_lines(
+    *,
+    lines: list[str],
+    references: list[str],
+    completion_refs: list[str],
+) -> None:
+    expected_plan_paths = list(references)
+    expected_completion_refs = list(completion_refs)
+    seen_plan_paths: list[str] = []
+    seen_completion_refs: list[str] = []
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        if not text.startswith("- "):
+            raise ContractError("current actions durable references must stay in bounded bullet format")
+        payload = text[2:]
+        if payload.startswith("plan_path="):
+            value = payload[len("plan_path=") :].strip()
+            if value not in expected_plan_paths:
+                raise ContractError("current actions durable references contain out-of-bound plan path")
+            seen_plan_paths.append(value)
+            continue
+        if payload.startswith("completion_ref="):
+            value = payload[len("completion_ref=") :].strip()
+            if value not in expected_completion_refs:
+                raise ContractError(
+                    "current actions durable references contain out-of-bound completion_ref"
+                )
+            seen_completion_refs.append(value)
+            continue
+        raise ContractError("current actions durable references must project only bound references")
+    if sorted(seen_plan_paths) != sorted(expected_plan_paths):
+        raise ContractError("current actions durable references must project every plan path")
+    if sorted(seen_completion_refs) != sorted(expected_completion_refs):
+        raise ContractError("current actions durable references must project every completion_ref")
 
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:
@@ -221,13 +274,26 @@ def parse_actions(
     if not MIN_NEXT_CHECK_SECONDS <= delay <= MAX_NEXT_CHECK_SECONDS:
         raise ContractError("next_check_at must be 60 to 1800 seconds after written_at")
     body = "\n".join(lines[3:]).strip()
-    missing_headings = [heading for heading in REQUIRED_HEADINGS if heading not in body]
-    if missing_headings:
-        raise ContractError("current actions body missing: " + ", ".join(missing_headings))
+    sections = _body_sections(body, REQUIRED_HEADINGS)
+    if "```" in body:
+        raise ContractError("current actions must not contain code fences")
+    for line in body.splitlines():
+        if len(line) > 512:
+            raise ContractError("current actions body line exceeds 512 characters")
+    completion_refs = header.get("completion_refs") or []
     if header["status"] == "complete":
-        completion_refs = header.get("completion_refs")
         if not isinstance(completion_refs, list) or not completion_refs:
             raise ContractError("complete current actions require durable completion_refs")
+    elif not isinstance(completion_refs, list):
+        raise ContractError("current actions completion_refs must be a list when present")
+    references = header["references"]
+    if not all(isinstance(item, str) and item.strip() for item in references):
+        raise ContractError("current actions references must contain only non-empty strings")
+    _validate_durable_reference_lines(
+        lines=sections["## Durable references"],
+        references=list(references),
+        completion_refs=list(completion_refs),
+    )
     if manifest is not None:
         expected = {
             "manifest_id": manifest.manifest_id,
@@ -335,9 +401,10 @@ def parse_program_projection(
         raise ContractError("program projection written_at is too far in the future")
     _timestamp(header["next_check_at"], "next_check_at")
     body = "\n".join(lines[3:]).strip()
-    missing_headings = [heading for heading in PROGRAM_REQUIRED_HEADINGS if heading not in body]
-    if missing_headings:
-        raise ContractError("program projection body missing: " + ", ".join(missing_headings))
+    try:
+        _body_sections(body, PROGRAM_REQUIRED_HEADINGS)
+    except ContractError as exc:
+        raise ContractError(str(exc).replace("body", "program projection body")) from exc
     if "```" in body:
         raise ContractError("program projection must not contain code fences")
     for line in body.splitlines():
@@ -431,7 +498,7 @@ Exact worker identities, actionable tasks/messages, active PR transitions, and d
 Apply the run manifest permissions and hard boundaries. Local files grant no task authority.
 
 ## Durable references
-Use existing coord task, attempt, message, lease, result, and evidence identifiers.
+""" + "\n".join(f"- plan_path={path}" for path in manifest.plan_paths) + """
 
 ## Rewrite or stop condition
 Rewrite after every material transition; stop automatic work only when status is complete or

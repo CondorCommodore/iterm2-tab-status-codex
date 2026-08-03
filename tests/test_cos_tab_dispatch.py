@@ -2047,7 +2047,9 @@ def test_registered_dispatch_accepts_helper_label_when_runtime_owns_foreground_g
     assert target.sent[-2:] == ["\r", "\n"]
 
 
-def test_registered_dispatch_rejects_missing_authoritative_signed_observation(monkeypatch, tmp_path):
+def test_registered_dispatch_rejects_missing_authoritative_signed_observation(
+    monkeypatch, tmp_path
+):
     _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",

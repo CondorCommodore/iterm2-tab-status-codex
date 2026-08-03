@@ -318,12 +318,21 @@ def render_program_projection(
             *[f"- plan_path={path}" for path in manifest.plan_paths],
             "",
             "## Boundaries",
-            "- This projection is recovery guidance only and grants no authority without coord-api readback.",
+            (
+                "- This projection is recovery guidance only and grants no authority "
+                "without coord-api readback."
+            ),
             "- Do not treat local projections as durable task truth or historical record.",
             "",
             "## Rewrite or stop condition",
-            "- Rewrite after any material worker, message, PR, evidence, lease, or direction transition.",
-            "- Stop automatic work only when a later checkpoint marks the current actions complete.",
+            (
+                "- Rewrite after any material worker, message, PR, evidence, lease, "
+                "or direction transition."
+            ),
+            (
+                "- Stop automatic work only when a later checkpoint marks the current "
+                "actions complete."
+            ),
         ]
     )
     return (

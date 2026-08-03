@@ -57,6 +57,13 @@ def rewrite(path: Path, **changes) -> None:
     )
 
 
+def replace_body(path: Path, needle: str, replacement: str) -> None:
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(needle, replacement),
+        encoding="utf-8",
+    )
+
+
 def write_program_projection(path: Path, **changes) -> None:
     header = {
         "schema": actions.PROGRAM_SCHEMA,
@@ -123,6 +130,43 @@ def test_seed_is_valid_bounded_recovery_checkpoint(tmp_path):
     assert current.controller_epoch == 7
     assert current.next_check_ts - current.written_ts == 300
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_parse_actions_rejects_out_of_bound_plan_path(tmp_path):
+    path = tmp_path / "current-actions.txt"
+    actions.seed_actions(
+        manifest=manifest(), path=path, decision_digest="a" * 64, epoch=7, now_ts=100
+    )
+    replace_body(path, "- plan_path=/plan", "- plan_path=/unexpected")
+
+    with pytest.raises(ContractError, match="out-of-bound plan path"):
+        actions.parse_actions(path, manifest=manifest(), now_ts=400)
+
+
+def test_parse_actions_rejects_missing_projected_plan_path(tmp_path):
+    path = tmp_path / "current-actions.txt"
+    actions.seed_actions(
+        manifest=manifest(), path=path, decision_digest="a" * 64, epoch=7, now_ts=100
+    )
+    replace_body(path, "- plan_path=/plan\n", "")
+
+    with pytest.raises(ContractError, match="must project every plan path"):
+        actions.parse_actions(path, manifest=manifest(), now_ts=400)
+
+
+def test_parse_actions_complete_requires_projected_completion_refs(tmp_path):
+    path = tmp_path / "current-actions.txt"
+    actions.seed_actions(
+        manifest=manifest(), path=path, decision_digest="a" * 64, epoch=7, now_ts=100
+    )
+    rewrite(path, status="complete", completion_refs=["result:R-1"])
+
+    with pytest.raises(ContractError, match="must project every completion_ref"):
+        actions.parse_actions(path, manifest=manifest(), now_ts=400)
+
+    replace_body(path, "- plan_path=/plan", "- plan_path=/plan\n- completion_ref=result:R-1")
+    parsed = actions.parse_actions(path, manifest=manifest(), now_ts=400)
+    assert parsed.status == "complete"
 
 
 def test_parse_program_projection_accepts_bounded_projection(tmp_path):
@@ -251,6 +295,7 @@ def test_complete_checkpoint_requires_current_quiescent_decision(tmp_path):
         written_at="1970-01-01T00:03:20Z",
         next_check_at="1970-01-01T00:08:20Z",
     )
+    replace_body(source, "- plan_path=/plan", "- plan_path=/plan\n- completion_ref=result:R-1")
 
     with pytest.raises(ContractError, match="wake is required"):
         actions.checkpoint_actions(
@@ -379,6 +424,7 @@ def test_changed_decision_overrides_complete_checkpoint(tmp_path):
         manifest=manifest(), path=path, decision_digest="a" * 64, epoch=7, now_ts=100
     )
     rewrite(path, status="complete", completion_refs=["result:R-1"])
+    replace_body(path, "- plan_path=/plan", "- plan_path=/plan\n- completion_ref=result:R-1")
     current = actions.parse_actions(path, manifest=manifest(), now_ts=100)
 
     assert actions.action_wake_due(current, decision_digest="b" * 64, now_ts=100) == (
@@ -418,6 +464,7 @@ def test_rebind_advances_generation_and_preserves_intent_chain(tmp_path):
         ({"status": "unknown"}, "status is unsupported"),
         ({"written_at": "2100-01-01T00:00:00Z"}, "too far in the future"),
         ({"status": "complete"}, "durable completion_refs"),
+        ({"completion_refs": ""}, "completion_refs must be a list"),
     ],
 )
 def test_unsafe_checkpoint_mutations_fail_closed(tmp_path, changes, match):

@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -238,13 +239,17 @@ class CoordClient:
         payload: dict[str, Any] | None = None,
         write: bool = False,
         idempotency_key: str | None = None,
+        extra_headers: dict[str, str] | None = None,
         allowed: tuple[int, ...] = (200,),
     ) -> tuple[int, Any]:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
+        headers = self._headers(write=write, idempotency_key=idempotency_key)
+        if extra_headers:
+            headers.update(extra_headers)
         status, response = self.request_fn(
             method,
             f"{self.config.api_url}{path}",
-            self._headers(write=write, idempotency_key=idempotency_key),
+            headers,
             body,
             self.timeout_seconds,
         )
@@ -390,6 +395,131 @@ class CoordClient:
         _status, payload = self.call("GET", f"/tasks/{urllib.parse.quote(task_id, safe='')}")
         return payload if isinstance(payload, dict) else {}
 
+    def post_claim_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+        """Ask the registered worker session to perform its own task claim.
+
+        The controller never impersonates the worker principal.  The worker's
+        watcher consumes this durable instruction and calls the exact-session
+        task claim endpoint; the controller subsequently verifies the task
+        readback before creating an attempt or reserving delivery.
+        """
+        assignment_id = str(envelope.get("assignment_id") or "").strip()
+        task_id = str(envelope.get("task_id") or "").strip()
+        worker_id = str(envelope.get("worker_id") or "").strip()
+        if not assignment_id or not task_id or not worker_id:
+            raise CoordError("claim request requires assignment, task, and worker identities")
+        content = json.dumps(
+            {"schema": "cos.claim-request.v1", **envelope},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        external_id = f"cos-claim:{assignment_id}"
+        _status, payload = self.call(
+            "POST",
+            "/messages",
+            payload={
+                "from_agent": self.config.principal_id,
+                "to_agent": worker_id,
+                "msg_type": "instruction",
+                "subject": "COS claim request",
+                "content": content,
+                "provenance_source": "cos",
+                "external_id": external_id,
+                "correlation_id": task_id,
+                "intent": "cos-claim-request",
+                "required_ack": False,
+            },
+            write=True,
+            idempotency_key=external_id,
+            allowed=(200, 201),
+        )
+        return payload if isinstance(payload, dict) else {}
+
+    def read_claim(self, *, task_id: str, worker_id: str, session_id: str) -> dict[str, Any]:
+        task = self.task(task_id)
+        if not task:
+            raise CoordError(f"task not found after claim request: {task_id}")
+        if task.get("claimed_by") != worker_id or task.get("claimed_by_session") != session_id:
+            raise CoordError("worker claim readback does not match the requested principal/session")
+        if task.get("status") != "in_progress":
+            raise CoordError("worker claim readback is not in_progress")
+        return task
+
+    def claim_task(
+        self,
+        task_id: str,
+        *,
+        session_id: str,
+        session_capability: str,
+        envelope_ref: str | None = None,
+        execution_host: str | None = None,
+        runtime_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """Perform the worker-side exact-session claim handshake."""
+        if not session_id.strip() or not session_capability.strip():
+            raise CoordError("worker claim requires session id and capability")
+        payload = {
+            key: value
+            for key, value in {
+                "session_id": session_id,
+                "execution_host": execution_host,
+                "runtime_hint": runtime_hint,
+                "envelope_ref": envelope_ref,
+            }.items()
+            if value
+        }
+        _status, response = self.call(
+            "POST",
+            f"/tasks/{urllib.parse.quote(task_id, safe='')}/claim",
+            payload=payload,
+            write=True,
+            idempotency_key=f"claim:{task_id}:{session_id}",
+            extra_headers={
+                "X-Session-Id": session_id,
+                "X-Session-Capability": session_capability,
+            },
+            allowed=(200, 409),
+        )
+        return response if isinstance(response, dict) else {}
+
+    def reserve_bca(
+        self, envelope: dict[str, Any], *, expires_at: float | None = None
+    ) -> dict[str, Any]:
+        payload = {
+            "assignment_id": envelope["assignment_id"],
+            "task_id": envelope["task_id"],
+            "attempt_id": envelope["attempt_id"],
+            "worker_id": envelope["worker_id"],
+            "session_id": envelope["coord_session_id"],
+            "controller_epoch": envelope["controller_epoch"],
+            "plan_id": envelope["plan_id"],
+            "generation": envelope["generation"],
+            "direction_digest": envelope["direction_digest"],
+            "idempotency_key": envelope["idempotency_key"],
+            "payload_digest": hashlib.sha256(
+                json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "capability_ref": f"session:{envelope['coord_session_id']}",
+            "expires_at": expires_at if expires_at is not None else time.time() + 1800,
+            "max_attempts": 2,
+        }
+        _status, response = self.call(
+            "POST",
+            "/c2/bca-delivery/shadow/dispatches",
+            payload=payload,
+            write=True,
+            idempotency_key=str(payload["idempotency_key"]),
+            allowed=(201,),
+        )
+        return response if isinstance(response, dict) else {}
+
+    def read_bca(self, idempotency_key: str) -> dict[str, Any]:
+        _status, response = self.call(
+            "GET",
+            f"/c2/bca-delivery/shadow/dispatches/{urllib.parse.quote(idempotency_key, safe='')}",
+        )
+        return response if isinstance(response, dict) else {}
+
     def message(self, message_id: int) -> dict[str, Any]:
         if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:
             raise CoordError("coord message id must be a positive integer")
@@ -463,7 +593,9 @@ class CoordClient:
             return None
         return payload if isinstance(payload, dict) else {}
 
-    def ensure_attempt(self, *, attempt_id: str, task_id: str, session_id: str) -> dict[str, Any]:
+    def ensure_attempt(
+        self, *, attempt_id: str, task_id: str, session_id: str, context: str | None = None
+    ) -> dict[str, Any]:
         existing = self.get_attempt(attempt_id)
         if existing is not None:
             if existing.get("task_id") != task_id or existing.get("session_id") != session_id:
@@ -472,7 +604,12 @@ class CoordClient:
         _status, payload = self.call(
             "POST",
             "/attempts",
-            payload={"attempt_id": attempt_id, "task_id": task_id, "session_id": session_id},
+            payload={
+                "attempt_id": attempt_id,
+                "task_id": task_id,
+                "session_id": session_id,
+                **({"context": context} if context is not None else {}),
+            },
             write=True,
             idempotency_key=f"attempt:{attempt_id}",
             allowed=(201, 409),

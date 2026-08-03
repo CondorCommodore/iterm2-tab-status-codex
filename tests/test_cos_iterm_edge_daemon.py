@@ -83,6 +83,9 @@ def envelope() -> dict[str, object]:
         "authorization_limits": ["no deploy"],
         "permitted_actions": ["inspect", "test"],
         "controller_epoch": 7,
+        "plan_id": "plan-1",
+        "generation": 1,
+        "direction_digest": "b" * 64,
         "idempotency_key": "dispatch-task-1-attempt-1",
     }
 

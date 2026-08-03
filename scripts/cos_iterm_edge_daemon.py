@@ -158,6 +158,12 @@ class EdgeDaemon:
             if not isinstance(raw, dict):
                 return {"ok": False, "error": "dispatch envelope must be an object"}
             envelope = DispatchEnvelope.from_dict(raw)
+            if envelope.plan_id == "legacy" or not envelope.direction_digest:
+                return {
+                    "ok": False,
+                    "error": "dispatch envelope requires a durable COS direction correlation tuple",
+                    "reason": "missing_direction_correlation",
+                }
             transport = self.manifest.transport_for(envelope.assignment_id)
             worker = envelope.validate_for(self.manifest)
             if worker.role != "worker":

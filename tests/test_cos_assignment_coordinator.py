@@ -82,9 +82,30 @@ def test_dispatch_task_creates_attempt_before_edge_call():
                 "summary": "work",
             }
 
+        def post_claim_request(self, envelope):
+            calls.append(("claim-request", envelope["assignment_id"]))
+            return {"id": 1}
+
+        def read_claim(self, **kwargs):
+            calls.append(("claim-readback", kwargs))
+            return {
+                **self.task(kwargs["task_id"]),
+                "status": "in_progress",
+                "claimed_by": kwargs["worker_id"],
+                "claimed_by_session": kwargs["session_id"],
+            }
+
         def ensure_attempt(self, **kwargs):
             calls.append(("attempt", kwargs))
             return kwargs
+
+        def reserve_bca(self, envelope):
+            calls.append(("bca-reserve", envelope["assignment_id"]))
+            return {"ok": True, "item": {"event_type": "reserved"}}
+
+        def read_bca(self, key):
+            calls.append(("bca-readback", key))
+            return {"events": [{"event_payload": {"delivery_state": "acknowledged"}}]}
 
     def edge_dispatch(*, envelope):
         calls.append(("edge", envelope))
@@ -101,4 +122,24 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         edge_dispatch=edge_dispatch,
     )
     assert result["ok"] is True
-    assert [item[0] for item in calls] == ["verify", "attempt", "edge"]
+    assert [item[0] for item in calls] == [
+        "verify",
+        "claim-request",
+        "claim-readback",
+        "attempt",
+        "bca-reserve",
+        "edge",
+        "bca-readback",
+    ]
+
+
+def test_preflight_rejects_ambiguous_candidate():
+    import pytest
+
+    with pytest.raises(coordinator.CandidateSelectionError) as error:
+        coordinator.preflight_candidate(
+            manifest=manifest(),
+            task={"id": "task-1", "status": "assigned", "repo": "owner/repo", "priority": "???"},
+            worker_id="worker",
+        )
+    assert error.value.code == "selection_underdetermined"

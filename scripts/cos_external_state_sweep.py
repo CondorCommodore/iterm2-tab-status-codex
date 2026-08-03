@@ -141,7 +141,11 @@ def sweep(
                     }
                 )
                 pr_state = {}
-            if pr_state.get("ok") and pr_state.get("exists") and pr_state.get("state") == "CLOSED":
+            if (
+                pr_state.get("ok")
+                and pr_state.get("exists")
+                and pr_state.get("state") in {"CLOSED", "MERGED"}
+            ):
                 findings.append(
                     {
                         "kind": "tracked_pr_closed_unattributed",

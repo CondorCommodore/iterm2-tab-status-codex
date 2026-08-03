@@ -111,6 +111,10 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         calls.append(("edge", envelope))
         return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}
 
+    def worker_receipt(envelope, result):
+        calls.append(("worker-receipt", envelope.assignment_id))
+        return {"ok": True, "delivery_state": "acknowledged"}
+
     result = coordinator.dispatch_task(
         client=Client(),
         manifest=manifest(),
@@ -120,6 +124,7 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         generation=3,
         authorization_limits=["no-deploy"],
         edge_dispatch=edge_dispatch,
+        worker_receipt=worker_receipt,
     )
     assert result["ok"] is True
     assert [item[0] for item in calls] == [
@@ -129,6 +134,7 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         "attempt",
         "bca-reserve",
         "edge",
+        "worker-receipt",
         "bca-readback",
     ]
 

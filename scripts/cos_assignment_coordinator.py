@@ -165,12 +165,17 @@ def dispatch_task(
     plan_id: str = "legacy",
     direction_digest: str = "",
     edge_dispatch: Callable[[dict[str, Any]], dict[str, Any]] = default_edge_dispatch,
+    worker_receipt: Callable[[DispatchEnvelope, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     client.verify_live_epoch(SUPERVISOR_RESOURCE, controller_epoch)
     task = client.task(task_id)
     if not task:
         raise ContractError(f"task not found: {task_id}")
     preflight_candidate(manifest=manifest, task=task, worker_id=worker_id)
+    if worker_receipt is None:
+        raise ContractError(
+            "worker-authenticated BCA receipt adapter is required before terminal injection"
+        )
     envelope = build_envelope(
         manifest=manifest,
         task=task,
@@ -214,6 +219,11 @@ def dispatch_task(
         raise ContractError("BCA delivery reservation was not durably accepted")
     # The edge performs the final supervisor and worker-reservation fencing.
     result = edge_dispatch(envelope=json.loads(envelope.canonical_json()))
+    # The edge is controller-owned transport evidence.  Only the enrolled worker
+    # runtime may emit the BCA terminal receipt, using its session capability.
+    receipt = worker_receipt(envelope, result)
+    if not isinstance(receipt, dict) or not receipt.get("ok", True):
+        raise ContractError("worker runtime did not durably submit a BCA receipt")
     readback = client.wait_for_bca_terminal(envelope.idempotency_key)
     events = readback.get("events") if isinstance(readback, dict) else None
     terminal = any(

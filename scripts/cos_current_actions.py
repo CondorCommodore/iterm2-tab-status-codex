@@ -51,6 +51,8 @@ PROGRAM_BODY_BOUND_FIELDS = {
     "direction_message_id": "direction_message_id",
     "direction_digest": "direction_digest",
 }
+
+
 def _iso(ts: float | None = None) -> str:
     value = time.time() if ts is None else ts
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -128,17 +130,11 @@ def _validate_durable_reference_lines(
                 )
             seen_completion_refs.append(value)
             continue
-        raise ContractError(
-            "current actions durable references must project only bound references"
-        )
+        raise ContractError("current actions durable references must project only bound references")
     if sorted(seen_plan_paths) != sorted(expected_plan_paths):
-        raise ContractError(
-            "current actions durable references must project every plan path"
-        )
+        raise ContractError("current actions durable references must project every plan path")
     if sorted(seen_completion_refs) != sorted(expected_completion_refs):
-        raise ContractError(
-            "current actions durable references must project every completion_ref"
-        )
+        raise ContractError("current actions durable references must project every completion_ref")
 
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:
@@ -495,7 +491,8 @@ def seed_actions(
         "direction_digest": "",
         "plan_generation": 0,
     }
-    body = """## Current state
+    body = (
+        """## Current state
 Bootstrap COS is armed and must reconstruct current state from the referenced plans and coord feed.
 
 ## Next actions
@@ -510,12 +507,15 @@ Exact worker identities, actionable tasks/messages, active PR transitions, and d
 Apply the run manifest permissions and hard boundaries. Local files grant no task authority.
 
 ## Durable references
-""" + "\n".join(f"- plan_path={path}" for path in manifest.plan_paths) + """
+"""
+        + "\n".join(f"- plan_path={path}" for path in manifest.plan_paths)
+        + """
 
 ## Rewrite or stop condition
 Rewrite after every material transition; stop automatic work only when status is complete or
 standby.
 """
+    )
     raw = (
         f"--- {SCHEMA}\n{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n---\n{body}"
     ).encode()

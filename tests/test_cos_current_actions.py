@@ -293,6 +293,14 @@ def test_parse_current_focus_projection_rejects_duplicate_bound_field(tmp_path):
         actions.parse_current_focus_projection(path, manifest=manifest(), now_ts=400)
 
 
+def test_parse_current_focus_projection_rejects_unknown_focus_source(tmp_path):
+    path = tmp_path / "current-focus.md"
+    write_current_focus_projection(path, focus_source="forged-source")
+
+    with pytest.raises(ContractError, match="focus_source is unsupported"):
+        actions.parse_current_focus_projection(path, manifest=manifest(), now_ts=400)
+
+
 @pytest.mark.parametrize(
     ("needle", "replacement", "field"),
     [

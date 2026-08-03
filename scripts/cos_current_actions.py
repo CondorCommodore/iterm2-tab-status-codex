@@ -159,6 +159,13 @@ def parse_actions(
         raise ContractError("previous_action_digest must be empty or lowercase SHA-256")
     if not isinstance(header["references"], list):
         raise ContractError("current actions references must be a list")
+    if "plan_generation" in header:
+        generation = header["plan_generation"]
+        if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+            raise ContractError("current actions plan_generation must be a non-negative integer")
+    if "direction_digest" in header and header["direction_digest"]:
+        if not HEX_256.match(str(header["direction_digest"])):
+            raise ContractError("direction_digest must be lowercase SHA-256")
     written_ts = _timestamp(header["written_at"], "written_at")
     now_ts = time.time() if now_ts is None else now_ts
     if written_ts > now_ts + MAX_CLOCK_SKEW_SECONDS:
@@ -221,6 +228,9 @@ def seed_actions(
         "written_at": _iso(now_ts),
         "next_check_at": _iso(now_ts + DEFAULT_NEXT_CHECK_SECONDS),
         "references": list(manifest.plan_paths),
+        "direction_message_id": None,
+        "direction_digest": "",
+        "plan_generation": 0,
     }
     body = """## Current state
 Bootstrap COS is armed and must reconstruct current state from the referenced plans and coord feed.
@@ -272,6 +282,19 @@ def rebind_actions(
         "written_at": _iso(now_ts),
         "next_check_at": _iso(now_ts + DEFAULT_NEXT_CHECK_SECONDS),
     }
+    raw = (
+        f"--- {SCHEMA}\n{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{current.body}\n"
+    ).encode()
+    _atomic_bytes(path, raw)
+    return parse_actions(path, manifest=manifest)
+
+
+def update_projection_header(
+    *, current: CurrentActions, path: Path, manifest: RunManifest, updates: dict[str, Any]
+) -> CurrentActions:
+    """Update non-authoritative direction metadata without changing the body."""
+    header = {**current.header, **updates}
     raw = (
         f"--- {SCHEMA}\n{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
         f"---\n{current.body}\n"

@@ -632,6 +632,84 @@ def test_post_receipt_uses_coord_supported_activity_message_type():
     ]
 
 
+def test_wait_for_bca_terminal_times_out_without_terminal_receipt():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        calls.append((method, url))
+        return 200, {"events": [{"event_payload": {"delivery_state": "queued"}}]}
+
+    client = coord.CoordClient(config(), request=request)
+
+    with pytest.raises(coord.CoordError, match="timed out before a worker receipt"):
+        client.wait_for_bca_terminal(
+            "dispatch-1",
+            timeout_seconds=0.01,
+            poll_seconds=0.0,
+        )
+
+    assert calls
+
+
+def test_post_bca_receipt_requires_reserved_worker_principal():
+    other = coord.CoordConfig(
+        api_url="http://coord",
+        read_token="read",
+        principal_token="write",
+        agent_id="other-agent",
+        principal_id="other-agent",
+    )
+    client = coord.CoordClient(other, request=lambda *_args: (200, {}))
+
+    with pytest.raises(coord.CoordError, match="reserved worker principal"):
+        client.post_bca_receipt(
+            "dispatch-1",
+            outcome="acknowledged",
+            attempt_number=1,
+            worker_id="worker-agent",
+            session_id="session-1",
+            payload_digest="a" * 64,
+            session_capability="capability-1",
+        )
+
+
+def test_post_bca_receipt_uses_worker_session_headers_and_idempotency():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        calls.append((method, url, headers, json.loads(body) if body else None))
+        return 200, {"ok": True}
+
+    worker = coord.CoordConfig(
+        api_url="http://coord",
+        read_token="read",
+        principal_token="write",
+        agent_id="worker-agent",
+        principal_id="worker-agent",
+    )
+    client = coord.CoordClient(worker, request=request)
+    result = client.post_bca_receipt(
+        "dispatch-1",
+        outcome="acknowledged",
+        attempt_number=2,
+        worker_id="worker-agent",
+        session_id="session-1",
+        payload_digest="a" * 64,
+        session_capability="capability-1",
+        reason="done",
+    )
+
+    assert result == {"ok": True}
+    method, url, headers, payload = calls[0]
+    assert method == "POST"
+    assert url.endswith("/c2/bca-delivery/shadow/dispatches/dispatch-1/receipts")
+    assert headers["X-Session-Id"] == "session-1"
+    assert headers["X-Session-Capability"] == "capability-1"
+    assert headers["Idempotency-Key"] == "dispatch-1:receipt:2"
+    assert payload["payload_digest"] == "a" * 64
+    assert payload["outcome"] == "acknowledged"
+
+
 def test_message_delivery_shadow_uses_dedicated_supported_routes():
     calls = []
     run = {"run_id": "phase2:run-1", "artifact_sha256": "a" * 64}

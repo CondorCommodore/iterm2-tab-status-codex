@@ -85,6 +85,17 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _atomic_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with tmp.open("wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+
 def _next_receipt_sequence(path: Path, prefix: str) -> int:
     highest = -1
     try:
@@ -108,6 +119,8 @@ def state_paths(state_dir: Path) -> dict[str, Path]:
         "state": state_dir / "supervisor-state.json",
         "heartbeat": state_dir / "supervisor-heartbeat.json",
         "decision": state_dir / "decision-current.json",
+        "program": state_dir / "program.md",
+        "current_focus": state_dir / "current-focus.md",
         "actions": state_dir / "current-actions.txt",
         "action_progress": state_dir / "action-progress.json",
         "action_receipts": state_dir / "action-receipts.jsonl",
@@ -224,6 +237,109 @@ def _save_authority(
     }
     _atomic_json(paths["state"], updated)
     return updated
+
+
+def _atomic_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+
+def render_program_projection(
+    *,
+    manifest: RunManifest,
+    decision: dict[str, Any],
+    current_actions: Any,
+    ownership: str,
+    epoch: int,
+) -> str:
+    latest_direction = decision.get("latest_direction") or {}
+    header = {
+        "schema": "c2-program-projection-v1",
+        "manifest_id": manifest.manifest_id,
+        "controller_id": manifest.controller_id,
+        "controller_cli_session_id": manifest.controller_cli_session_id,
+        "controller_coord_session_id": manifest.controller_coord_session_id,
+        "controller_iterm_session_id": manifest.controller_iterm_session_id,
+        "controller_epoch": epoch,
+        "ownership": ownership,
+        "decision_digest": str(decision.get("decision_digest") or ""),
+        "action_digest": current_actions.digest,
+        "action_generation": current_actions.generation,
+        "status": current_actions.status,
+        "written_at": decision.get("generated_at") or _iso(),
+        "next_check_at": current_actions.header.get("next_check_at"),
+        "references": list(manifest.plan_paths),
+        "direction_message_id": latest_direction.get("message_id"),
+        "direction_digest": latest_direction.get("digest") or "",
+        "plan_generation": int(latest_direction.get("generation") or 0),
+    }
+    worker_lines = [
+        f"- {item['worker_id']}: {item['state']} ({item['runtime']} {item['tty']})"
+        for item in decision.get("workers", [])
+    ] or ["- none"]
+    actionable_lines = []
+    for item in decision.get("actionable_items", [])[:10]:
+        kind = str(item.get("kind") or "unknown")
+        identifier = (
+            item.get("display_id")
+            or item.get("task_id")
+            or item.get("message_id")
+            or item.get("id")
+            or "unknown"
+        )
+        status = item.get("status") or "unknown"
+        actionable_lines.append(f"- {kind} {identifier} [{status}]")
+    if not actionable_lines:
+        actionable_lines = ["- none"]
+    direction_lines = [
+        f"- plan_generation={header['plan_generation']}",
+        f"- direction_message_id={header['direction_message_id'] or 'none'}",
+        f"- direction_digest={header['direction_digest'] or 'none'}",
+    ]
+    body = "\n".join(
+        [
+            "## Current portfolio",
+            f"- wake_required={bool(decision.get('wake_required'))}",
+            f"- wake_reasons={'; '.join(decision.get('wake_reasons', [])) or 'none'}",
+            f"- action_digest={current_actions.digest}",
+            f"- next_check_at={header['next_check_at']}",
+            "",
+            "## Worker roster",
+            *worker_lines,
+            "",
+            "## Ordered actionable items",
+            *actionable_lines,
+            "",
+            "## Durable direction and references",
+            *direction_lines,
+            *[f"- plan_path={path}" for path in manifest.plan_paths],
+            "",
+            "## Boundaries",
+            (
+                "- This projection is recovery guidance only and grants no authority "
+                "without coord-api readback."
+            ),
+            "- Do not treat local projections as durable task truth or historical record.",
+            "",
+            "## Rewrite or stop condition",
+            (
+                "- Rewrite after any material worker, message, PR, evidence, lease, "
+                "or direction transition."
+            ),
+            (
+                "- Stop automatic work only when a later checkpoint marks the current "
+                "actions complete."
+            ),
+        ]
+    )
+    return (
+        "--- c2-program-projection-v1\n"
+        f"{json.dumps(header, sort_keys=True, separators=(',', ':'))}\n"
+        f"---\n{body}\n"
+    )
 
 
 def ensure_authority(
@@ -688,6 +804,17 @@ def run_tick(
                 manifest=manifest,
                 updates=action_header,
             )
+    _atomic_bytes(paths["current_focus"], current_actions.raw)
+    _atomic_text(
+        paths["program"],
+        render_program_projection(
+            manifest=manifest,
+            decision=decision,
+            current_actions=current_actions,
+            ownership=ownership,
+            epoch=handle.epoch,
+        ),
+    )
     poked = False
     poke_result: dict[str, Any] | None = None
     already_delivered = (
@@ -751,6 +878,8 @@ def arm(
     for stale_path in (
         paths["heartbeat"],
         paths["decision"],
+        paths["program"],
+        paths["current_focus"],
         paths["actions"],
         paths["action_progress"],
         paths["recovery_hold"],

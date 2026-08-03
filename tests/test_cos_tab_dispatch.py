@@ -125,6 +125,58 @@ def _signed_hook(
     return {f"user.{key}": value for key, value in session_variable_values(signed).items()}
 
 
+def _dispatch_hook(
+    *,
+    sequence,
+    prompt_state,
+    input_buffer_state="empty",
+    observed_at=None,
+    runtime="codex",
+    profile_id=None,
+    profile_version=1,
+    cli_session_id="cli-worker",
+    coord_session_id="coord-worker",
+    iterm_session_id="iterm-worker",
+):
+    runtime = runtime.lower()
+    if profile_id is None:
+        profile_id = "claude-code" if runtime == "claude" else "codex-cli"
+    observed_at = (1001.0 if sequence == 1 else 1002.0) if observed_at is None else observed_at
+    proof = SignedRuntimeHookObservation(
+        hook_schema_version=HOOK_SCHEMA_VERSION,
+        runtime_observation=RuntimeObservation.from_dict(
+            {
+                "runtime": runtime,
+                "profile_id": profile_id,
+                "profile_version": profile_version,
+                "prompt_state": prompt_state,
+                "input_buffer_state": input_buffer_state,
+                "cli_session_id": cli_session_id,
+                "coord_session_id": coord_session_id,
+            }
+        ),
+        iterm_session_id=iterm_session_id,
+        sequence=sequence,
+        observed_at=observed_at,
+        event_id=f"dispatch-event-{sequence}",
+        challenge_id="",
+        signature="",
+    )
+    signed = replace(
+        proof,
+        signature=hmac.new(BROKER_KEY, proof.canonical_bytes(), hashlib.sha256).hexdigest(),
+    )
+    return {f"user.{key}": value for key, value in session_variable_values(signed).items()}
+
+
+def _verify_dispatch_hook(report):
+    return _broker_verifier(report)
+
+
+def _freeze_dispatch_clock(monkeypatch):
+    monkeypatch.setattr(dispatch.time, "time", lambda: 1002.0)
+
+
 def _hook_digest(values):
     return SignedRuntimeHookObservation.from_session_variables(values).digest()
 
@@ -336,7 +388,12 @@ def test_looks_like_agent_session_uses_job_or_runtime():
     assert not dispatch.looks_like_agent_session({"jobName": "zsh", "user.workerRuntime": ""})
 
 
-def _manifest(transport="tab", controller_visible: bool = True):
+def _manifest(
+    transport="tab",
+    controller_visible: bool = True,
+    *,
+    worker_runtime: str = "codex",
+):
     controller = {
         "controller_id": "cos",
         "host": "macbook",
@@ -350,6 +407,7 @@ def _manifest(transport="tab", controller_visible: bool = True):
     if not controller_visible:
         controller.pop("iterm_session_id")
         controller.pop("tty")
+    worker_profile_id = "claude-code" if worker_runtime == "claude" else "codex-cli"
     return RunManifest.from_dict(
         {
             "manifest_id": "test",
@@ -358,13 +416,13 @@ def _manifest(transport="tab", controller_visible: bool = True):
                 {
                     "worker_id": "worker",
                     "host": "macbook",
-                    "runtime": "codex",
+                    "runtime": worker_runtime,
                     "iterm_session_id": "iterm-worker",
                     "tty": "/dev/ttys003",
                     "cli_session_id": "cli-worker",
                     "coord_session_id": "coord-worker",
                     "coord_agent_id": "mikebook_codex",
-                    "observation_profile_id": "codex-cli",
+                    "observation_profile_id": worker_profile_id,
                     "observation_profile_version": 1,
                     "repositories": ["Condor/repo"],
                 }
@@ -1495,6 +1553,7 @@ def test_visual_decision_lease_loss_prevents_terminal_input(monkeypatch, tmp_pat
 
 
 def test_registered_dispatch_uses_exact_session_epoch_and_crlf(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1503,8 +1562,8 @@ def test_registered_dispatch_uses_exact_session_epoch_and_crlf(monkeypatch, tmp_
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         snapshots=[
-            {"session.isProcessing": False},
-            {"session.isProcessing": True},
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=2, prompt_state="running"),
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
@@ -1516,6 +1575,7 @@ def test_registered_dispatch_uses_exact_session_epoch_and_crlf(monkeypatch, tmp_
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
@@ -1530,7 +1590,11 @@ def test_registered_dispatch_uses_exact_session_epoch_and_crlf(monkeypatch, tmp_
     assert target.sent[2] == "\n"
     assert result["receipt"]["observed_ack"] is True
     assert result["receipt"]["submit_method"] == "iterm2-python-api-crlf"
-    assert result["receipt"]["metrics"] == {"recovery_submitted": False}
+    assert result["receipt"]["metrics"]["pre_submit_sequence"] == 1
+    assert result["receipt"]["metrics"]["post_submit_sequence"] == 2
+    assert result["receipt"]["metrics"]["post_submit_prompt_state"] == "running"
+    assert result["receipt"]["metrics"]["post_submit_input_buffer_state"] == "empty"
+    assert result["receipt"]["metrics"]["recovery_submitted"] is False
 
 
 @pytest.mark.parametrize("field", ["cli_session_id", "coord_session_id"])
@@ -1554,16 +1618,17 @@ def test_headless_registered_dispatch_rejects_controller_session_identity_collis
 def test_registered_dispatch_accepts_exact_foreground_runtime_when_iterm_name_drifts(
     monkeypatch, tmp_path
 ):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
-        runtime="unknown",
+        runtime="codex",
         job="SkyComputerUseClient",
         session_id="iterm-worker",
-        cli_session_id="",
-        coord_session_id="",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
         snapshots=[
-            {"session.isProcessing": False},
-            {"session.isProcessing": True},
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=2, prompt_state="running"),
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
@@ -1575,6 +1640,7 @@ def test_registered_dispatch_accepts_exact_foreground_runtime_when_iterm_name_dr
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda *_args: None,
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
@@ -1582,6 +1648,38 @@ def test_registered_dispatch_accepts_exact_foreground_runtime_when_iterm_name_dr
 
     assert result["ok"] is True
     assert target.sent[0].startswith("/goal C2_DISPATCH ")
+
+
+def test_registered_dispatch_accepts_claude_signed_receipt(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="claude",
+        job="claude",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        snapshots=[
+            _dispatch_hook(sequence=1, prompt_state="ready", runtime="claude"),
+            _dispatch_hook(sequence=2, prompt_state="running", runtime="claude"),
+        ],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+
+    result = asyncio.run(
+        dispatch.dispatch_registered(
+            object(),
+            manifest=_manifest(worker_runtime="claude"),
+            envelope=_envelope(),
+            verify_epoch=lambda *_args: None,
+            verify_hook_authenticity=_verify_dispatch_hook,
+            receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+            ack_attempts=1,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["receipt"]["metrics"]["post_submit_sequence"] == 2
 
 
 def test_controller_poke_uses_same_crlf_submission_helper(monkeypatch):
@@ -1653,6 +1751,7 @@ def test_controller_poke_accepts_kernel_foreground_runtime_fallback(monkeypatch)
 
 
 def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1661,10 +1760,8 @@ def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         snapshots=[
-            {
-                "user.workerReadiness": "running",
-                "session.isProcessing": True,
-            }
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=1, prompt_state="running"),
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
@@ -1676,6 +1773,7 @@ def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
@@ -1684,7 +1782,9 @@ def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
     assert result["ok"] is False
     assert result["error"] == "registered target did not acknowledge dispatch"
     assert result["receipt"]["observed_ack"] is False
-    assert result["receipt"]["metrics"] == {"recovery_submitted": True}
+    assert result["receipt"]["metrics"]["pre_submit_sequence"] == 1
+    assert result["receipt"]["metrics"]["post_submit_sequence"] is None
+    assert result["receipt"]["metrics"]["recovery_submitted"] is True
     assert target.sent == [target.sent[0], "\r", "\n", "\r"]
     assert verified == [
         ("workspace:mikebook:c2-supervisor", 7),
@@ -1693,6 +1793,7 @@ def test_static_active_state_is_not_a_post_dispatch_ack(monkeypatch, tmp_path):
 
 
 def test_tab_dispatch_fences_worker_reservation_before_each_injection(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1700,7 +1801,10 @@ def test_tab_dispatch_fences_worker_reservation_before_each_injection(monkeypatc
         session_id="iterm-worker",
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
-        snapshots=[{"session.isProcessing": False}, {"session.isProcessing": True}],
+        snapshots=[
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=2, prompt_state="running"),
+        ],
     )
     _install_fake_iterm(monkeypatch, [target])
     verified = []
@@ -1711,6 +1815,7 @@ def test_tab_dispatch_fences_worker_reservation_before_each_injection(monkeypatc
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             reservation=reservation,
             ack_attempts=1,
@@ -1764,6 +1869,7 @@ def test_headless_timeout_is_bounded_by_worker_reservation(tmp_path):
 
 
 def test_queued_prompt_gets_one_refenced_recovery_submit(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1772,10 +1878,10 @@ def test_queued_prompt_gets_one_refenced_recovery_submit(monkeypatch, tmp_path):
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         snapshots=[
-            {"session.isProcessing": False},
-            {"session.isProcessing": False},
-            {"session.isProcessing": False},
-            {"session.isProcessing": True},
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=2, prompt_state="running"),
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
@@ -1787,13 +1893,15 @@ def test_queued_prompt_gets_one_refenced_recovery_submit(monkeypatch, tmp_path):
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
     )
 
     assert result["receipt"]["observed_ack"] is True
-    assert result["receipt"]["metrics"] == {"recovery_submitted": True}
+    assert result["receipt"]["metrics"]["post_submit_sequence"] == 2
+    assert result["receipt"]["metrics"]["recovery_submitted"] is True
     assert target.sent[-3:] == ["\r", "\n", "\r"]
     assert verified == [
         ("workspace:mikebook:c2-supervisor", 7),
@@ -1802,6 +1910,7 @@ def test_queued_prompt_gets_one_refenced_recovery_submit(monkeypatch, tmp_path):
 
 
 def test_true_start_prevents_recovery_and_duplicate_submit(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1810,8 +1919,8 @@ def test_true_start_prevents_recovery_and_duplicate_submit(monkeypatch, tmp_path
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         snapshots=[
-            {"session.isProcessing": False},
-            {"session.isProcessing": True},
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=2, prompt_state="running"),
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
@@ -1823,18 +1932,21 @@ def test_true_start_prevents_recovery_and_duplicate_submit(monkeypatch, tmp_path
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
     )
 
     assert result["receipt"]["observed_ack"] is True
-    assert result["receipt"]["metrics"] == {"recovery_submitted": False}
+    assert result["receipt"]["metrics"]["post_submit_sequence"] == 2
+    assert result["receipt"]["metrics"]["recovery_submitted"] is False
     assert len(target.sent) == 3
     assert verified == [("workspace:mikebook:c2-supervisor", 7)]
 
 
 def test_start_during_recovery_reread_suppresses_fallback(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1843,9 +1955,9 @@ def test_start_during_recovery_reread_suppresses_fallback(monkeypatch, tmp_path)
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         snapshots=[
-            {"session.isProcessing": False},
-            {"session.isProcessing": False},
-            {"session.isProcessing": True},
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=2, prompt_state="running"),
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
@@ -1857,18 +1969,21 @@ def test_start_during_recovery_reread_suppresses_fallback(monkeypatch, tmp_path)
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda resource, epoch: verified.append((resource, epoch)),
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
     )
 
     assert result["receipt"]["observed_ack"] is True
-    assert result["receipt"]["metrics"] == {"recovery_submitted": False}
+    assert result["receipt"]["metrics"]["post_submit_sequence"] == 2
+    assert result["receipt"]["metrics"]["recovery_submitted"] is False
     assert len(target.sent) == 3
     assert verified == [("workspace:mikebook:c2-supervisor", 7)]
 
 
 def test_registered_dispatch_rejects_foreground_helper(monkeypatch, tmp_path):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1886,6 +2001,7 @@ def test_registered_dispatch_rejects_foreground_helper(monkeypatch, tmp_path):
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda *_args: None,
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
@@ -1899,6 +2015,7 @@ def test_registered_dispatch_rejects_foreground_helper(monkeypatch, tmp_path):
 def test_registered_dispatch_accepts_helper_label_when_runtime_owns_foreground_group(
     monkeypatch, tmp_path
 ):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
         runtime="codex",
@@ -1907,8 +2024,8 @@ def test_registered_dispatch_accepts_helper_label_when_runtime_owns_foreground_g
         cli_session_id="cli-worker",
         coord_session_id="coord-worker",
         snapshots=[
-            {"session.isProcessing": False},
-            {"session.isProcessing": True},
+            _dispatch_hook(sequence=1, prompt_state="ready"),
+            _dispatch_hook(sequence=2, prompt_state="running"),
         ],
     )
     _install_fake_iterm(monkeypatch, [target])
@@ -1920,6 +2037,7 @@ def test_registered_dispatch_accepts_helper_label_when_runtime_owns_foreground_g
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda *_args: None,
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
@@ -1929,10 +2047,13 @@ def test_registered_dispatch_accepts_helper_label_when_runtime_owns_foreground_g
     assert target.sent[-2:] == ["\r", "\n"]
 
 
-def test_registered_dispatch_ignores_unknown_runtime_hook(monkeypatch, tmp_path):
+def test_registered_dispatch_rejects_missing_authoritative_signed_observation(
+    monkeypatch, tmp_path
+):
+    _freeze_dispatch_clock(monkeypatch)
     target = FakeSession(
         "/dev/ttys003",
-        runtime="unknown",
+        runtime="codex",
         job="codex",
         session_id="iterm-worker",
         cli_session_id="cli-worker",
@@ -1950,12 +2071,59 @@ def test_registered_dispatch_ignores_unknown_runtime_hook(monkeypatch, tmp_path)
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda *_args: None,
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
             ack_attempts=1,
         )
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["error"] == "trusted runtime observation variables are missing or unsupported"
+
+
+@pytest.mark.parametrize(
+    ("input_buffer_state", "expected_error"),
+    [
+        ("unknown", "terminal action requires a verified empty input buffer"),
+        ("nonempty", "terminal action requires a verified empty input buffer"),
+    ],
+)
+def test_registered_dispatch_rejects_unready_pre_submit_observation(
+    monkeypatch, tmp_path, input_buffer_state, expected_error
+):
+    _freeze_dispatch_clock(monkeypatch)
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        job="codex",
+        session_id="iterm-worker",
+        cli_session_id="cli-worker",
+        coord_session_id="coord-worker",
+        snapshots=[
+            _dispatch_hook(
+                sequence=1,
+                prompt_state="ready",
+                input_buffer_state=input_buffer_state,
+            )
+        ],
+    )
+    _install_fake_iterm(monkeypatch, [target])
+
+    result = asyncio.run(
+        dispatch.dispatch_registered(
+            object(),
+            manifest=_manifest(),
+            envelope=_envelope(),
+            verify_epoch=lambda *_args: None,
+            verify_hook_authenticity=_verify_dispatch_hook,
+            receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
+            ack_attempts=1,
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == expected_error
+    assert target.sent == []
 
 
 def test_foreground_group_output_requires_runtime_executable_in_tpgid():
@@ -1980,6 +2148,7 @@ def test_registered_dispatch_rejects_reused_tty_with_wrong_session(monkeypatch, 
             manifest=_manifest(),
             envelope=_envelope(),
             verify_epoch=lambda *_args: None,
+            verify_hook_authenticity=_verify_dispatch_hook,
             receipts=ReceiptStore(tmp_path / "receipts.jsonl"),
         )
     )

@@ -347,7 +347,57 @@ def _ack_transitioned(before: dict[str, str], after: dict[str, str]) -> bool:
     )
 
 
-async def _session_acknowledged(
+def _load_signed_runtime_observation(
+    values: dict[str, str],
+    *,
+    worker: WorkerRegistration,
+    verify_hook_authenticity: Any,
+    now_ts: float | None = None,
+    after_sequence: int | None = None,
+    min_observed_at: float | None = None,
+) -> SignedRuntimeHookObservation:
+    signed = SignedRuntimeHookObservation.from_session_variables(values)
+    signed.verify(
+        verify_hook_authenticity,
+        runtime=worker.runtime,
+        profile_id=worker.observation_profile_id,
+        profile_version=worker.observation_profile_version,
+        cli_session_id=worker.cli_session_id,
+        coord_session_id=worker.coord_session_id,
+        iterm_session_id=worker.iterm_session_id,
+        now_ts=now_ts,
+        after_sequence=after_sequence,
+        min_observed_at=min_observed_at,
+    )
+    return signed
+
+
+def _validate_dispatch_ready_observation(
+    values: dict[str, str],
+    *,
+    worker: WorkerRegistration,
+    verify_hook_authenticity: Any,
+    now_ts: float | None = None,
+) -> SignedRuntimeHookObservation:
+    signed = _load_signed_runtime_observation(
+        values,
+        worker=worker,
+        verify_hook_authenticity=verify_hook_authenticity,
+        now_ts=now_ts,
+    )
+    signed.runtime_observation.permits_action("dispatch")
+    return signed
+
+
+def _observation_acknowledges_dispatch(signed: SignedRuntimeHookObservation) -> None:
+    observation = signed.runtime_observation
+    if observation.prompt_state == "unknown" or observation.input_buffer_state == "unknown":
+        raise ContractError("signed runtime observation state is unknown")
+    if observation.input_buffer_state != "empty":
+        raise ContractError("signed runtime observation input buffer is nonempty")
+
+
+async def _session_acknowledged_by_transition(
     session: object,
     *,
     before: dict[str, str],
@@ -363,35 +413,87 @@ async def _session_acknowledged(
     return False, latest
 
 
+async def _session_acknowledged(
+    session: object,
+    *,
+    worker: WorkerRegistration,
+    verify_hook_authenticity: Any,
+    after_sequence: int,
+    min_observed_at: float,
+    attempts: int = 4,
+) -> tuple[bool, dict[str, str], SignedRuntimeHookObservation | None]:
+    latest: dict[str, str] = {}
+    for attempt in range(max(1, attempts)):
+        latest = await session_variables(session)
+        try:
+            signed = _load_signed_runtime_observation(
+                latest,
+                worker=worker,
+                verify_hook_authenticity=verify_hook_authenticity,
+                after_sequence=after_sequence,
+                min_observed_at=min_observed_at,
+            )
+            _observation_acknowledges_dispatch(signed)
+            return True, latest, signed
+        except ContractError:
+            pass
+        if attempt + 1 < attempts:
+            await asyncio.sleep(0.25)
+    return False, latest, None
+
+
 async def _submit_with_bounded_recovery(
     session: object,
     *,
+    worker: WorkerRegistration,
+    verify_hook_authenticity: Any,
     prompt: str,
-    before: dict[str, str],
+    before_sequence: int,
     verify_epoch: Any,
     controller_epoch: int,
     ack_attempts: int,
-) -> tuple[bool, bool]:
+) -> tuple[bool, bool, SignedRuntimeHookObservation | None]:
     """Submit once, then issue at most one re-fenced CR if no start is observed."""
+    dispatch_started_at = time.time()
     await send_prompt_with_crlf(session, prompt)
-    observed_ack, latest = await _session_acknowledged(
-        session, before=before, attempts=ack_attempts
+    observed_ack, latest, signed = await _session_acknowledged(
+        session,
+        worker=worker,
+        verify_hook_authenticity=verify_hook_authenticity,
+        after_sequence=before_sequence,
+        min_observed_at=dispatch_started_at,
+        attempts=ack_attempts,
     )
     if observed_ack:
-        return True, False
+        return True, False, signed
 
     # Re-read immediately before recovery. If the original submit started since
     # the last poll, do not send anything else. Otherwise a single CR can submit
     # the still-queued input, but cannot re-enter the already-consumed prompt.
     current = await session_variables(session)
-    if _ack_transitioned(before, current):
-        return True, False
+    try:
+        signed = _load_signed_runtime_observation(
+            current,
+            worker=worker,
+            verify_hook_authenticity=verify_hook_authenticity,
+            after_sequence=before_sequence,
+            min_observed_at=dispatch_started_at,
+        )
+        _observation_acknowledges_dispatch(signed)
+        return True, False, signed
+    except ContractError:
+        pass
     verify_epoch(SUPERVISOR_RESOURCE, controller_epoch)
     await session.async_send_text("\r")  # type: ignore[attr-defined]
-    observed_ack, _latest = await _session_acknowledged(
-        session, before=current, attempts=ack_attempts
+    observed_ack, _latest, signed = await _session_acknowledged(
+        session,
+        worker=worker,
+        verify_hook_authenticity=verify_hook_authenticity,
+        after_sequence=before_sequence,
+        min_observed_at=dispatch_started_at,
+        attempts=ack_attempts,
     )
-    return observed_ack, True
+    return observed_ack, True, signed
 
 
 async def dispatch_registered(
@@ -400,6 +502,7 @@ async def dispatch_registered(
     manifest: RunManifest,
     envelope: DispatchEnvelope,
     verify_epoch: Any,
+    verify_hook_authenticity: Any,
     receipts: ReceiptStore,
     ack_attempts: int = 4,
     reservation: dict[str, Any] | None = None,
@@ -432,6 +535,20 @@ async def dispatch_registered(
         return {"ok": False, "error": "stale cli session identity", "session": values}
     if observed_coord and observed_coord != worker.coord_session_id:
         return {"ok": False, "error": "stale coord session identity", "session": values}
+    try:
+        before_observation = _validate_dispatch_ready_observation(
+            values,
+            worker=worker,
+            verify_hook_authenticity=verify_hook_authenticity,
+        )
+    except ContractError as exc:
+        message = str(exc)
+        if message in {
+            "runtime hook coordinates are malformed",
+            "runtime hook identity/signature is incomplete",
+        }:
+            message = "trusted runtime observation variables are missing or unsupported"
+        return {"ok": False, "error": message, "session": values}
 
     prompt = render_dispatch_prompt(envelope)
 
@@ -441,10 +558,12 @@ async def dispatch_registered(
             verify_epoch(str(reservation["resource"]), int(reservation["epoch"]))
 
     verify_dispatch_fences(SUPERVISOR_RESOURCE, envelope.controller_epoch)
-    observed_ack, recovery_submitted = await _submit_with_bounded_recovery(
+    observed_ack, recovery_submitted, post_observation = await _submit_with_bounded_recovery(
         session,
+        worker=worker,
+        verify_hook_authenticity=verify_hook_authenticity,
         prompt=prompt,
-        before=values,
+        before_sequence=before_observation.sequence,
         verify_epoch=verify_dispatch_fences,
         controller_epoch=envelope.controller_epoch,
         ack_attempts=ack_attempts,
@@ -455,7 +574,23 @@ async def dispatch_registered(
         submit_method="iterm2-python-api-crlf",
         observed_ack=observed_ack,
         reservation=reservation,
-        metrics={"recovery_submitted": recovery_submitted},
+        metrics={
+            "pre_submit_sequence": before_observation.sequence,
+            "post_submit_sequence": (
+                None if post_observation is None else post_observation.sequence
+            ),
+            "post_submit_prompt_state": (
+                None
+                if post_observation is None
+                else post_observation.runtime_observation.prompt_state
+            ),
+            "post_submit_input_buffer_state": (
+                None
+                if post_observation is None
+                else post_observation.runtime_observation.input_buffer_state
+            ),
+            "recovery_submitted": recovery_submitted,
+        },
     )
     receipts.append(receipt)
     if not observed_ack:
@@ -500,14 +635,22 @@ async def send_controller_poke(
             "session": values,
         }
     verify_epoch(SUPERVISOR_RESOURCE, controller_epoch)
-    observed_ack, recovery_submitted = await _submit_with_bounded_recovery(
-        session,
-        prompt=prompt,
-        before=values,
-        verify_epoch=verify_epoch,
-        controller_epoch=controller_epoch,
-        ack_attempts=ack_attempts,
+    await send_prompt_with_crlf(session, prompt)
+    observed_ack, _latest = await _session_acknowledged_by_transition(
+        session, before=values, attempts=ack_attempts
     )
+    recovery_submitted = False
+    if not observed_ack:
+        current = await session_variables(session)
+        if _ack_transitioned(values, current):
+            observed_ack = True
+        else:
+            verify_epoch(SUPERVISOR_RESOURCE, controller_epoch)
+            await session.async_send_text("\r")  # type: ignore[attr-defined]
+            observed_ack, _latest = await _session_acknowledged_by_transition(
+                session, before=current, attempts=ack_attempts
+            )
+            recovery_submitted = True
     return {
         "ok": observed_ack,
         "injection_attempted": True,

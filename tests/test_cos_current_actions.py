@@ -156,6 +156,42 @@ def test_parse_program_projection_rejects_unbounded_body_content(tmp_path):
         actions.parse_program_projection(path, manifest=manifest(), now_ts=400)
 
 
+@pytest.mark.parametrize(
+    ("needle", "replacement", "field"),
+    [
+        (
+            "action_digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "action_digest=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "action_digest",
+        ),
+        (
+            "next_check_at=1970-01-01T00:08:20Z",
+            "next_check_at=2999-01-01T00:00:00Z",
+            "next_check_at",
+        ),
+        ("plan_generation=3", "plan_generation=999", "plan_generation"),
+        ("direction_message_id=11", "direction_message_id=999", "direction_message_id"),
+        (
+            "direction_digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "direction_digest=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "direction_digest",
+        ),
+    ],
+)
+def test_parse_program_projection_rejects_body_header_drift(
+    tmp_path, needle: str, replacement: str, field: str
+):
+    path = tmp_path / "program.md"
+    write_program_projection(path)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(needle, replacement),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match=rf"body {field} does not match validated header"):
+        actions.parse_program_projection(path, manifest=manifest(), now_ts=400)
+
+
 def test_checkpoint_requires_monotonic_generation_and_digest_chain(tmp_path):
     destination = tmp_path / "current-actions.txt"
     first = actions.seed_actions(

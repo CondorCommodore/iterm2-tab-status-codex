@@ -44,6 +44,13 @@ PROGRAM_REQUIRED_HEADINGS = (
     "## Boundaries",
     "## Rewrite or stop condition",
 )
+PROGRAM_BODY_BOUND_FIELDS = {
+    "action_digest": "action_digest",
+    "next_check_at": "next_check_at",
+    "plan_generation": "plan_generation",
+    "direction_message_id": "direction_message_id",
+    "direction_digest": "direction_digest",
+}
 
 
 def _iso(ts: float | None = None) -> str:
@@ -61,6 +68,14 @@ def _timestamp(value: object, field: str) -> float:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.timestamp()
+
+
+def _program_body_value(body: str, key: str) -> str | None:
+    prefix = f"- {key}="
+    for line in body.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    return None
 
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:
@@ -334,6 +349,16 @@ def parse_program_projection(
             raise ContractError("program projection body must stay in bounded bullet format")
         if len(line) > 512:
             raise ContractError("program projection body line exceeds 512 characters")
+    for body_key, header_key in PROGRAM_BODY_BOUND_FIELDS.items():
+        actual = _program_body_value(body, body_key)
+        if actual is None:
+            raise ContractError(f"program projection body missing bound field: {body_key}")
+        expected = header.get(header_key)
+        expected_text = "none" if expected in {None, ""} else str(expected)
+        if actual != expected_text:
+            raise ContractError(
+                f"program projection body {body_key} does not match validated header"
+            )
     if manifest is not None:
         expected = {
             "manifest_id": manifest.manifest_id,

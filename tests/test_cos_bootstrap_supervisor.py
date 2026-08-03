@@ -106,6 +106,52 @@ def test_reconcile_extracts_latest_durable_cos_direction():
     assert "durable COS direction" in decision["wake_reasons"][-1]
 
 
+def test_reconcile_projects_latest_cos_order_without_mutating_tasks():
+    older = {
+        "kind": "message", "message_id": 10,
+        "content": json.dumps({
+            "schema": "cos.direction.v1", "direction_id": "d1", "plan_id": "p",
+            "generation": 1, "work_order": [{"kind": "task", "ref": "task-old"}],
+        }),
+    }
+    newer = {
+        "kind": "message", "message_id": 11,
+        "content": json.dumps({
+            "schema": "cos.direction.v1", "direction_id": "d2", "plan_id": "p",
+            "generation": 2, "work_order": [
+                {"kind": "pr", "ref": "https://github.com/acme/repo/pull/21"},
+                {"kind": "task", "ref": "task-new"},
+            ],
+        }),
+    }
+    decision = supervisor.reconcile(
+        manifest=manifest(),
+        actionable={"items": [
+            {"kind": "task", "task_id": "task-new"},
+            older,
+            newer,
+        ]},
+        live_state={"generated_ts": 100, "sessions": []},
+        now_ts=100,
+    )
+    assert decision["cos_work_order"]["generation"] == 2
+    assert [item["kind"] for item in decision["cos_work_order"]["work_order"]] == ["pr", "task"]
+    assert decision["actionable_items"][0]["task_id"] == "task-new"
+
+
+def test_latest_cos_work_order_ignores_malformed_or_duplicate_entries():
+    items = [{
+        "kind": "message", "message_id": 12,
+        "content": json.dumps({
+            "schema": "cos.direction.v1", "direction_id": "d", "plan_id": "p",
+            "generation": 3, "work_order": [
+                {"kind": "task", "ref": "same"}, {"kind": "task", "ref": "same"},
+            ],
+        }),
+    }]
+    assert supervisor.latest_cos_work_order(items) is None
+
+
 def test_reconcile_marks_reused_tty_with_wrong_session_lost():
     decision = supervisor.reconcile(
         manifest=manifest(),

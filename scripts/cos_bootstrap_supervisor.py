@@ -61,6 +61,8 @@ REQUIRED_LAUNCHD_SERVICES = {
     "watchdog": "com.local.cos-bootstrap-watchdog",
     "terminal_edge": "com.local.cos-iterm-edge",
 }
+COS_DIRECTION_SCHEMA = "cos.direction.v1"
+COS_WORK_KINDS = {"task", "pr"}
 
 
 def _iso(ts: float | None = None) -> str:
@@ -309,6 +311,92 @@ def classify_registered_workers(
     return observations
 
 
+def latest_cos_work_order(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Extract the newest valid ordered-work projection from COS messages.
+
+    Direction messages travel through the existing actionable feed.  This
+    projection is read-only: it influences the next decision, never task
+    status, ownership, claim, lease, or terminal delivery state.
+    """
+    candidates: list[dict[str, Any]] = []
+    for item in items:
+        if item.get("kind") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or payload.get("schema") != COS_DIRECTION_SCHEMA:
+            continue
+        generation = payload.get("generation")
+        order = payload.get("work_order", [])
+        if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+            continue
+        if not isinstance(order, list):
+            continue
+        normalized: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        valid = True
+        for raw in order:
+            if not isinstance(raw, dict):
+                valid = False
+                break
+            kind = str(raw.get("kind") or "").strip().lower()
+            ref = str(raw.get("ref") or "").strip()
+            key = (kind, ref)
+            if kind not in COS_WORK_KINDS or not ref or len(ref) > 512 or key in seen:
+                valid = False
+                break
+            seen.add(key)
+            entry = {"kind": kind, "ref": ref}
+            if raw.get("reason") is not None:
+                entry["reason"] = str(raw["reason"]).strip()[:2_000]
+            normalized.append(entry)
+        if not valid:
+            continue
+        candidate = {
+            "schema": COS_DIRECTION_SCHEMA,
+            "direction_id": str(payload.get("direction_id") or ""),
+            "plan_id": str(payload.get("plan_id") or ""),
+            "generation": generation,
+            "work_order": normalized,
+            "source_message_id": item.get("message_id"),
+        }
+        if not candidate["direction_id"] or not candidate["plan_id"]:
+            continue
+        candidates.append(candidate)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda value: (value["generation"], str(value.get("source_message_id") or "")))
+
+
+def order_actionable_items(items: list[dict[str, Any]], work_order: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Put matching task feed entries in COS order, preserving the remainder."""
+    if not work_order:
+        return list(items)
+    remaining = list(items)
+    ordered: list[dict[str, Any]] = []
+    for entry in work_order.get("work_order", []):
+        kind = entry.get("kind") if isinstance(entry, dict) else None
+        ref = entry.get("ref") if isinstance(entry, dict) else None
+        if not isinstance(kind, str) or not isinstance(ref, str):
+            continue
+        index = next(
+            (
+                index for index, item in enumerate(remaining)
+                if (kind == "task" and str(item.get("task_id") or "") == ref)
+                or (kind == "pr" and str(item.get("pr_url") or "") == ref)
+            ),
+            None,
+        )
+        if index is not None:
+            ordered.append(remaining.pop(index))
+    return ordered + remaining
+
+
 def reconcile(
     *,
     manifest: RunManifest,
@@ -358,6 +446,8 @@ def reconcile(
     ]
     task_items = [item for item in items if item.get("kind") == "task"]
     message_items = [item for item in items if item.get("kind") != "task"]
+    work_order = latest_cos_work_order(items)
+    ordered_items = order_actionable_items(items, work_order)
     reasons: list[str] = []
     if idle and task_items:
         reasons.append("idle worker and actionable task require assignment decision")
@@ -367,14 +457,17 @@ def reconcile(
         reasons.append("actionable coordination message requires model decision")
     if directions:
         reasons.append("new durable COS direction requires reconciliation")
+    work_order = latest_cos_work_order(items)
+    ordered_items = order_actionable_items(items, work_order)
     return {
         "generated_at": _iso(now_ts),
         "generated_ts": now_ts,
         "manifest_id": manifest.manifest_id,
         "workers": workers,
-        "actionable_items": items,
+        "actionable_items": ordered_items,
         "directions": directions,
         "latest_direction": directions[-1] if directions else None,
+        "cos_work_order": work_order,
         "idle_worker_ids": [item["worker_id"] for item in idle],
         "exception_worker_ids": [item["worker_id"] for item in exceptions],
         "wake_required": bool(reasons),
@@ -440,6 +533,7 @@ def decision_digest(decision: dict[str, Any]) -> str:
             for item in decision.get("actionable_items", [])
             if isinstance(item, dict)
         ],
+        "cos_work_order": decision.get("cos_work_order"),
         "idle_worker_ids": decision.get("idle_worker_ids", []),
         "exception_worker_ids": decision.get("exception_worker_ids", []),
         "wake_required": decision.get("wake_required"),

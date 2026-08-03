@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -262,10 +263,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--controller-epoch", type=int, required=True)
     parser.add_argument("--generation", type=int, default=1)
     parser.add_argument("--authorization-limit", action="append", dest="limits", default=[])
+    parser.add_argument(
+        "--worker-receipt-adapter",
+        required=True,
+        metavar="MODULE:CALLABLE",
+        help="enrolled worker adapter returning a completion sink; never controller credentials",
+    )
     args = parser.parse_args(argv)
     try:
         manifest = load_manifest(args.manifest)
         config = CoordConfig.load(expected_principal_id=manifest.controller_coord_agent_id)
+        module_name, separator, callable_name = args.worker_receipt_adapter.partition(":")
+        if not separator or not module_name or not callable_name:
+            raise ContractError("worker receipt adapter must be MODULE:CALLABLE")
+        adapter = getattr(importlib.import_module(module_name), callable_name, None)
+        if not callable(adapter):
+            raise ContractError("worker receipt adapter callable was not found")
         result = dispatch_task(
             client=CoordClient(config),
             manifest=manifest,
@@ -274,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
             controller_epoch=args.controller_epoch,
             generation=args.generation,
             authorization_limits=args.limits,
+            worker_receipt=adapter,
         )
     except (ContractError, OSError, ValueError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True))

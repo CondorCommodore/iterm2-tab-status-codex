@@ -445,6 +445,25 @@ class CoordClient:
             raise CoordError("worker claim readback is not in_progress")
         return task
 
+    def wait_for_claim(
+        self,
+        *,
+        task_id: str,
+        worker_id: str,
+        session_id: str,
+        timeout_seconds: float = 30.0,
+        poll_seconds: float = 0.5,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        last_error: CoordError | None = None
+        while time.monotonic() <= deadline:
+            try:
+                return self.read_claim(task_id=task_id, worker_id=worker_id, session_id=session_id)
+            except CoordError as exc:
+                last_error = exc
+                time.sleep(poll_seconds)
+        raise CoordError(f"worker claim readback timed out: {last_error}") from last_error
+
     def claim_task(
         self,
         task_id: str,
@@ -519,6 +538,68 @@ class CoordClient:
             f"/c2/bca-delivery/shadow/dispatches/{urllib.parse.quote(idempotency_key, safe='')}",
         )
         return response if isinstance(response, dict) else {}
+
+    def wait_for_bca_terminal(
+        self, idempotency_key: str, *, timeout_seconds: float = 30.0, poll_seconds: float = 0.5
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        last = {}
+        while time.monotonic() <= deadline:
+            last = self.read_bca(idempotency_key)
+            events = last.get("events") if isinstance(last, dict) else []
+            if any(
+                isinstance(event, dict)
+                and (event.get("event_payload") or {}).get("delivery_state")
+                in {"acknowledged", "refused", "dead_lettered"}
+                for event in (events or [])
+            ):
+                return last
+            time.sleep(poll_seconds)
+        raise CoordError("BCA delivery readback timed out before a worker receipt")
+
+    def post_bca_receipt(
+        self,
+        idempotency_key: str,
+        *,
+        outcome: str,
+        attempt_number: int,
+        worker_id: str,
+        session_id: str,
+        payload_digest: str,
+        session_capability: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Worker-originated receipt path; caller must be the reserved worker."""
+        if self.config.principal_id != worker_id:
+            raise CoordError("BCA receipt must be submitted by the reserved worker principal")
+        payload = {
+            "outcome": outcome,
+            "attempt_number": attempt_number,
+            "worker_id": worker_id,
+            "session_id": session_id,
+            "payload_digest": payload_digest,
+            "reason": reason,
+        }
+        _status, response = self.call(
+            "POST",
+            (
+                "/c2/bca-delivery/shadow/dispatches/"
+                f"{urllib.parse.quote(idempotency_key, safe='')}/receipts"
+            ),
+            payload=payload,
+            write=True,
+            idempotency_key=f"{idempotency_key}:receipt:{attempt_number}",
+            extra_headers={
+                "X-Session-Id": session_id,
+                "X-Session-Capability": session_capability,
+            },
+            allowed=(200,),
+        )
+        return response if isinstance(response, dict) else {}
+
+    def post_transport_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        """Append-only controller transport evidence, distinct from BCA worker receipt."""
+        return self.post_receipt(receipt)
 
     def message(self, message_id: int) -> dict[str, Any]:
         if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:

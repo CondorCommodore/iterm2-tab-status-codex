@@ -183,7 +183,7 @@ def dispatch_task(
     )
     worker = manifest.worker(worker_id)
     client.post_claim_request(json.loads(envelope.canonical_json()))
-    task = client.read_claim(
+    task = client.wait_for_claim(
         task_id=envelope.task_id,
         worker_id=worker.coord_agent_id,
         session_id=worker.coord_session_id,
@@ -214,7 +214,7 @@ def dispatch_task(
         raise ContractError("BCA delivery reservation was not durably accepted")
     # The edge performs the final supervisor and worker-reservation fencing.
     result = edge_dispatch(envelope=json.loads(envelope.canonical_json()))
-    readback = client.read_bca(envelope.idempotency_key)
+    readback = client.wait_for_bca_terminal(envelope.idempotency_key)
     events = readback.get("events") if isinstance(readback, dict) else None
     terminal = any(
         isinstance(event, dict)

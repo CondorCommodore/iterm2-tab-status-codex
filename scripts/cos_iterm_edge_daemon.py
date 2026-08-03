@@ -126,7 +126,7 @@ class EdgeDaemon:
 
     async def audit_receipt(self, result: dict[str, Any], receipt: dict[str, Any]) -> None:
         try:
-            await asyncio.to_thread(self.client.post_receipt, receipt)
+            await asyncio.to_thread(self.client.post_transport_receipt, receipt)
         except Exception as exc:
             result["coord_audit_error"] = str(exc)
 
@@ -320,7 +320,7 @@ class EdgeDaemon:
                     receipt = {**result, "receipt_version": 1}
                     self.poke_receipts.append(receipt)
                     try:
-                        await asyncio.to_thread(self.client.post_receipt, receipt)
+                        await asyncio.to_thread(self.client.post_transport_receipt, receipt)
                     except Exception as exc:
                         result["coord_audit_error"] = str(exc)
                 return result

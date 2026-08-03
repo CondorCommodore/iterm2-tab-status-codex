@@ -142,6 +142,9 @@ class FakeCoordClient:
     def post_receipt(self, receipt):
         self.events.append(("post", receipt))
 
+    def post_transport_receipt(self, receipt):
+        self.events.append(("post", receipt))
+
     def create_runtime_interrupt_challenge(self, request):
         self.events.append(("challenge", request))
         return {"challenge_id": "challenge-1", "issued_at": 1001.0}

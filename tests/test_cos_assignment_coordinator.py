@@ -86,7 +86,7 @@ def test_dispatch_task_creates_attempt_before_edge_call():
             calls.append(("claim-request", envelope["assignment_id"]))
             return {"id": 1}
 
-        def read_claim(self, **kwargs):
+        def wait_for_claim(self, **kwargs):
             calls.append(("claim-readback", kwargs))
             return {
                 **self.task(kwargs["task_id"]),
@@ -103,7 +103,7 @@ def test_dispatch_task_creates_attempt_before_edge_call():
             calls.append(("bca-reserve", envelope["assignment_id"]))
             return {"ok": True, "item": {"event_type": "reserved"}}
 
-        def read_bca(self, key):
+        def wait_for_bca_terminal(self, key):
             calls.append(("bca-readback", key))
             return {"events": [{"event_payload": {"delivery_state": "acknowledged"}}]}
 

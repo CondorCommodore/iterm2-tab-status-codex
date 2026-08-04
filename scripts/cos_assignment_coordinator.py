@@ -234,7 +234,10 @@ def dispatch_task(
     receipt = receipt_sink(result)
     if not isinstance(receipt, dict) or not receipt.get("ok", True):
         raise ContractError("worker runtime did not durably submit a BCA receipt")
-    readback = client.wait_for_bca_terminal(envelope.idempotency_key)
+    readback = client.wait_for_bca_terminal(
+        envelope.idempotency_key,
+        expected_correlation=client.bca_correlation_tuple(json.loads(envelope.canonical_json())),
+    )
     events = readback.get("events") if isinstance(readback, dict) else None
     terminal_states = [
         (event.get("event_payload") or {}).get("delivery_state")

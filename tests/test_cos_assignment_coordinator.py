@@ -106,8 +106,12 @@ def test_dispatch_task_creates_attempt_before_edge_call():
             calls.append(("bca-reserve", envelope["assignment_id"]))
             return {"ok": True, "item": {"event_type": "reserved"}}
 
-        def wait_for_bca_terminal(self, key):
-            calls.append(("bca-readback", key))
+        def bca_correlation_tuple(self, envelope):
+            calls.append(("bca-correlation", envelope["assignment_id"]))
+            return {"idempotency_key": envelope["idempotency_key"]}
+
+        def wait_for_bca_terminal(self, key, *, expected_correlation=None):
+            calls.append(("bca-readback", key, expected_correlation))
             return {"events": [{"event_payload": {"delivery_state": "acknowledged"}}]}
 
     def edge_dispatch(*, envelope):
@@ -144,8 +148,10 @@ def test_dispatch_task_creates_attempt_before_edge_call():
         "worker-receipt-open",
         "edge",
         "worker-receipt-commit",
+        "bca-correlation",
         "bca-readback",
     ]
+    assert calls[-1][2] == {"idempotency_key": "c2-dispatch:task-1:3:worker"}
 
 
 def test_preflight_rejects_ambiguous_candidate():
@@ -189,7 +195,10 @@ def test_dispatch_task_rejects_nonterminal_bca_readback():
         def reserve_bca(self, envelope):
             return {"ok": True, "item": {"event_type": "reserved"}}
 
-        def wait_for_bca_terminal(self, key):
+        def bca_correlation_tuple(self, envelope):
+            return {"idempotency_key": envelope["idempotency_key"]}
+
+        def wait_for_bca_terminal(self, key, *, expected_correlation=None):
             return {"events": [{"event_payload": {"delivery_state": "queued"}}]}
 
     def edge_dispatch(*, envelope):
@@ -301,7 +310,10 @@ def test_dispatch_task_rejects_negative_terminal_bca_readback(delivery_state):
         def reserve_bca(self, envelope):
             return {"ok": True, "item": {"event_type": "reserved"}}
 
-        def wait_for_bca_terminal(self, key):
+        def bca_correlation_tuple(self, envelope):
+            return {"idempotency_key": envelope["idempotency_key"]}
+
+        def wait_for_bca_terminal(self, key, *, expected_correlation=None):
             return {"events": [{"event_payload": {"delivery_state": delivery_state}}]}
 
     def edge_dispatch(*, envelope):

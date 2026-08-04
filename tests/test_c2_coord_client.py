@@ -651,6 +651,101 @@ def test_wait_for_bca_terminal_times_out_without_terminal_receipt():
     assert calls
 
 
+def test_verify_bca_readback_rejects_terminal_binding_mismatch():
+    client = coord.CoordClient(config(), request=lambda *_args: (500, {}))
+    expected = {
+        "idempotency_key": "dispatch-1",
+        "assignment_id": "assignment-1",
+        "task_id": "task-1",
+        "attempt_id": "attempt-1",
+        "worker_id": "worker-agent",
+        "session_id": "session-1",
+        "controller_epoch": 7,
+        "plan_id": "plan-1",
+        "generation": 3,
+        "direction_digest": "b" * 64,
+        "payload_digest": "a" * 64,
+    }
+    readback = {
+        "events": [
+            {
+                "event_type": "reserved",
+                "idempotency_key": "dispatch-1",
+                "assignment_id": "assignment-1",
+                "task_id": "task-1",
+                "attempt_id": "attempt-1",
+                "worker_id": "worker-agent",
+                "session_id": "session-1",
+                "controller_epoch": 7,
+                "payload_digest": "a" * 64,
+                "event_payload": {"correlation": expected},
+            },
+            {
+                "event_type": "receipt",
+                "idempotency_key": "dispatch-1",
+                "assignment_id": "assignment-1",
+                "task_id": "task-1",
+                "attempt_id": "attempt-1",
+                "worker_id": "worker-agent",
+                "session_id": "other-session",
+                "controller_epoch": 7,
+                "payload_digest": "a" * 64,
+                "event_payload": {"delivery_state": "acknowledged", "correlation": expected},
+            },
+        ]
+    }
+    with pytest.raises(coord.CoordError, match="terminal readback mismatch: session_id"):
+        client.verify_bca_readback(readback, expected_correlation=expected)
+
+
+def test_verify_bca_readback_rejects_correlation_drift():
+    client = coord.CoordClient(config(), request=lambda *_args: (500, {}))
+    expected = {
+        "idempotency_key": "dispatch-1",
+        "assignment_id": "assignment-1",
+        "task_id": "task-1",
+        "attempt_id": "attempt-1",
+        "worker_id": "worker-agent",
+        "session_id": "session-1",
+        "controller_epoch": 7,
+        "plan_id": "plan-1",
+        "generation": 3,
+        "direction_digest": "b" * 64,
+        "payload_digest": "a" * 64,
+    }
+    drifted = {**expected, "generation": 4}
+    readback = {
+        "events": [
+            {
+                "event_type": "reserved",
+                "idempotency_key": "dispatch-1",
+                "assignment_id": "assignment-1",
+                "task_id": "task-1",
+                "attempt_id": "attempt-1",
+                "worker_id": "worker-agent",
+                "session_id": "session-1",
+                "controller_epoch": 7,
+                "payload_digest": "a" * 64,
+                "event_payload": {"correlation": expected},
+            },
+            {
+                "event_type": "receipt",
+                "idempotency_key": "dispatch-1",
+                "assignment_id": "assignment-1",
+                "task_id": "task-1",
+                "attempt_id": "attempt-1",
+                "worker_id": "worker-agent",
+                "session_id": "session-1",
+                "controller_epoch": 7,
+                "payload_digest": "a" * 64,
+                "event_payload": {"delivery_state": "acknowledged", "correlation": drifted},
+            },
+        ]
+    }
+    with pytest.raises(coord.CoordError, match="mixed or mismatched correlation"):
+        client.verify_bca_readback(readback, expected_correlation=expected)
+
+
 def test_post_bca_receipt_requires_reserved_worker_principal():
     other = coord.CoordConfig(
         api_url="http://coord",

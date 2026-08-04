@@ -67,6 +67,30 @@ PENDING_RUNTIME_CHALLENGE_FIELDS = frozenset(
         "profile_version",
     }
 )
+BCA_CORRELATION_FIELDS = (
+    "idempotency_key",
+    "assignment_id",
+    "task_id",
+    "attempt_id",
+    "worker_id",
+    "session_id",
+    "controller_epoch",
+    "plan_id",
+    "generation",
+    "direction_digest",
+    "payload_digest",
+)
+BCA_ROW_BINDING_FIELDS = (
+    "idempotency_key",
+    "assignment_id",
+    "task_id",
+    "attempt_id",
+    "worker_id",
+    "session_id",
+    "controller_epoch",
+    "payload_digest",
+)
+_BCA_TERMINAL_STATES = {"acknowledged", "refused", "dead_lettered"}
 
 
 def _request(
@@ -532,6 +556,14 @@ class CoordClient:
         )
         return response if isinstance(response, dict) else {}
 
+    def bca_correlation_tuple(self, envelope: dict[str, Any]) -> dict[str, Any]:
+        correlation = {field: envelope[field] for field in BCA_CORRELATION_FIELDS}
+        if not SHA256_RE.fullmatch(str(correlation["direction_digest"])):
+            raise CoordError("BCA direction_digest must be a SHA-256 hex digest")
+        if not SHA256_RE.fullmatch(str(correlation["payload_digest"])):
+            raise CoordError("BCA payload_digest must be a SHA-256 hex digest")
+        return correlation
+
     def read_bca(self, idempotency_key: str) -> dict[str, Any]:
         _status, response = self.call(
             "GET",
@@ -539,21 +571,99 @@ class CoordClient:
         )
         return response if isinstance(response, dict) else {}
 
+    def verify_bca_readback(
+        self,
+        readback: dict[str, Any],
+        *,
+        expected_correlation: dict[str, Any],
+    ) -> dict[str, Any]:
+        events = readback.get("events") if isinstance(readback, dict) else None
+        if not isinstance(events, list) or not events:
+            raise CoordError("BCA delivery readback returned no events")
+        reserved = next(
+            (
+                event
+                for event in events
+                if isinstance(event, dict) and event.get("event_type") == "reserved"
+            ),
+            None,
+        )
+        if not isinstance(reserved, dict):
+            raise CoordError("BCA delivery readback lacks reservation event")
+        reserved_payload = reserved.get("event_payload")
+        if not isinstance(reserved_payload, dict):
+            raise CoordError("BCA delivery reservation payload is malformed")
+        correlated_chain = "correlation" in reserved_payload
+        if correlated_chain and reserved_payload.get("correlation") != expected_correlation:
+            raise CoordError("BCA reservation correlation does not match the dispatched envelope")
+        for field in BCA_ROW_BINDING_FIELDS:
+            if reserved.get(field) != expected_correlation[field]:
+                raise CoordError(f"BCA reservation readback mismatch: {field}")
+        terminal = None
+        for event in events:
+            if not isinstance(event, dict):
+                raise CoordError("BCA delivery readback contains a malformed event")
+            payload = event.get("event_payload")
+            if not isinstance(payload, dict):
+                raise CoordError("BCA delivery event payload is malformed")
+            state = payload.get("delivery_state")
+            if event.get("event_type") != "reserved":
+                if correlated_chain:
+                    if payload.get("correlation") != expected_correlation:
+                        raise CoordError(
+                            "BCA delivery chain mixed or mismatched correlation tuples"
+                        )
+                elif "correlation" in payload:
+                    raise CoordError("legacy BCA delivery chain unexpectedly gained correlation")
+            if state in _BCA_TERMINAL_STATES:
+                for field in BCA_ROW_BINDING_FIELDS:
+                    if event.get(field) != expected_correlation[field]:
+                        raise CoordError(f"BCA terminal readback mismatch: {field}")
+                if terminal is None:
+                    terminal = event
+        if terminal is None:
+            raise CoordError("BCA delivery readback has no terminal worker receipt")
+        return terminal
+
     def wait_for_bca_terminal(
-        self, idempotency_key: str, *, timeout_seconds: float = 30.0, poll_seconds: float = 0.5
+        self,
+        idempotency_key: str,
+        *,
+        expected_correlation: dict[str, Any] | None = None,
+        timeout_seconds: float = 30.0,
+        poll_seconds: float = 0.5,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds
         last = {}
+        strict_binding = expected_correlation is not None and all(
+            field in expected_correlation for field in BCA_CORRELATION_FIELDS
+        )
         while time.monotonic() <= deadline:
             last = self.read_bca(idempotency_key)
-            events = last.get("events") if isinstance(last, dict) else []
-            if any(
-                isinstance(event, dict)
-                and (event.get("event_payload") or {}).get("delivery_state")
-                in {"acknowledged", "refused", "dead_lettered"}
-                for event in (events or [])
-            ):
-                return last
+            if strict_binding:
+                try:
+                    terminal = self.verify_bca_readback(
+                        last,
+                        expected_correlation=expected_correlation,
+                    )
+                except CoordError as exc:
+                    if "no terminal worker receipt" not in str(exc):
+                        raise
+                else:
+                    if (
+                        terminal.get("event_payload", {}).get("delivery_state")
+                        in _BCA_TERMINAL_STATES
+                    ):
+                        return last
+            else:
+                events = last.get("events") if isinstance(last, dict) else []
+                if any(
+                    isinstance(event, dict)
+                    and (event.get("event_payload") or {}).get("delivery_state")
+                    in _BCA_TERMINAL_STATES
+                    for event in (events or [])
+                ):
+                    return last
             time.sleep(poll_seconds)
         raise CoordError("BCA delivery readback timed out before a worker receipt")
 

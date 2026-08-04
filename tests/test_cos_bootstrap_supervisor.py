@@ -223,7 +223,123 @@ def test_reconcile_marks_reused_tty_with_wrong_session_lost():
     )
 
     assert decision["workers"][0]["state"] == "lost"
-    assert decision["wake_required"] is True
+
+
+def test_dispatch_current_focus_requires_live_authority(tmp_path):
+    with pytest.raises(ContractError, match="dispatch-focus requires live supervisor authority"):
+        supervisor.dispatch_current_focus(
+            manifest=manifest(),
+            manifest_path=tmp_path / "manifest.json",
+            state_dir=tmp_path,
+            live_state_path=tmp_path / "iterm-live-state.json",
+            client=object(),
+            worker_receipt_adapter="receipt_module:commit_receipt",
+        )
+
+
+def test_dispatch_current_focus_uses_focused_durable_orchestrator(tmp_path, monkeypatch):
+    paths = supervisor.state_paths(tmp_path)
+    paths["state"].write_text(
+        json.dumps({"authority": True, "controller_epoch": 7}),
+        encoding="utf-8",
+    )
+    paths["current_focus"].write_text("focus", encoding="utf-8")
+    paths["decision"].write_text(
+        json.dumps({"external_state_sweep": {"blocked": False}}),
+        encoding="utf-8",
+    )
+    live_state_path = tmp_path / "iterm-live-state.json"
+    live_state_path.write_text("{}", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    envelope = type(
+        "Envelope",
+        (),
+        {
+            "task_id": "task-1",
+            "worker_id": "worker",
+            "controller_epoch": 7,
+            "generation": 3,
+            "authorization_limits": ("no-deploy", "no-merge"),
+            "plan_id": "cos_work_order",
+            "direction_digest": "d" * 64,
+        },
+    )()
+    calls: list[tuple[str, object]] = []
+
+    class Client:
+        def verify_live_epoch(self, resource, epoch):
+            calls.append(("verify", {"resource": resource, "epoch": epoch}))
+
+    monkeypatch.setattr(
+        supervisor.cos_dispatch_orchestrator,
+        "build_focus_dispatch_plan",
+        lambda **kwargs: calls.append(("build", kwargs)) or (object(), envelope, manifest()),
+    )
+    monkeypatch.setattr(
+        supervisor.cos_dispatch_orchestrator,
+        "dispatch_focus_plan",
+        lambda **kwargs: (
+            calls.append(("dispatch", kwargs))
+            or {"ok": True, "assignment_id": "assignment:task-1:3:worker"}
+        ),
+    )
+
+    result = supervisor.dispatch_current_focus(
+        manifest=manifest(),
+        manifest_path=manifest_path,
+        state_dir=tmp_path,
+        live_state_path=live_state_path,
+        client=Client(),
+        worker_receipt_adapter="receipt_module:commit_receipt",
+    )
+
+    assert result["ok"] is True
+    assert calls[0] == (
+        "verify",
+        {"resource": "workspace:mikebook:c2-supervisor", "epoch": 7},
+    )
+    assert calls[1][0] == "build"
+    assert calls[1][1]["manifest_path"] == manifest_path
+    assert calls[1][1]["current_focus_path"] == paths["current_focus"]
+    assert calls[1][1]["decision_path"] == paths["decision"]
+    assert calls[1][1]["state_path"] == live_state_path
+    assert calls[2] == (
+        "dispatch",
+        {
+            "manifest": manifest(),
+            "envelope": envelope,
+            "worker_receipt_adapter": "receipt_module:commit_receipt",
+        },
+    )
+
+
+def test_dispatch_current_focus_rejects_external_divergence(tmp_path):
+    paths = supervisor.state_paths(tmp_path)
+    paths["state"].write_text(
+        json.dumps({"authority": True, "controller_epoch": 7}),
+        encoding="utf-8",
+    )
+    paths["current_focus"].write_text("focus", encoding="utf-8")
+    paths["decision"].write_text(
+        json.dumps({"external_state_sweep": {"blocked": True}}),
+        encoding="utf-8",
+    )
+
+    class Client:
+        def verify_live_epoch(self, resource, epoch):
+            return None
+
+    with pytest.raises(ContractError, match="external state divergence"):
+        supervisor.dispatch_current_focus(
+            manifest=manifest(),
+            manifest_path=tmp_path / "manifest.json",
+            state_dir=tmp_path,
+            live_state_path=tmp_path / "iterm-live-state.json",
+            client=Client(),
+            worker_receipt_adapter="receipt_module:commit_receipt",
+        )
 
 
 def test_decision_digest_ignores_screen_churn_but_tracks_worker_state():

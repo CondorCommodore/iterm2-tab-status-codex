@@ -135,6 +135,27 @@ def _headless_authority(heartbeat_path: Path, *, attempted_at: float) -> dict[st
     return None
 
 
+def _visible_recovery_heartbeat(
+    heartbeat: dict[str, Any],
+    *,
+    attempted_at: float,
+    expected_epoch: int | None,
+) -> dict[str, Any] | None:
+    recorded_ts = heartbeat.get("recorded_ts")
+    observed_epoch = heartbeat.get("controller_epoch")
+    if (
+        heartbeat.get("authority") is True
+        and heartbeat.get("ownership") == "visible"
+        and isinstance(recorded_ts, (int, float))
+        and float(recorded_ts) > attempted_at
+        and isinstance(observed_epoch, int)
+        and expected_epoch is not None
+        and observed_epoch == expected_epoch
+    ):
+        return heartbeat
+    return None
+
+
 def _action_ack_matches(
     progress: dict[str, Any],
     *,
@@ -694,16 +715,33 @@ def run_once(
 
     pending_since = watchdog.get("pending_since")
     pending_transport = watchdog.get("pending_transport")
+    pending_epoch = watchdog.get("pending_epoch")
     pending_headless_without_visible_reattach = (
         manifest.controller_has_visible_terminal()
         and pending_transport == "headless"
         and heartbeat.get("ownership") != "visible"
     )
-    if (
-        isinstance(pending_since, (int, float))
-        and isinstance(heartbeat.get("recorded_ts"), (int, float))
-        and heartbeat["recorded_ts"] > pending_since
-        and not pending_headless_without_visible_reattach
+    visible_recovery = (
+        _visible_recovery_heartbeat(
+            heartbeat,
+            attempted_at=float(pending_since),
+            expected_epoch=(
+                int(pending_epoch)
+                if isinstance(pending_epoch, int) and not isinstance(pending_epoch, bool)
+                else None
+            ),
+        )
+        if isinstance(pending_since, (int, float)) and pending_transport == "tab"
+        else None
+    )
+    if isinstance(pending_since, (int, float)) and (
+        visible_recovery is not None
+        or (
+            isinstance(heartbeat.get("recorded_ts"), (int, float))
+            and heartbeat["recorded_ts"] > pending_since
+            and not pending_headless_without_visible_reattach
+            and pending_transport != "tab"
+        )
     ):
         receipt = {
             "idempotency_key": (
@@ -733,6 +771,21 @@ def run_once(
         }
         _atomic_json(watchdog_path, watchdog)
         return {"ok": True, "armed": True, "action": "recovered", "receipt": receipt}
+
+    if isinstance(pending_since, (int, float)) and pending_transport == "tab":
+        if (
+            isinstance(heartbeat.get("recorded_ts"), (int, float))
+            and heartbeat["recorded_ts"] > pending_since
+        ):
+            return {
+                "ok": False,
+                "armed": True,
+                "action": "awaiting-visible-recovery-proof",
+                "expected_epoch": pending_epoch,
+                "observed_epoch": heartbeat.get("controller_epoch"),
+                "observed_ownership": heartbeat.get("ownership"),
+                "observed_authority": heartbeat.get("authority"),
+            }
 
     if pending_headless_without_visible_reattach:
         return {
@@ -800,6 +853,7 @@ def run_once(
                 "pending_since": now_ts if result.get("ok") else None,
                 "pending_key": key if result.get("ok") else None,
                 "pending_transport": "tab" if result.get("ok") else None,
+                "pending_epoch": epoch if result.get("ok") else None,
                 "last_attempt_at": _iso(now_ts),
             }
         )
@@ -951,6 +1005,7 @@ def run_once(
             "pending_since": None,
             "pending_key": None,
             "pending_transport": None,
+            "pending_epoch": None,
             "last_attempt_at": _iso(now_ts),
             "last_headless_checkpoint_digest": (
                 receipt.get("checkpoint_digest") if provider_succeeded else None

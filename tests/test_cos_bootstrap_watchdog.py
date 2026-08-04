@@ -547,6 +547,90 @@ def test_failed_tab_poke_does_not_create_pending_recovery(tmp_path):
     assert state["pending_since"] is None
     assert state["pending_key"] is None
     assert state["pending_transport"] is None
+    assert state.get("pending_epoch") is None
+
+
+def test_tab_recovery_requires_visible_authoritative_heartbeat_on_expected_epoch(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest, recovery="tab")
+    arm_stale(tmp_path)
+    client = Client({"holder": "mikebook_codex", "epoch": 7})
+
+    first = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=client,
+        now_ts=500,
+        poke_fn=lambda **_kwargs: {"ok": True},
+    )
+    assert first["action"] == "tab-poke"
+
+    (tmp_path / "supervisor-heartbeat.json").write_text(
+        json.dumps(
+            {
+                "recorded_ts": 501,
+                "authority": True,
+                "ownership": "headless",
+                "controller_epoch": 7,
+            }
+        ),
+        encoding="utf-8",
+    )
+    mismatch = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=client,
+        now_ts=502,
+    )
+
+    assert mismatch["ok"] is False
+    assert mismatch["action"] == "awaiting-visible-recovery-proof"
+    assert mismatch["expected_epoch"] == 7
+    assert mismatch["observed_ownership"] == "headless"
+
+    (tmp_path / "supervisor-heartbeat.json").write_text(
+        json.dumps(
+            {
+                "recorded_ts": 503,
+                "authority": True,
+                "ownership": "visible",
+                "controller_epoch": 8,
+            }
+        ),
+        encoding="utf-8",
+    )
+    wrong_epoch = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=client,
+        now_ts=504,
+    )
+
+    assert wrong_epoch["ok"] is False
+    assert wrong_epoch["action"] == "awaiting-visible-recovery-proof"
+    assert wrong_epoch["observed_epoch"] == 8
+
+    (tmp_path / "supervisor-heartbeat.json").write_text(
+        json.dumps(
+            {
+                "recorded_ts": 505,
+                "authority": True,
+                "ownership": "visible",
+                "controller_epoch": 7,
+            }
+        ),
+        encoding="utf-8",
+    )
+    recovered = watchdog.run_once(
+        manifest_path=manifest,
+        state_dir=tmp_path,
+        client=client,
+        now_ts=506,
+    )
+
+    assert recovered["ok"] is True
+    assert recovered["action"] == "recovered"
+    assert recovered["receipt"]["controller_epoch"] == 7
 
 
 def test_headless_trial_waits_for_epoch_expiry_then_resumes_same_uuid(tmp_path):

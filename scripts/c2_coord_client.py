@@ -599,7 +599,7 @@ class CoordClient:
         for field in BCA_ROW_BINDING_FIELDS:
             if reserved.get(field) != expected_correlation[field]:
                 raise CoordError(f"BCA reservation readback mismatch: {field}")
-        terminal = None
+        terminal_events: list[dict[str, Any]] = []
         for event in events:
             if not isinstance(event, dict):
                 raise CoordError("BCA delivery readback contains a malformed event")
@@ -619,11 +619,28 @@ class CoordClient:
                 for field in BCA_ROW_BINDING_FIELDS:
                     if event.get(field) != expected_correlation[field]:
                         raise CoordError(f"BCA terminal readback mismatch: {field}")
-                if terminal is None:
-                    terminal = event
-        if terminal is None:
+                terminal_events.append(event)
+        if not terminal_events:
             raise CoordError("BCA delivery readback has no terminal worker receipt")
-        return terminal
+        if len(terminal_events) > 1:
+            raise CoordError("BCA delivery readback has multiple terminal worker receipts")
+        return terminal_events[0]
+
+    def wait_for_bca_terminal_receipt(
+        self,
+        idempotency_key: str,
+        *,
+        expected_correlation: dict[str, Any],
+        timeout_seconds: float = 30.0,
+        poll_seconds: float = 0.5,
+    ) -> dict[str, Any]:
+        readback = self.wait_for_bca_terminal(
+            idempotency_key,
+            expected_correlation=expected_correlation,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+        )
+        return self.verify_bca_readback(readback, expected_correlation=expected_correlation)
 
     def wait_for_bca_terminal(
         self,

@@ -110,9 +110,9 @@ def test_dispatch_task_creates_attempt_before_edge_call():
             calls.append(("bca-correlation", envelope["assignment_id"]))
             return {"idempotency_key": envelope["idempotency_key"]}
 
-        def wait_for_bca_terminal(self, key, *, expected_correlation=None):
+        def wait_for_bca_terminal_receipt(self, key, *, expected_correlation=None):
             calls.append(("bca-readback", key, expected_correlation))
-            return {"events": [{"event_payload": {"delivery_state": "acknowledged"}}]}
+            return {"event_payload": {"delivery_state": "acknowledged"}}
 
     def edge_dispatch(*, envelope):
         calls.append(("edge", envelope))
@@ -198,8 +198,10 @@ def test_dispatch_task_rejects_nonterminal_bca_readback():
         def bca_correlation_tuple(self, envelope):
             return {"idempotency_key": envelope["idempotency_key"]}
 
-        def wait_for_bca_terminal(self, key, *, expected_correlation=None):
-            return {"events": [{"event_payload": {"delivery_state": "queued"}}]}
+        def wait_for_bca_terminal_receipt(self, key, *, expected_correlation=None):
+            raise coordinator.ContractError(
+                "dispatch has no terminal worker receipt in BCA readback"
+            )
 
     def edge_dispatch(*, envelope):
         return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}
@@ -252,7 +254,7 @@ def test_dispatch_task_rejects_unsuccessful_worker_receipt():
         def reserve_bca(self, envelope):
             return {"ok": True, "item": {"event_type": "reserved"}}
 
-        def wait_for_bca_terminal(self, key):
+        def wait_for_bca_terminal_receipt(self, key, *, expected_correlation=None):
             raise AssertionError("terminal readback should not be queried after a failed receipt")
 
     def edge_dispatch(*, envelope):
@@ -313,8 +315,8 @@ def test_dispatch_task_rejects_negative_terminal_bca_readback(delivery_state):
         def bca_correlation_tuple(self, envelope):
             return {"idempotency_key": envelope["idempotency_key"]}
 
-        def wait_for_bca_terminal(self, key, *, expected_correlation=None):
-            return {"events": [{"event_payload": {"delivery_state": delivery_state}}]}
+        def wait_for_bca_terminal_receipt(self, key, *, expected_correlation=None):
+            return {"event_payload": {"delivery_state": delivery_state}}
 
     def edge_dispatch(*, envelope):
         return {"ok": True, "receipt": {"assignment_id": envelope["assignment_id"]}}

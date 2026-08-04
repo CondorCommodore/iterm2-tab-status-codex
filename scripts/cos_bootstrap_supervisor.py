@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import cos_dispatch_orchestrator
 from c2_contract import (
     CONTROLLER_MODES,
     RECONCILE_SECONDS,
@@ -1715,6 +1716,45 @@ def _status_focus(path: Path, *, manifest: RunManifest | None = None):
         return None
 
 
+def dispatch_current_focus(
+    *,
+    manifest: RunManifest,
+    manifest_path: Path,
+    state_dir: Path,
+    live_state_path: Path,
+    client: CoordClient,
+    worker_receipt_adapter: str,
+) -> dict[str, Any]:
+    paths = state_paths(state_dir)
+    state = _load_json(paths["state"])
+    epoch = state.get("controller_epoch")
+    if state.get("authority") is not True or not isinstance(epoch, int):
+        raise ContractError("dispatch-focus requires live supervisor authority")
+    if not worker_receipt_adapter.strip():
+        raise ContractError("dispatch-focus requires --worker-receipt-adapter")
+    if not paths["current_focus"].is_file():
+        raise ContractError("dispatch-focus requires current-focus.md")
+    if not paths["decision"].is_file():
+        raise ContractError("dispatch-focus requires decision-current.json")
+    client.verify_live_epoch(SUPERVISOR_RESOURCE, epoch)
+    decision = _load_json(paths["decision"])
+    external_state = decision.get("external_state_sweep") or {}
+    if isinstance(external_state, dict) and external_state.get("blocked") is True:
+        raise ContractError("dispatch-focus is blocked by external state divergence")
+    _plan, envelope, parsed_manifest = cos_dispatch_orchestrator.build_focus_dispatch_plan(
+        manifest_path=manifest_path,
+        current_focus_path=paths["current_focus"],
+        decision_path=paths["decision"],
+        report_dir=cos_dispatch_orchestrator.cos_dashboard.DEFAULT_REPORT_DIR,
+        state_path=live_state_path,
+    )
+    return cos_dispatch_orchestrator.dispatch_focus_plan(
+        manifest=parsed_manifest,
+        envelope=envelope,
+        worker_receipt_adapter=worker_receipt_adapter.strip(),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bootstrap COS C2 lifecycle")
     parser.add_argument(
@@ -1732,6 +1772,7 @@ def build_parser() -> argparse.ArgumentParser:
             "ack",
             "finish-turn",
             "reattach",
+            "dispatch-focus",
         ),
     )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -1748,6 +1789,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--digest")
     parser.add_argument("--generation", type=int)
     parser.add_argument("--epoch", type=int)
+    parser.add_argument(
+        "--worker-receipt-adapter",
+        default="",
+        help="MODULE:CALLABLE worker-authenticated receipt adapter for durable live dispatch",
+    )
     return parser
 
 
@@ -1883,6 +1929,15 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("reattach requires --digest")
         result = reattach_visible(
             client=client, manifest=manifest, state_dir=args.state_dir, digest=args.digest
+        )
+    elif args.command == "dispatch-focus":
+        result = dispatch_current_focus(
+            manifest=manifest,
+            manifest_path=args.manifest,
+            state_dir=args.state_dir,
+            live_state_path=args.live_state,
+            client=client,
+            worker_receipt_adapter=args.worker_receipt_adapter,
         )
     elif args.command == "standby":
         result = set_standby(client=client, state_dir=args.state_dir)

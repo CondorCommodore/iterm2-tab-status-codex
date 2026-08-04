@@ -632,6 +632,27 @@ def test_post_receipt_uses_coord_supported_activity_message_type():
     ]
 
 
+def test_post_claim_request_routes_to_logical_worker_principal():
+    calls = []
+
+    def request(method, url, headers, body, timeout):
+        calls.append((method, url, json.loads(body) if body else None))
+        return 201, {"id": 99}
+
+    client = coord.CoordClient(config(), request=request)
+    client.post_claim_request(
+        {
+            "assignment_id": "assignment:task:1:worker",
+            "task_id": "task",
+            "worker_id": "macbook-tab2-codex",
+            "coord_agent_id": "mikebook_codex",
+        }
+    )
+
+    assert calls[0][2]["to_agent"] == "mikebook_codex"
+    assert calls[0][2]["to_agent"] != calls[0][2]["content"]
+
+
 def test_wait_for_bca_terminal_times_out_without_terminal_receipt():
     calls = []
 

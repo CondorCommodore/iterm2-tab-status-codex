@@ -434,7 +434,12 @@ class CoordClient:
         assignment_id = str(envelope.get("assignment_id") or "").strip()
         task_id = str(envelope.get("task_id") or "").strip()
         worker_id = str(envelope.get("worker_id") or "").strip()
-        if not assignment_id or not task_id or not worker_id:
+        # worker_id is the manifest/terminal identity; coord-api routes inbox
+        # delivery by the worker's authenticated logical principal.  These
+        # are intentionally distinct so a registered terminal can be renamed
+        # without inventing a coord agent for it.
+        coord_agent_id = str(envelope.get("coord_agent_id") or "").strip()
+        if not assignment_id or not task_id or not worker_id or not coord_agent_id:
             raise CoordError("claim request requires assignment, task, and worker identities")
         content = json.dumps(
             {"schema": "cos.claim-request.v1", **envelope},
@@ -447,7 +452,7 @@ class CoordClient:
             "/messages",
             payload={
                 "from_agent": self.config.principal_id,
-                "to_agent": worker_id,
+                "to_agent": coord_agent_id,
                 "msg_type": "instruction",
                 "subject": "COS claim request",
                 "content": content,

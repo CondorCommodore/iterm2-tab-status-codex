@@ -746,6 +746,121 @@ def test_verify_bca_readback_rejects_correlation_drift():
         client.verify_bca_readback(readback, expected_correlation=expected)
 
 
+def test_verify_bca_readback_rejects_multiple_terminal_receipts():
+    client = coord.CoordClient(config(), request=lambda *_args: (500, {}))
+    expected = {
+        "idempotency_key": "dispatch-1",
+        "assignment_id": "assignment-1",
+        "task_id": "task-1",
+        "attempt_id": "attempt-1",
+        "worker_id": "worker-agent",
+        "session_id": "session-1",
+        "controller_epoch": 7,
+        "plan_id": "plan-1",
+        "generation": 3,
+        "direction_digest": "b" * 64,
+        "payload_digest": "a" * 64,
+    }
+    readback = {
+        "events": [
+            {
+                "event_type": "reserved",
+                "idempotency_key": "dispatch-1",
+                "assignment_id": "assignment-1",
+                "task_id": "task-1",
+                "attempt_id": "attempt-1",
+                "worker_id": "worker-agent",
+                "session_id": "session-1",
+                "controller_epoch": 7,
+                "payload_digest": "a" * 64,
+                "event_payload": {"correlation": expected},
+            },
+            {
+                "event_type": "receipt",
+                "idempotency_key": "dispatch-1",
+                "assignment_id": "assignment-1",
+                "task_id": "task-1",
+                "attempt_id": "attempt-1",
+                "worker_id": "worker-agent",
+                "session_id": "session-1",
+                "controller_epoch": 7,
+                "payload_digest": "a" * 64,
+                "event_payload": {"delivery_state": "acknowledged", "correlation": expected},
+            },
+            {
+                "event_type": "receipt",
+                "idempotency_key": "dispatch-1",
+                "assignment_id": "assignment-1",
+                "task_id": "task-1",
+                "attempt_id": "attempt-1",
+                "worker_id": "worker-agent",
+                "session_id": "session-1",
+                "controller_epoch": 7,
+                "payload_digest": "a" * 64,
+                "event_payload": {"delivery_state": "refused", "correlation": expected},
+            },
+        ]
+    }
+    with pytest.raises(coord.CoordError, match="multiple terminal worker receipts"):
+        client.verify_bca_readback(readback, expected_correlation=expected)
+
+
+def test_wait_for_bca_terminal_receipt_returns_exact_terminal_event():
+    expected = {
+        "idempotency_key": "dispatch-1",
+        "assignment_id": "assignment-1",
+        "task_id": "task-1",
+        "attempt_id": "attempt-1",
+        "worker_id": "worker-agent",
+        "session_id": "session-1",
+        "controller_epoch": 7,
+        "plan_id": "plan-1",
+        "generation": 3,
+        "direction_digest": "b" * 64,
+        "payload_digest": "a" * 64,
+    }
+
+    def request(method, url, headers, body, timeout):
+        return 200, {
+            "events": [
+                {
+                    "event_type": "reserved",
+                    "idempotency_key": "dispatch-1",
+                    "assignment_id": "assignment-1",
+                    "task_id": "task-1",
+                    "attempt_id": "attempt-1",
+                    "worker_id": "worker-agent",
+                    "session_id": "session-1",
+                    "controller_epoch": 7,
+                    "payload_digest": "a" * 64,
+                    "event_payload": {"correlation": expected},
+                },
+                {
+                    "event_type": "receipt",
+                    "idempotency_key": "dispatch-1",
+                    "assignment_id": "assignment-1",
+                    "task_id": "task-1",
+                    "attempt_id": "attempt-1",
+                    "worker_id": "worker-agent",
+                    "session_id": "session-1",
+                    "controller_epoch": 7,
+                    "payload_digest": "a" * 64,
+                    "event_payload": {"delivery_state": "acknowledged", "correlation": expected},
+                },
+            ]
+        }
+
+    client = coord.CoordClient(config(), request=request)
+    terminal = client.wait_for_bca_terminal_receipt(
+        "dispatch-1",
+        expected_correlation=expected,
+        timeout_seconds=0.01,
+        poll_seconds=0.0,
+    )
+    assert terminal["event_type"] == "receipt"
+    assert terminal["event_payload"]["delivery_state"] == "acknowledged"
+
+
 def test_post_bca_receipt_requires_reserved_worker_principal():
     other = coord.CoordConfig(
         api_url="http://coord",

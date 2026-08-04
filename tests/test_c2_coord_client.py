@@ -650,7 +650,9 @@ def test_post_claim_request_routes_to_logical_worker_principal():
     )
 
     assert calls[0][2]["to_agent"] == "mikebook_codex"
-    assert calls[0][2]["to_agent"] != calls[0][2]["content"]
+    claim = json.loads(calls[0][2]["content"])
+    assert claim["worker_id"] == "mikebook_codex"
+    assert claim["terminal_worker_id"] == "macbook-tab2-codex"
 
 
 def test_wait_for_bca_terminal_times_out_without_terminal_receipt():

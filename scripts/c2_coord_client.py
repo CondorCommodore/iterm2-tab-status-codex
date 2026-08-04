@@ -441,8 +441,17 @@ class CoordClient:
         coord_agent_id = str(envelope.get("coord_agent_id") or "").strip()
         if not assignment_id or not task_id or not worker_id or not coord_agent_id:
             raise CoordError("claim request requires assignment, task, and worker identities")
+        claim_envelope = {
+            "schema": "cos.claim-request.v1",
+            **envelope,
+            # The coord consumer authenticates the embedded worker_id against
+            # the logical principal, while the terminal edge still needs the
+            # registered worker identity later in the original envelope.
+            "worker_id": coord_agent_id,
+            "terminal_worker_id": worker_id,
+        }
         content = json.dumps(
-            {"schema": "cos.claim-request.v1", **envelope},
+            claim_envelope,
             sort_keys=True,
             separators=(",", ":"),
         )

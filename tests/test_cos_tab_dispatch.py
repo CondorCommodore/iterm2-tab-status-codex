@@ -177,6 +177,10 @@ def _freeze_dispatch_clock(monkeypatch):
     monkeypatch.setattr(dispatch.time, "time", lambda: 1002.0)
 
 
+async def _fake_sleep(_seconds):
+    return None
+
+
 def _hook_digest(values):
     return SignedRuntimeHookObservation.from_session_variables(values).digest()
 
@@ -362,8 +366,13 @@ def test_dispatch_rejects_shell_like_target(monkeypatch):
     assert target.sent == []
 
 
-def test_dispatch_sends_to_agent_without_focus_side_effects(monkeypatch):
-    target = FakeSession("/dev/ttys003", runtime="codex")
+def test_dispatch_sends_crlf_separately_and_confirms_ack(monkeypatch):
+    monkeypatch.setattr(dispatch.asyncio, "sleep", _fake_sleep)
+    target = FakeSession(
+        "/dev/ttys003",
+        runtime="codex",
+        snapshots=[{}, {"session.currentCommand": "codex working"}],
+    )
     cos = FakeSession("/dev/ttys001", runtime="codex")
     _install_fake_iterm(monkeypatch, [cos, target])
 
@@ -378,8 +387,69 @@ def test_dispatch_sends_to_agent_without_focus_side_effects(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert target.sent == ["/goal do work\n"]
+    assert result["observed_ack"] is True
+    assert result["submit_method"] == "iterm2-python-api-crlf"
+    assert result["fallback_used"] is False
+    # Text, CR, and LF must land as three separate API writes -- a single
+    # "text\n" blob is exactly the bracketed-paste-absorbed pattern this fix
+    # replaces.
+    assert target.sent == ["/goal do work", "\r", "\n"]
     assert "focus_returned" not in result
+
+
+def test_dispatch_falls_back_to_applescript_when_no_ack_observed(monkeypatch):
+    monkeypatch.setattr(dispatch.asyncio, "sleep", _fake_sleep)
+    # No snapshot progression: the pure-API path never observes a transition.
+    target = FakeSession("/dev/ttys003", runtime="codex")
+    cos = FakeSession("/dev/ttys001", runtime="codex")
+    _install_fake_iterm(monkeypatch, [cos, target])
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd[0] == "osascript"
+        return SimpleNamespace(returncode=0, stdout="sent", stderr="")
+
+    result = asyncio.run(
+        dispatch.dispatch(
+            object(),
+            dispatch.DispatchRequest(tty="/dev/ttys003", text="/goal do work"),
+            run=fake_run,
+        )
+    )
+
+    assert len(calls) == 1
+    assert result["fallback_used"] is True
+    assert result["submit_method"] == "applescript-character-13-10-fallback"
+    # Still unacknowledged in this test because the fake session's state never
+    # transitions -- the important guarantee is that the fallback fires and is
+    # visible in the response, not silent.
+    assert result["ok"] is False
+
+
+def test_dispatch_reports_failure_without_fallback(monkeypatch):
+    monkeypatch.setattr(dispatch.asyncio, "sleep", _fake_sleep)
+    target = FakeSession("/dev/ttys003", runtime="codex")
+    cos = FakeSession("/dev/ttys001", runtime="codex")
+    _install_fake_iterm(monkeypatch, [cos, target])
+
+    def fake_run(cmd, **kwargs):
+        raise AssertionError("osascript must not be invoked when fallback is disabled")
+
+    result = asyncio.run(
+        dispatch.dispatch(
+            object(),
+            dispatch.DispatchRequest(tty="/dev/ttys003", text="/goal do work"),
+            allow_applescript_fallback=False,
+            run=fake_run,
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["observed_ack"] is False
+    assert result["fallback_used"] is False
+    assert "error" in result
 
 
 def test_looks_like_agent_session_uses_job_or_runtime():

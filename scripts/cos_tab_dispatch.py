@@ -208,26 +208,96 @@ def tty_foreground_group_matches_runtime(tty: str, runtime: str) -> bool:
     )
 
 
-async def dispatch(connection: object, request: DispatchRequest) -> dict[str, Any]:
+async def dispatch(
+    connection: object,
+    request: DispatchRequest,
+    *,
+    ack_attempts: int = 4,
+    allow_applescript_fallback: bool = True,
+    run: Any = subprocess.run,
+) -> dict[str, Any]:
+    """Send one line of text through the pure iTerm2 API and verify it landed.
+
+    A single ``async_send_text(text + "\\n")`` write is not reliable against a
+    real Claude/Codex TUI target: bracketed-paste mode can absorb the trailing
+    newline as pasted content instead of a submit keystroke, so the text gets
+    typed but never submitted. This sends the prompt, CR, and LF as separate
+    API writes (``send_prompt_with_crlf``, the same proven path the registered
+    worker dispatch already uses) and then polls for an observable state
+    transition before claiming success. If no transition is observed, and the
+    caller has not disabled it, this falls back once to the AppleScript
+    character-id-13/10 keystroke-injection path -- logged explicitly in the
+    response, never silently.
+    """
     payload = payload_for_request(request)
     session = await find_session_by_tty(connection, request.tty)
     if session is None:
         return {"ok": False, "tty": request.tty, "error": "target tty not found"}
-    values = await session_variables(session)
-    if request.require_agent and not looks_like_agent_session(values):
+    before = await session_variables(session)
+    if request.require_agent and not looks_like_agent_session(before):
         return {
             "ok": False,
             "tty": request.tty,
             "error": "target session does not look like codex/claude agent",
-            "session": values,
+            "session": before,
         }
-    await session.async_send_text(payload)
-    return {
-        "ok": True,
+
+    if not request.submit:
+        await session.async_send_text(request.text)
+        return {
+            "ok": True,
+            "tty": request.tty,
+            "bytes_sent": len(request.text.encode("utf-8")),
+            "submitted": False,
+            "submit_method": "iterm2-python-api-text-only",
+        }
+
+    before_screen = await _screen_text(session)
+    await send_prompt_with_crlf(session, request.text)
+    observed_ack, latest = await _simple_dispatch_acknowledged(
+        session, before=before, before_screen=before_screen, attempts=ack_attempts
+    )
+    submit_method = "iterm2-python-api-crlf"
+    fallback_used = False
+    fallback_error: str | None = None
+
+    if not observed_ack and allow_applescript_fallback:
+        fallback_used = True
+        script = build_applescript_by_tty(
+            request.tty, request.text, require_goal=request.require_goal
+        )
+        try:
+            result = run(["osascript", "-e", script], capture_output=True, text=True, timeout=10)
+        except Exception as exc:  # noqa: BLE001 - surfaced in the response, not swallowed
+            result = None
+            fallback_error = str(exc)
+        if result is not None and result.returncode == 0 and "sent" in result.stdout:
+            submit_method = "applescript-character-13-10-fallback"
+            observed_ack, latest = await _simple_dispatch_acknowledged(
+                session, before=latest, before_screen=before_screen, attempts=ack_attempts
+            )
+        elif fallback_error is None:
+            fallback_error = (
+                (result.stderr or result.stdout) if result is not None else "osascript failed"
+            ).strip()
+
+    response: dict[str, Any] = {
+        "ok": observed_ack,
         "tty": request.tty,
         "bytes_sent": len(payload.encode("utf-8")),
         "submitted": request.submit,
+        "observed_ack": observed_ack,
+        "submit_method": submit_method,
+        "fallback_used": fallback_used,
     }
+    if fallback_used:
+        response["fallback_error"] = fallback_error
+    if not observed_ack:
+        response["error"] = (
+            "target session did not acknowledge dispatch (no observed state transition)"
+        )
+        response["session"] = latest
+    return response
 
 
 def render_dispatch_prompt(envelope: DispatchEnvelope) -> str:
@@ -276,6 +346,30 @@ def build_applescript(worker: WorkerRegistration, text: str, *, require_goal: bo
     end repeat
   end repeat
   error "registered iTerm session not found"
+end tell'''
+
+
+def build_applescript_by_tty(tty: str, text: str, *, require_goal: bool = True) -> str:
+    """Last-resort fallback for the simple CLI path: no registered session id
+    is available there, so target by tty instead of unique session ID."""
+    validate_tty(tty)
+    validate_text(text, require_goal=require_goal)
+    tty_escaped = _escape_applescript(tty)
+    payload = _escape_applescript(text)
+    return f'''tell application "iTerm2"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        if tty of s is "{tty_escaped}" then
+          tell s to write text "{payload}" without newline
+          tell s to write text (character id 13) without newline
+          tell s to write text (character id 10) without newline
+          return "sent"
+        end if
+      end repeat
+    end repeat
+  end repeat
+  error "session not found for tty"
 end tell'''
 
 
@@ -407,6 +501,55 @@ async def _session_acknowledged_by_transition(
     for attempt in range(max(1, attempts)):
         latest = await session_variables(session)
         if _ack_transitioned(before, latest):
+            return True, latest
+        if attempt + 1 < attempts:
+            await asyncio.sleep(0.25)
+    return False, latest
+
+
+async def _screen_text(session: object) -> str:
+    """Best-effort visible-screen snapshot, used only as a fallback ack signal.
+
+    ``session.isProcessing`` / ``session.currentCommand`` / the ``user.worker*``
+    runtime-hook variables all require iTerm2 shell integration or the c2
+    runtime hook to be installed in the target session. A bare/unhooked target
+    (confirmed against a real, freshly-created Claude Code TUI session) leaves
+    every one of those variables empty even though a dispatch fully lands and
+    is processed -- so the simple CLI path also checks whether the on-screen
+    content actually changed, which needs no cooperating hook at all.
+    """
+    try:
+        contents = await session.async_get_screen_contents()  # type: ignore[attr-defined]
+    except Exception:
+        return ""
+    try:
+        return "\n".join(contents.line(i).string for i in range(contents.number_of_lines))
+    except Exception:
+        return ""
+
+
+async def _simple_dispatch_acknowledged(
+    session: object,
+    *,
+    before: dict[str, str],
+    before_screen: str,
+    attempts: int = 4,
+) -> tuple[bool, dict[str, str]]:
+    """Ack check for the simple CLI path: variable transition OR screen change.
+
+    Registered-worker dispatch (``dispatch_registered``) keeps the stricter
+    signed-hook-only verification -- that path always targets a session that
+    is required to carry the c2 runtime hook. The simple ``--tty``/``--text``
+    CLI path has no such guarantee, so it must not report ``ok: false`` for a
+    dispatch that plainly worked just because the hook variables are absent.
+    """
+    latest = before
+    for attempt in range(max(1, attempts)):
+        latest = await session_variables(session)
+        if _ack_transitioned(before, latest):
+            return True, latest
+        current_screen = await _screen_text(session)
+        if current_screen and current_screen != before_screen:
             return True, latest
         if attempt + 1 < attempts:
             await asyncio.sleep(0.25)
@@ -1400,6 +1543,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate and print the dispatch payload without sending.",
     )
+    parser.add_argument(
+        "--no-applescript-fallback",
+        action="store_true",
+        help=(
+            "Do not fall back to AppleScript keystroke injection if the pure "
+            "iTerm2 API submit is not acknowledged."
+        ),
+    )
     return parser
 
 
@@ -1489,7 +1640,12 @@ def main() -> int:
         return 2
 
     async def _run(connection: object) -> None:
-        print(json.dumps(await dispatch(connection, request), indent=2, sort_keys=True))
+        result = await dispatch(
+            connection,
+            request,
+            allow_applescript_fallback=not args.no_applescript_fallback,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
 
     iterm2.run_until_complete(_run)
     return 0

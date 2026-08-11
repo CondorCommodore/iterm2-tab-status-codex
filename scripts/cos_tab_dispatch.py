@@ -294,8 +294,7 @@ async def dispatch(
         response["fallback_error"] = fallback_error
     if not observed_ack:
         response["error"] = (
-            "target session did not acknowledge dispatch "
-            "(no observed state transition)"
+            "target session did not acknowledge dispatch (no observed state transition)"
         )
         response["session"] = latest
     return response

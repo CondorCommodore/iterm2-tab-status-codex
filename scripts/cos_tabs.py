@@ -27,6 +27,7 @@ Runs under the iTerm2 bundled venv python:
   ITERM_PY=$(ls ~/Library/Application\\ Support/iTerm2/iterm2env/*/bin/python3 | head -1)
   "$ITERM_PY" cos_tabs.py <cmd>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -82,7 +83,7 @@ async def status_line(session) -> str:
     for ln in reversed(lines):
         if any(k in ln for k in ("Context", "context", "ctx:", "weekly", "Working", "esc to")):
             return ln.strip()[:140]
-    return (lines[-1][:140] if lines else "(blank)")
+    return lines[-1][:140] if lines else "(blank)"
 
 
 async def resolve(app, n: str):
@@ -148,16 +149,14 @@ async def cmd_list(conn, _args) -> None:
         ent = reg[n]
         hit = live_by_sid.get(ent["session_id"])
         if not hit:
-            print(f"tab {n} [{ent.get('hint','')}] DEAD (session gone) last-tty={ent.get('tty')}")
+            print(f"tab {n} [{ent.get('hint', '')}] DEAD (session gone) last-tty={ent.get('tty')}")
             continue
         w_i, t_i, session = hit
         d = await describe(session)
         s = await status_line(session)
-        same_spot = (
-            t_i == ent.get("tab_index_at_baseline") and w_i == ent.get("window")
-        )
+        same_spot = t_i == ent.get("tab_index_at_baseline") and w_i == ent.get("window")
         moved = "" if same_spot else f" (now w{w_i}.pos{t_i})"
-        print(f"tab {n} [{ent.get('hint','')}]{moved} tty={d['tty']} job={d['job']}")
+        print(f"tab {n} [{ent.get('hint', '')}]{moved} tty={d['tty']} job={d['job']}")
         print(f"    {s}")
 
 
@@ -169,7 +168,7 @@ async def cmd_peek(conn, args) -> None:
     c = await session.async_get_screen_contents()
     lines = [c.line(i).string.rstrip() for i in range(c.number_of_lines)]
     lines = [ln for ln in lines if ln]
-    print("\n".join(lines[-args.lines:]))
+    print("\n".join(lines[-args.lines :]))
 
 
 async def cmd_send(conn, args) -> None:
@@ -199,8 +198,12 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("baseline", help="stamp numbers onto visible tabs + write registry")
-    b.add_argument("--hint", action="append", default=[],
-                   help="N=label override, e.g. --hint 3=t2mount (repeatable)")
+    b.add_argument(
+        "--hint",
+        action="append",
+        default=[],
+        help="N=label override, e.g. --hint 3=t2mount (repeatable)",
+    )
 
     sub.add_parser("list", help="registry vs live state")
 

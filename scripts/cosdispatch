@@ -1,0 +1,12 @@
+#!/bin/bash
+# Stable entrypoint for cos_tab_dispatch.py under the iTerm2 bundled venv.
+# Fixed path so a single Bash permission rule can pre-approve tab dispatch:
+#   Bash(/Users/mikebook/code/iterm2-tab-status-codex/scripts/cosdispatch:*)
+# Usage: cosdispatch --tty /dev/ttysNNN --text "..." --allow-non-goal
+set -euo pipefail
+VENV="$(ls "$HOME/Library/Application Support/iTerm2/iterm2env/versions/"*/bin/python3 2>/dev/null | head -1)"
+if [ -z "${VENV:-}" ]; then
+  echo "FATAL: iTerm2 venv python not found" >&2
+  exit 78
+fi
+exec "$VENV" "$HOME/code/iterm2-tab-status-codex/scripts/cos_tab_dispatch.py" "$@"

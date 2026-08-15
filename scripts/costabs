@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# costabs — stable-path wrapper for cos_tabs.py under the iTerm2 bundled venv.
+set -euo pipefail
+PY="$(ls "$HOME/Library/Application Support/iTerm2/iterm2env/versions/"*/bin/python3 2>/dev/null | head -1)"
+[ -n "$PY" ] || { echo "iTerm2 venv python not found" >&2; exit 1; }
+exec "$PY" "$(dirname "$0")/cos_tabs.py" "$@"

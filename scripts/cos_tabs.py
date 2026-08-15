@@ -24,7 +24,8 @@ error advising re-baseline. Both survive tab reordering; only a closed
 window kills a number (shown as DEAD in list).
 
 Runs under the iTerm2 bundled venv python:
-  "$(ls ~/Library/Application\\ Support/iTerm2/iterm2env/versions/*/bin/python3 | head -1)" cos_tabs.py <cmd>
+  ITERM_PY=$(ls ~/Library/Application\\ Support/iTerm2/iterm2env/*/bin/python3 | head -1)
+  "$ITERM_PY" cos_tabs.py <cmd>
 """
 from __future__ import annotations
 
@@ -77,10 +78,10 @@ async def status_line(session) -> str:
     except Exception:
         return "(unreadable)"
     lines = [c.line(i).string.rstrip() for i in range(c.number_of_lines)]
-    lines = [l for l in lines if l]
-    for l in reversed(lines):
-        if any(k in l for k in ("Context", "context", "ctx:", "weekly", "Working", "esc to")):
-            return l.strip()[:140]
+    lines = [ln for ln in lines if ln]
+    for ln in reversed(lines):
+        if any(k in ln for k in ("Context", "context", "ctx:", "weekly", "Working", "esc to")):
+            return ln.strip()[:140]
     return (lines[-1][:140] if lines else "(blank)")
 
 
@@ -114,7 +115,12 @@ async def cmd_baseline(conn, args) -> None:
         hint = args.hints.get(str(n), "") if args.hints else ""
         if not hint:
             job = d["job"].lower()
-            hint = "codex" if "codex" in job else ("claude" if "python" in job else (d["job"] or "sh"))
+            if "codex" in job:
+                hint = "codex"
+            elif "python" in job:
+                hint = "claude"
+            else:
+                hint = d["job"] or "sh"
         await session.async_set_variable("user.cosTab", str(n))
         try:
             await tab.async_set_title(f"{n}·{hint}")
@@ -147,7 +153,10 @@ async def cmd_list(conn, _args) -> None:
         w_i, t_i, session = hit
         d = await describe(session)
         s = await status_line(session)
-        moved = "" if t_i == ent.get("tab_index_at_baseline") and w_i == ent.get("window") else f" (now w{w_i}.pos{t_i})"
+        same_spot = (
+            t_i == ent.get("tab_index_at_baseline") and w_i == ent.get("window")
+        )
+        moved = "" if same_spot else f" (now w{w_i}.pos{t_i})"
         print(f"tab {n} [{ent.get('hint','')}]{moved} tty={d['tty']} job={d['job']}")
         print(f"    {s}")
 
@@ -159,7 +168,7 @@ async def cmd_peek(conn, args) -> None:
         sys.exit(f"tab {args.n}: not found (re-run baseline?)")
     c = await session.async_get_screen_contents()
     lines = [c.line(i).string.rstrip() for i in range(c.number_of_lines)]
-    lines = [l for l in lines if l]
+    lines = [ln for ln in lines if ln]
     print("\n".join(lines[-args.lines:]))
 
 

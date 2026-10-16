@@ -303,7 +303,26 @@ Run the fast dry-run harness before touching live tabs:
 python3 scripts/cos_dry_run_harness.py
 ```
 
-## Bootstrap C2 lifecycle
+## Session registry diagnostic
+
+The retired bootstrap supervisor's remaining read-only check reports stale
+active sessions from the shared session registry. It does not edit or end
+sessions and always exits successfully:
+
+```bash
+scripts/cos-bootstrap-supervisor stale-session-check
+```
+
+## Bootstrap C2 lifecycle retirement
+
+The lifecycle instructions below are historical reference only. Do not install
+or arm the retired supervisor. The operator should unload its watchdog agent
+using the installed plist at
+`~/Library/LaunchAgents/com.local.cos-bootstrap-watchdog.plist` with:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.local.cos-bootstrap-watchdog.plist"
+```
 
 Copy and fill the example manifest without storing credentials in it:
 

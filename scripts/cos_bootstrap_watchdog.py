@@ -240,7 +240,8 @@ def _action_prompt(
 ) -> str:
     return (
         f"/goal C2_CONTINUE actions={path} sha256={digest} generation={generation} "
-        f"decision={decision_digest} epoch={epoch}. First run cosctl ack for this exact "
+        f"decision={decision_digest} epoch={epoch}. First run "
+        "scripts/cos-bootstrap-supervisor ack for this exact "
         "digest/generation/epoch, then read the file, execute its bounded next actions, and "
         "publish a new checkpoint before ending the turn."
     )

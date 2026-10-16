@@ -31,9 +31,11 @@ land; it does not weaken, waive, or make the requirement optional.
 ### V1 must do
 
 1. Join coord-api as the exact registered principal/runtime and show a read-only fleet snapshot before action.
-   `cosctl status` reports registered worker states, actionable coord items, wake reasons, active plan
-   generation, and a decision digest without mutating state. `cosctl preflight` separately proves the
-   manifest, landed plan paths, service registration, and edge health.
+   `scripts/cos-bootstrap-supervisor status` reports registered worker states,
+   actionable coord items, wake reasons, active plan generation, and a decision
+   digest without mutating state. `scripts/cos-bootstrap-supervisor preflight`
+   separately proves the manifest, landed plan paths, service registration,
+   and edge health.
 2. Consume durable BCA direction and the controlling COS plan generation. Publish digest-bound local
    `program.md` and `current-focus.md` projections containing only durable references, bounded current
    actions, known gates, budget/capability policy, and the next reconciliation deadline. They restore

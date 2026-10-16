@@ -14,9 +14,11 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import cos_dispatch_orchestrator
 from c2_contract import (
@@ -67,6 +69,7 @@ REQUIRED_LAUNCHD_SERVICES = {
 }
 COS_DIRECTION_SCHEMA = "cos.direction.v1"
 COS_WORK_KINDS = {"task", "pr"}
+STALE_SESSION_SECONDS = 30 * 60
 
 
 def _iso(ts: float | None = None) -> str:
@@ -79,6 +82,129 @@ def _load_json(path: Path, default: dict[str, Any] | None = None) -> dict[str, A
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {} if default is None else dict(default)
     return value if isinstance(value, dict) else ({} if default is None else dict(default))
+
+
+def _session_activity_seconds(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _session_tty(value: object) -> str:
+    text = str(value or "").strip()
+    if text.startswith("/dev/"):
+        text = text[5:]
+    return "" if text in {"", "?", "??"} else text
+
+
+def load_registry_rows() -> list[dict[str, Any]] | None:
+    """Load rows through the shared COS C2 session registry reader."""
+    shared_bin = Path.home() / ".config" / "cos-c2" / "bin"
+    shared_bin_text = str(shared_bin)
+    if shared_bin_text not in sys.path:
+        sys.path.insert(0, shared_bin_text)
+    from session_registry import load_registry_rows as shared_load_registry_rows
+
+    return shared_load_registry_rows()
+
+
+def live_ttys_from_ps() -> set[str] | None:
+    """Return normalized live tty names; None means ps could not be read."""
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "tty="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return {_session_tty(line) for line in result.stdout.splitlines()} - {""}
+
+
+def stale_session_rows(
+    rows: Iterable[dict[str, Any]], *, now_s: float, live_ttys: set[str] | None
+) -> list[dict[str, Any]]:
+    """Return report-only findings for stale active sessions."""
+    active = [
+        row
+        for row in rows
+        if isinstance(row, dict) and str(row.get("status") or "").casefold() == "active"
+    ]
+    reasons: dict[int, str] = {}
+    for index, row in enumerate(active):
+        activity = _session_activity_seconds(row.get("last_activity"))
+        tty = _session_tty(row.get("tty"))
+        if activity is not None and now_s - activity > STALE_SESSION_SECONDS:
+            reasons[index] = "older_than_30m"
+        elif tty and live_ttys is not None and tty not in live_ttys:
+            reasons[index] = "tty_not_live"
+
+    duplicate_keys = (
+        ("tty", "duplicate_tty"),
+        ("iterm_session_id", "duplicate_iterm_session_id"),
+    )
+    for field, reason in duplicate_keys:
+        groups: dict[str, list[int]] = {}
+        for index, row in enumerate(active):
+            value = (
+                _session_tty(row.get(field))
+                if field == "tty"
+                else str(row.get(field) or "").strip()
+            )
+            if value:
+                groups.setdefault(value, []).append(index)
+        for indices in groups.values():
+            if len(indices) < 2:
+                continue
+            def freshness(index: int) -> tuple[float, str]:
+                activity = _session_activity_seconds(active[index].get("last_activity"))
+                return (
+                    activity if activity is not None else float("-inf"),
+                    str(active[index].get("session_id") or ""),
+                )
+
+            winner = max(indices, key=freshness)
+            for index in indices:
+                if index != winner and index not in reasons:
+                    reasons[index] = reason
+
+    return [
+        {
+            "session_id": row.get("session_id"),
+            "name": row.get("name"),
+            "tty": row.get("tty"),
+            "reason": reasons[index],
+            "last_activity": row.get("last_activity"),
+        }
+        for index, row in enumerate(active)
+        if index in reasons
+    ]
+
+
+def stale_session_report(rows: Iterable[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Emit JSONL findings and a count; this observation-only command always succeeds."""
+    live_ttys = live_ttys_from_ps()
+    if live_ttys is None:
+        print("ps tty listing unavailable; skipping tty ownership checks", file=sys.stderr)
+    findings = stale_session_rows(
+        rows or [], now_s=time.time(), live_ttys=live_ttys
+    )
+    for finding in findings:
+        print(json.dumps(finding, separators=(",", ":"), sort_keys=True))
+    print(json.dumps({"stale_count": len(findings)}, separators=(",", ":"), sort_keys=True))
+    return findings
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -1764,6 +1890,7 @@ def build_parser() -> argparse.ArgumentParser:
             "status",
             "preflight",
             "roster-proposal",
+            "stale-session-check",
             "run",
             "poke",
             "standby",
@@ -1800,6 +1927,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "stale-session-check":
+        try:
+            rows = load_registry_rows()
+        except Exception as exc:  # the diagnostic must never gate other work
+            print(f"session registry unavailable: {type(exc).__name__}: {exc}", file=sys.stderr)
+            rows = None
+        if rows is None:
+            print("session registry returned no fresh rows", file=sys.stderr)
+        stale_session_report(rows)
+        return 0
     manifest = load_manifest(args.manifest)
     selected_manifest_sha256 = manifest_file_sha256(args.manifest)
     if args.command == "preflight":

@@ -254,7 +254,8 @@ python3 scripts/cos_tab_state_monitor.py --print
 python3 scripts/cos_dashboard.py
 ```
 
-`cosctl status` is the pre-action read-only view for the bootstrap supervisor.
+`scripts/cos-bootstrap-supervisor status` is the pre-action read-only view
+for the bootstrap supervisor.
 It includes the live lease, arm/readiness state, registered worker
 classification, actionable coord feed, wake reasons, and a deterministic
 decision digest. It does not reserve workers, dispatch prompts, or change
@@ -268,7 +269,8 @@ for diagnosis but cannot appear operationally armed; `armed_but_invalid` and
 `requires_explicit_rearm` make the recovery action explicit. If no manifest is
 provided, the effective value is `null` rather than an unverified claim.
 
-Before a terminal experiment, run `bash scripts/cosctl preflight --manifest
+Before a terminal experiment, run
+`bash scripts/cos-bootstrap-supervisor preflight --manifest
 <path>`. It checks the exact manifest digest, plan paths, required launchd
 registrations, and the iTerm edge health without enabling services or sending
 input. A nonzero result is a hard stop for delivery. The JSON response includes
@@ -279,7 +281,8 @@ consume those codes directly; it must not infer permission to edit a manifest
 or adopt a replacement identity from the diagnostic output.
 
 When preflight reports identity drift, inspect the non-mutating proposal with
-`bash scripts/cosctl roster-proposal --manifest <path>`. It compares expected
+`bash scripts/cos-bootstrap-supervisor roster-proposal --manifest <path>`.
+It compares expected
 worker UUID/TTY/runtime bindings with live sessions and lists unregistered
 sessions. It never edits the manifest; adoption requires an explicit re-arm.
 
@@ -318,12 +321,12 @@ bash launchd/install-cos-iterm-edge-launchd.sh \
   --manifest ~/.config/cos-c2/run-manifest.json \
   --state-dir ~/.local/state/cos-c2
 bash launchd/install-cos-bootstrap-watchdog-launchd.sh
-scripts/cosctl status
-scripts/cosctl arm
-scripts/cosctl run
-scripts/cosctl poke
-scripts/cosctl standby
-scripts/cosctl stop
+scripts/cos-bootstrap-supervisor status
+scripts/cos-bootstrap-supervisor arm
+scripts/cos-bootstrap-supervisor run
+scripts/cos-bootstrap-supervisor poke
+scripts/cos-bootstrap-supervisor standby
+scripts/cos-bootstrap-supervisor stop
 ```
 
 The API installer removes the legacy edge daemon from iTerm AutoLaunch; only
@@ -353,14 +356,14 @@ database, authority grant, or raw untrusted message bodies. Publish a staged
 current-focus update with:
 
 ```bash
-scripts/cosctl checkpoint --from-file /path/to/staged-current-actions.txt
+scripts/cos-bootstrap-supervisor checkpoint --from-file /path/to/staged-current-actions.txt
 ```
 
 On wake, the edge injects only a fixed `/goal C2_CONTINUE` line naming the
 absolute path and SHA-256. The model's first action is an exact progress ACK:
 
 ```bash
-scripts/cosctl ack --digest <sha256> --generation <n> --epoch <n> \
+scripts/cos-bootstrap-supervisor ack --digest <sha256> --generation <n> --epoch <n> \
   --ownership visible
 ```
 
@@ -395,12 +398,12 @@ coord-api proves that epoch absent may the watchdog run a bounded headless
 resume of the same CLI UUID. A successful turn must acquire the successor
 epoch, publish a new headless checkpoint with a fresh exact-digest receipt,
 obtain and verify coord-api readback for that receipt, release it with
-`scripts/cosctl finish-turn --digest <sha256> --ownership headless`, and exit.
+`scripts/cos-bootstrap-supervisor finish-turn --digest <sha256> --ownership headless`, and exit.
 Automatic epoch rebind is transport bookkeeping and never counts as model
 progress. Repeated delivery of the same ACK also cannot refresh progress time.
 Later deadlines may launch further bounded turns without waiting for the stale
 visible TUI to mirror them. Explicit visible recovery uses
-`scripts/cosctl reattach --digest <sha256>` after the headless epoch is absent.
+`scripts/cos-bootstrap-supervisor reattach --digest <sha256>` after the headless epoch is absent.
 Provider failures retain bounded backoff while lease and health checks continue.
 
 While armed, the same tick also probes the edge socket with a two-second bound.

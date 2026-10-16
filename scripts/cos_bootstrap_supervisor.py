@@ -195,8 +195,11 @@ def stale_session_rows(
 
 def stale_session_report(rows: Iterable[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Emit JSONL findings and a count; this observation-only command always succeeds."""
+    live_ttys = live_ttys_from_ps()
+    if live_ttys is None:
+        print("ps tty listing unavailable; skipping tty ownership checks", file=sys.stderr)
     findings = stale_session_rows(
-        rows or [], now_s=time.time(), live_ttys=live_ttys_from_ps()
+        rows or [], now_s=time.time(), live_ttys=live_ttys
     )
     for finding in findings:
         print(json.dumps(finding, separators=(",", ":"), sort_keys=True))
@@ -1930,6 +1933,8 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # the diagnostic must never gate other work
             print(f"session registry unavailable: {type(exc).__name__}: {exc}", file=sys.stderr)
             rows = None
+        if rows is None:
+            print("session registry returned no fresh rows", file=sys.stderr)
         stale_session_report(rows)
         return 0
     manifest = load_manifest(args.manifest)

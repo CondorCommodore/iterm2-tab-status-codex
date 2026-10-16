@@ -614,11 +614,14 @@ def test_preflight_fails_closed_when_terminal_actions_are_disabled(tmp_path):
     manifest_path.write_text("{}", encoding="utf-8")
     plan = tmp_path / "plan.md"
     plan.write_text("# plan\n", encoding="utf-8")
+    live_state = tmp_path / "live.json"
+    live_state.write_text(json.dumps({"sessions": []}), encoding="utf-8")
     m = manifest(plan_paths=[str(plan)])
 
     result = supervisor.preflight(
         manifest=m,
         manifest_path=manifest_path,
+        live_state_path=live_state,
         readiness=readiness(watchdog=True, edge=True),
         edge_probe=lambda *_args, **_kwargs: {"ok": True},
     )
@@ -885,6 +888,113 @@ def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
             "readiness": "running",
         },
     ]
+
+
+def test_stale_session_rows_reports_old_active_row_only():
+    rows = [
+        {"session_id": "old", "name": "OLD", "status": "active", "last_activity": 100, "tty": "ttys001"},
+        {"session_id": "fresh", "name": "FRESH", "status": "active", "last_activity": 1900, "tty": "ttys002"},
+        {"session_id": "closed", "name": "CLOSED", "status": "closed", "last_activity": 1, "tty": "ttys003"},
+    ]
+
+    stale = supervisor.stale_session_rows(rows, now_s=2000, live_ttys={"ttys001", "ttys002", "ttys003"})
+
+    assert stale == [
+        {
+            "session_id": "old",
+            "name": "OLD",
+            "tty": "ttys001",
+            "reason": "older_than_30m",
+            "last_activity": 100,
+        }
+    ]
+
+
+def test_stale_session_rows_reports_unowned_tty():
+    stale = supervisor.stale_session_rows(
+        [{"session_id": "dead", "name": "DEAD", "status": "active", "last_activity": 1900, "tty": "/dev/ttys004"}],
+        now_s=2000,
+        live_ttys=set(),
+    )
+
+    assert stale[0]["reason"] == "tty_not_live"
+
+
+def test_stale_session_rows_keeps_newest_duplicate_tty_and_guid():
+    rows = [
+        {"session_id": "old", "name": "OLD", "status": "active", "last_activity": 1800, "tty": "ttys005", "iterm_session_id": "guid-old"},
+        {"session_id": "new", "name": "NEW", "status": "active", "last_activity": 1900, "tty": "ttys005", "iterm_session_id": "guid-new"},
+        {"session_id": "guid-old-row", "name": "GUID-OLD", "status": "active", "last_activity": 1800, "tty": "ttys006", "iterm_session_id": "guid-shared"},
+        {"session_id": "guid-new-row", "name": "GUID-NEW", "status": "active", "last_activity": 1900, "tty": "ttys007", "iterm_session_id": "guid-shared"},
+    ]
+
+    stale = supervisor.stale_session_rows(rows, now_s=2000, live_ttys={"ttys005", "ttys006", "ttys007"})
+
+    assert [(row["session_id"], row["reason"]) for row in stale] == [
+        ("old", "duplicate_tty"),
+        ("guid-old-row", "duplicate_iterm_session_id"),
+    ]
+
+
+def test_stale_session_rows_keeps_recent_unambiguous_active_row():
+    stale = supervisor.stale_session_rows(
+        [{"session_id": "current", "name": "CURRENT", "status": "active", "last_activity": 1950, "tty": "ttys008", "iterm_session_id": "guid-current"}],
+        now_s=2000,
+        live_ttys={"ttys008"},
+    )
+
+    assert stale == []
+
+
+def test_load_registry_rows_imports_the_shared_reader_from_cos_c2_bin(tmp_path, monkeypatch):
+    shared_bin = tmp_path / ".config" / "cos-c2" / "bin"
+    shared_bin.mkdir(parents=True)
+    (shared_bin / "session_registry.py").write_text(
+        "def load_registry_rows():\n"
+        "    return [{'session_id': 'fake', 'name': 'FAKE', 'status': 'active'}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(supervisor.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(supervisor.sys, "path", list(supervisor.sys.path))
+    monkeypatch.delitem(supervisor.sys.modules, "session_registry", raising=False)
+
+    rows = supervisor.load_registry_rows()
+
+    assert rows == [{"session_id": "fake", "name": "FAKE", "status": "active"}]
+    assert str(shared_bin) == supervisor.sys.path[0]
+
+
+def test_stale_session_check_prints_findings_and_count_without_loading_manifest(monkeypatch, capsys):
+    monkeypatch.setattr(
+        supervisor,
+        "load_registry_rows",
+        lambda: [{"session_id": "old", "name": "OLD", "status": "active", "last_activity": 100, "tty": "ttys001"}],
+    )
+    monkeypatch.setattr(supervisor, "live_ttys_from_ps", lambda: {"ttys001"})
+    monkeypatch.setattr(supervisor.time, "time", lambda: 2000)
+
+    result = supervisor.main(["stale-session-check", "--manifest", "/missing/manifest.json"])
+
+    assert result == 0
+    assert capsys.readouterr().out.splitlines() == [
+        '{"last_activity":100,"name":"OLD","reason":"older_than_30m","session_id":"old","tty":"ttys001"}',
+        '{"stale_count":1}',
+    ]
+
+
+def test_stale_session_check_returns_zero_if_shared_reader_is_unavailable(monkeypatch, capsys):
+    def unavailable():
+        raise ImportError("shared session reader missing")
+
+    monkeypatch.setattr(supervisor, "load_registry_rows", unavailable)
+    monkeypatch.setattr(supervisor, "live_ttys_from_ps", lambda: set())
+
+    result = supervisor.main(["stale-session-check"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.out == '{"stale_count":0}\n'
+    assert "shared session reader missing" in captured.err
 
 
 def test_roster_proposal_surfaces_binding_drift_for_expected_session(tmp_path):

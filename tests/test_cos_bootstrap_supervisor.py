@@ -1554,3 +1554,81 @@ def test_headless_controller_skips_wake_poke(tmp_path, monkeypatch):
     assert result["wake_required"] is True
     assert result["poked"] is False
     assert pokes == []
+
+
+def test_roster_proposal_cli_output_is_characterized(tmp_path, monkeypatch, capsys):
+    live_state_path = tmp_path / "live.json"
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "iterm_session_id": "iterm-worker",
+                        "tty": "/dev/ttys003",
+                        "runtime": "codex",
+                        "cli_session_id": "cli-worker",
+                        "coord_session_id": "coord-worker",
+                        "readiness": "idle",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(supervisor, "load_manifest", lambda _path: manifest())
+    monkeypatch.setattr(supervisor, "manifest_file_sha256", lambda _path: "unused")
+
+    result = supervisor.main(
+        [
+            "roster-proposal",
+            "--manifest",
+            str(tmp_path / "manifest.json"),
+            "--live-state",
+            str(live_state_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    expected = {
+        "manifest_id": "test",
+        "requires_explicit_rearm": True,
+        "unregistered_live_sessions": [],
+        "workers": [
+            {
+                "drifted_fields": [],
+                "expected": {
+                    "iterm_session_id": "iterm-worker",
+                    "runtime": "codex",
+                    "tty": "/dev/ttys003",
+                },
+                "expected_bindings": {
+                    "cli_session_id": "cli-worker",
+                    "coord_session_id": "coord-worker",
+                    "iterm_session_id": "iterm-worker",
+                    "runtime": "codex",
+                    "tty": "/dev/ttys003",
+                },
+                "observed_bindings": [
+                    {
+                        "cli_session_id": "cli-worker",
+                        "coord_session_id": "coord-worker",
+                        "iterm_session_id": "iterm-worker",
+                        "runtime": "codex",
+                        "tty": "/dev/ttys003",
+                    }
+                ],
+                "observed_on_expected_tty": [
+                    {
+                        "iterm_session_id": "iterm-worker",
+                        "readiness": "idle",
+                        "runtime": "codex",
+                    }
+                ],
+                "status": "unchanged",
+                "worker_id": "worker",
+            }
+        ],
+    }
+    assert result == 0
+    assert captured.err == ""
+    assert captured.out == json.dumps(expected, indent=2, sort_keys=True) + "\n"

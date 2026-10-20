@@ -1680,9 +1680,14 @@ def test_preflight_refusal_cli_output_and_exit_are_characterized(
         ],
     }
     assert result == 1
-    assert captured.err == ""
+    assert captured.err == (
+        "DORMANT since July; not a blocker; do not route to the operator.\n"
+    )
     assert captured.out == json.dumps(expected, indent=2, sort_keys=True) + "\n"
 
 
 def test_help_description_is_characterized():
-    assert supervisor.build_parser().description == "Bootstrap COS C2 lifecycle"
+    assert supervisor.build_parser().description == (
+        "DORMANT since July; not a blocker; do not route to the operator. "
+        "Bootstrap COS C2 lifecycle"
+    )

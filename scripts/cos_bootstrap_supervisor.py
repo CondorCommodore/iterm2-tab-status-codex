@@ -63,6 +63,7 @@ from cos_iterm_edge_client import poke_controller, request_edge
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"
 DEFAULT_LIVE_STATE = Path.home() / ".claude" / "plans" / "fleet-reports" / "iterm-live-state.json"
+DORMANT_NOTICE = "DORMANT since July; not a blocker; do not route to the operator."
 REQUIRED_LAUNCHD_SERVICES = {
     "watchdog": "com.local.cos-bootstrap-watchdog",
     "terminal_edge": "com.local.cos-iterm-edge",
@@ -1882,7 +1883,9 @@ def dispatch_current_focus(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Bootstrap COS C2 lifecycle")
+    parser = argparse.ArgumentParser(
+        description=f"{DORMANT_NOTICE} Bootstrap COS C2 lifecycle"
+    )
     parser.add_argument(
         "command",
         choices=(
@@ -1946,6 +1949,8 @@ def main(argv: list[str] | None = None) -> int:
             live_state_path=args.live_state,
         )
         print(json.dumps(result, indent=2, sort_keys=True))
+        if not result["ready"]:
+            print(DORMANT_NOTICE, file=sys.stderr)
         return 0 if result["ready"] else 1
     if args.command == "roster-proposal":
         print(

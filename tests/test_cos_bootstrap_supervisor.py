@@ -892,12 +892,34 @@ def test_roster_proposal_is_read_only_and_requires_explicit_rearm(tmp_path):
 
 def test_stale_session_rows_reports_old_active_row_only():
     rows = [
-        {"session_id": "old", "name": "OLD", "status": "active", "last_activity": 100, "tty": "ttys001"},
-        {"session_id": "fresh", "name": "FRESH", "status": "active", "last_activity": 1900, "tty": "ttys002"},
-        {"session_id": "closed", "name": "CLOSED", "status": "closed", "last_activity": 1, "tty": "ttys003"},
+        {
+            "session_id": "old",
+            "name": "OLD",
+            "status": "active",
+            "last_activity": 100,
+            "tty": "ttys001",
+        },
+        {
+            "session_id": "fresh",
+            "name": "FRESH",
+            "status": "active",
+            "last_activity": 1900,
+            "tty": "ttys002",
+        },
+        {
+            "session_id": "closed",
+            "name": "CLOSED",
+            "status": "closed",
+            "last_activity": 1,
+            "tty": "ttys003",
+        },
     ]
 
-    stale = supervisor.stale_session_rows(rows, now_s=2000, live_ttys={"ttys001", "ttys002", "ttys003"})
+    stale = supervisor.stale_session_rows(
+        rows,
+        now_s=2000,
+        live_ttys={"ttys001", "ttys002", "ttys003"},
+    )
 
     assert stale == [
         {
@@ -912,7 +934,15 @@ def test_stale_session_rows_reports_old_active_row_only():
 
 def test_stale_session_rows_reports_unowned_tty():
     stale = supervisor.stale_session_rows(
-        [{"session_id": "dead", "name": "DEAD", "status": "active", "last_activity": 1900, "tty": "/dev/ttys004"}],
+        [
+            {
+                "session_id": "dead",
+                "name": "DEAD",
+                "status": "active",
+                "last_activity": 1900,
+                "tty": "/dev/ttys004",
+            }
+        ],
         now_s=2000,
         live_ttys=set(),
     )
@@ -922,13 +952,45 @@ def test_stale_session_rows_reports_unowned_tty():
 
 def test_stale_session_rows_keeps_newest_duplicate_tty_and_guid():
     rows = [
-        {"session_id": "old", "name": "OLD", "status": "active", "last_activity": 1800, "tty": "ttys005", "iterm_session_id": "guid-old"},
-        {"session_id": "new", "name": "NEW", "status": "active", "last_activity": 1900, "tty": "ttys005", "iterm_session_id": "guid-new"},
-        {"session_id": "guid-old-row", "name": "GUID-OLD", "status": "active", "last_activity": 1800, "tty": "ttys006", "iterm_session_id": "guid-shared"},
-        {"session_id": "guid-new-row", "name": "GUID-NEW", "status": "active", "last_activity": 1900, "tty": "ttys007", "iterm_session_id": "guid-shared"},
+        {
+            "session_id": "old",
+            "name": "OLD",
+            "status": "active",
+            "last_activity": 1800,
+            "tty": "ttys005",
+            "iterm_session_id": "guid-old",
+        },
+        {
+            "session_id": "new",
+            "name": "NEW",
+            "status": "active",
+            "last_activity": 1900,
+            "tty": "ttys005",
+            "iterm_session_id": "guid-new",
+        },
+        {
+            "session_id": "guid-old-row",
+            "name": "GUID-OLD",
+            "status": "active",
+            "last_activity": 1800,
+            "tty": "ttys006",
+            "iterm_session_id": "guid-shared",
+        },
+        {
+            "session_id": "guid-new-row",
+            "name": "GUID-NEW",
+            "status": "active",
+            "last_activity": 1900,
+            "tty": "ttys007",
+            "iterm_session_id": "guid-shared",
+        },
     ]
 
-    stale = supervisor.stale_session_rows(rows, now_s=2000, live_ttys={"ttys005", "ttys006", "ttys007"})
+    stale = supervisor.stale_session_rows(
+        rows,
+        now_s=2000,
+        live_ttys={"ttys005", "ttys006", "ttys007"},
+    )
 
     assert [(row["session_id"], row["reason"]) for row in stale] == [
         ("old", "duplicate_tty"),
@@ -938,7 +1000,16 @@ def test_stale_session_rows_keeps_newest_duplicate_tty_and_guid():
 
 def test_stale_session_rows_keeps_recent_unambiguous_active_row():
     stale = supervisor.stale_session_rows(
-        [{"session_id": "current", "name": "CURRENT", "status": "active", "last_activity": 1950, "tty": "ttys008", "iterm_session_id": "guid-current"}],
+        [
+            {
+                "session_id": "current",
+                "name": "CURRENT",
+                "status": "active",
+                "last_activity": 1950,
+                "tty": "ttys008",
+                "iterm_session_id": "guid-current",
+            }
+        ],
         now_s=2000,
         live_ttys={"ttys008"},
     )
@@ -964,11 +1035,21 @@ def test_load_registry_rows_imports_the_shared_reader_from_cos_c2_bin(tmp_path, 
     assert str(shared_bin) == supervisor.sys.path[0]
 
 
-def test_stale_session_check_prints_findings_and_count_without_loading_manifest(monkeypatch, capsys):
+def test_stale_session_check_prints_findings_and_count_without_loading_manifest(
+    monkeypatch, capsys
+):
     monkeypatch.setattr(
         supervisor,
         "load_registry_rows",
-        lambda: [{"session_id": "old", "name": "OLD", "status": "active", "last_activity": 100, "tty": "ttys001"}],
+        lambda: [
+            {
+                "session_id": "old",
+                "name": "OLD",
+                "status": "active",
+                "last_activity": 100,
+                "tty": "ttys001",
+            }
+        ],
     )
     monkeypatch.setattr(supervisor, "live_ttys_from_ps", lambda: {"ttys001"})
     monkeypatch.setattr(supervisor.time, "time", lambda: 2000)

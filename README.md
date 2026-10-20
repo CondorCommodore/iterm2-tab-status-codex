@@ -254,37 +254,45 @@ python3 scripts/cos_tab_state_monitor.py --print
 python3 scripts/cos_dashboard.py
 ```
 
-`scripts/cos-bootstrap-supervisor status` is the pre-action read-only view
-for the bootstrap supervisor.
+> **DORMANT since July; not a blocker; do not route to the operator.**
+> The bootstrap supervisor is retained for historical diagnostics. Do not use
+> its preflight or roster proposal as a dispatch gate.
+
+`scripts/cos-bootstrap-supervisor status` is the read-only view for the dormant
+bootstrap supervisor.
 It includes the live lease, arm/readiness state, registered worker
 classification, actionable coord feed, wake reasons, and a deterministic
 decision digest. It does not reserve workers, dispatch prompts, or change
 coord-api state.
 
-The status fields distinguish a physical `ARMED` file from an effective arm:
+The historical status fields distinguish a physical `ARMED` file from an effective arm:
 `armed` reports that the marker exists, while `arm_marker_valid` and
 `effective_armed` are only positive after the marker is validated against the
 supplied manifest digest. A stale or malformed marker therefore remains visible
 for diagnosis but cannot appear operationally armed; `armed_but_invalid` and
-`requires_explicit_rearm` make the recovery action explicit. If no manifest is
-provided, the effective value is `null` rather than an unverified claim.
+`requires_explicit_rearm` are diagnostic fields only and do not request an
+operator action. If no manifest is provided, the effective value is `null`
+rather than an unverified claim. These fields do not make this dormant
+supervisor a dispatch gate.
 
-Before a terminal experiment, run
+For historical diagnostics only, run
 `bash scripts/cos-bootstrap-supervisor preflight --manifest
-<path>`. It checks the exact manifest digest, plan paths, required launchd
-registrations, and the iTerm edge health without enabling services or sending
-input. A nonzero result is a hard stop for delivery. The JSON response includes
-ordered `blockers` with stable codes (`terminal_actions_disabled`,
+<path>`. This historical diagnostic checks the manifest digest, plan paths,
+launchd registrations, and iTerm edge health without enabling services or
+sending input. A refusal is not a dispatch blocker and must not be routed to the
+operator. The JSON response includes ordered diagnostic codes
+(`terminal_actions_disabled`,
 `identity_drift`, `no_idle_registered_worker`, `edge_not_ready`, and related
-service/plan failures) plus bounded remediation text. The COS decision loop can
-consume those codes directly; it must not infer permission to edit a manifest
-or adopt a replacement identity from the diagnostic output.
+service/plan failures) plus historical remediation text. Do not treat these
+diagnostics as permission to edit a manifest, adopt a replacement identity, or
+block dispatch.
 
-When preflight reports identity drift, inspect the non-mutating proposal with
+When preflight reports identity drift, the historical non-mutating proposal is
+available with
 `bash scripts/cos-bootstrap-supervisor roster-proposal --manifest <path>`.
 It compares expected
 worker UUID/TTY/runtime bindings with live sessions and lists unregistered
-sessions. It never edits the manifest; adoption requires an explicit re-arm.
+sessions. It never edits the manifest and is not a dispatch gate.
 
 When `iterm-live-state.json` exists, `cos_dashboard.py` prefers it over the
 older signal-file snapshot so COS sees API-derived readiness (`ready`,
@@ -331,8 +339,9 @@ mkdir -p ~/.config/cos-c2
 cp config/run-manifest.example.json ~/.config/cos-c2/run-manifest.json
 ```
 
-Install the watchdog and iTerm API scripts separately. Both remain inert until
-the operator explicitly arms the supervisor:
+The historical watchdog and iTerm API installation steps remain inert until
+the supervisor is explicitly armed. Do not arm this dormant supervisor as a
+response to preflight or roster-proposal output:
 
 ```bash
 python3 scripts/cos_iterm_api_install.py

@@ -1715,9 +1715,7 @@ def test_roster_proposal_cli_output_is_characterized(tmp_path, monkeypatch, caps
     assert captured.out == json.dumps(expected, indent=2, sort_keys=True) + "\n"
 
 
-def test_preflight_refusal_cli_output_and_exit_are_characterized(
-    tmp_path, monkeypatch, capsys
-):
+def test_preflight_refusal_cli_output_and_exit_are_characterized(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(supervisor, "load_manifest", lambda _path: manifest())
     monkeypatch.setattr(supervisor, "manifest_file_sha256", lambda _path: "unused")
     monkeypatch.setattr(
@@ -1754,16 +1752,13 @@ def test_preflight_refusal_cli_output_and_exit_are_characterized(
             {
                 "code": "identity_drift",
                 "action": (
-                    "inspect roster-proposal; adoption requires explicit manifest edit "
-                    "and re-arm"
+                    "inspect roster-proposal; adoption requires explicit manifest edit and re-arm"
                 ),
             },
         ],
     }
     assert result == 1
-    assert captured.err == (
-        "DORMANT since July; not a blocker; do not route to the operator.\n"
-    )
+    assert captured.err == ("DORMANT since July; not a blocker; do not route to the operator.\n")
     assert captured.out == json.dumps(expected, indent=2, sort_keys=True) + "\n"
 
 

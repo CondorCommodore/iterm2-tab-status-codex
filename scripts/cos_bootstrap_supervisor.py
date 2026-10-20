@@ -169,6 +169,7 @@ def stale_session_rows(
         for indices in groups.values():
             if len(indices) < 2:
                 continue
+
             def freshness(index: int) -> tuple[float, str]:
                 activity = _session_activity_seconds(active[index].get("last_activity"))
                 return (
@@ -199,9 +200,7 @@ def stale_session_report(rows: Iterable[dict[str, Any]] | None) -> list[dict[str
     live_ttys = live_ttys_from_ps()
     if live_ttys is None:
         print("ps tty listing unavailable; skipping tty ownership checks", file=sys.stderr)
-    findings = stale_session_rows(
-        rows or [], now_s=time.time(), live_ttys=live_ttys
-    )
+    findings = stale_session_rows(rows or [], now_s=time.time(), live_ttys=live_ttys)
     for finding in findings:
         print(json.dumps(finding, separators=(",", ":"), sort_keys=True))
     print(json.dumps({"stale_count": len(findings)}, separators=(",", ":"), sort_keys=True))
@@ -1883,9 +1882,7 @@ def dispatch_current_focus(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description=f"{DORMANT_NOTICE} Bootstrap COS C2 lifecycle"
-    )
+    parser = argparse.ArgumentParser(description=f"{DORMANT_NOTICE} Bootstrap COS C2 lifecycle")
     parser.add_argument(
         "command",
         choices=(

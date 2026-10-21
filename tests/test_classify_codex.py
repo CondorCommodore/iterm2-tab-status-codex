@@ -158,6 +158,104 @@ def test_match_rollout_falls_back_when_proc_start_unknown(tmp_path):
     assert cs.match_rollout_for_proc(proc, [r]) == r
 
 
+def test_match_rollout_uses_catalog_mtimes_without_per_candidate_stats(tmp_path, monkeypatch):
+    rollout = tmp_path / "rollout-2026-05-26T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    rollout.write_text("{}\n")
+    mtime = time.time() - 10
+    import os as _os
+
+    _os.utime(rollout, (mtime, mtime))
+    proc = cs.CodexProc(pid=1, tty="/dev/ttys001", started=time.time() - 60)
+
+    def unexpected_stat(_path):
+        raise AssertionError("cached matching must not stat every rollout")
+
+    monkeypatch.setattr(Path, "stat", unexpected_stat)
+    assert cs.match_rollout_for_proc(proc, [rollout], {rollout: mtime}) == rollout
+
+
+def test_rollout_catalog_discovers_new_file_from_changed_directory(tmp_path):
+    day = tmp_path / "sessions" / "2026" / "05" / "28"
+    day.mkdir(parents=True)
+    catalog = cs._rollout_catalog(str(day.parents[2]))
+    generation = catalog.generation
+    rollout = day / "rollout-2026-05-28T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    rollout.write_text("{}\n")
+
+    refreshed = cs._rollout_catalog(str(day.parents[2]))
+    assert rollout in refreshed.mtimes
+    assert refreshed.generation > generation
+
+
+def test_rollout_catalog_skips_unchanged_directory_listing(tmp_path, monkeypatch):
+    day = tmp_path / "sessions" / "2026" / "05" / "28"
+    day.mkdir(parents=True)
+    rollout = day / (
+        "rollout-2026-05-28T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    )
+    rollout.write_text("{}\n")
+    catalog = cs._rollout_catalog(str(day.parents[2]))
+
+    observed = []
+    original_stat = Path.stat
+
+    def record_stat(path, *args, **kwargs):
+        observed.append(path)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", record_stat)
+    catalog.refresh()
+    assert day in observed
+    assert rollout not in observed
+
+
+def test_last_events_cache_reads_appends_incrementally(tmp_path, monkeypatch):
+    rollout = tmp_path / "rollout-2026-05-28T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+    rollout.write_text(json.dumps(_ev("task_started")) + "\n")
+    first = cs._read_last_events(rollout)
+    assert [event["payload"]["type"] for event in first] == ["task_started"]
+
+    import builtins
+
+    def unexpected_open(*_args, **_kwargs):
+        raise AssertionError("unchanged rollout contents must use the event cache")
+
+    with monkeypatch.context() as cache_probe:
+        cache_probe.setattr(builtins, "open", unexpected_open)
+        assert cs._read_last_events(rollout) == first
+
+    with rollout.open("a") as stream:
+        stream.write(json.dumps(_ev("task_complete")) + "\n")
+    second = cs._read_last_events(rollout)
+    assert [event["payload"]["type"] for event in second] == [
+        "task_started", "task_complete"
+    ]
+    assert cs.classify_codex_state(first, now=time.time()) == cs.STATE_RUNNING
+    assert cs.classify_codex_state(second, now=time.time()) == cs.STATE_IDLE
+
+
+def test_daemon_sleeps_even_for_zero_interval(monkeypatch):
+    sweeps = []
+    sleeps = []
+
+    class StopLoop(Exception):
+        pass
+
+    def stop_sleep(interval):
+        sleeps.append(interval)
+        raise StopLoop
+
+    monkeypatch.setattr(cs, "sweep_once", lambda *_args: sweeps.append(True))
+    monkeypatch.setattr(cs.time, "sleep", stop_sleep)
+    try:
+        cs.daemon(interval=0)
+    except StopLoop:
+        pass
+
+    assert sweeps == [True]
+    assert sleeps == [0.1]
+
+
 # --- signal building ---------------------------------------------------------
 
 
@@ -232,6 +330,14 @@ def test_sweep_emits_signal_for_codex_proc(tmp_path, monkeypatch):
     assert len(written) == 1
     data = json.loads(written[0].read_text())
     assert data["type"] == "running"
-    assert data["session_id"].startswith("codex-019e64c1")
+    assert data["session_id"] == "codex-019e64c1-dcf5-7f11-b45c-e2c8ea952035"
     assert data["tty"] == "/dev/ttys001"
     assert data["pid"] == "9999"
+    assert data["project"] == "foo"
+    assert data["cwd"] == "/Users/x/code/foo"
+    assert data["message"] == ""
+    assert data["runtime"] == "codex"
+
+    second = cs.sweep_once(str(signal_dir), str(tmp_path / "sessions"))
+    assert second == written
+    assert json.loads(second[0].read_text()) | {"ts": data["ts"]} == data

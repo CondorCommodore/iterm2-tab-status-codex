@@ -190,9 +190,7 @@ def test_rollout_catalog_discovers_new_file_from_changed_directory(tmp_path):
 def test_rollout_catalog_skips_unchanged_directory_listing(tmp_path, monkeypatch):
     day = tmp_path / "sessions" / "2026" / "05" / "28"
     day.mkdir(parents=True)
-    rollout = day / (
-        "rollout-2026-05-28T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
-    )
+    rollout = day / ("rollout-2026-05-28T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl")
     rollout.write_text("{}\n")
     catalog = cs._rollout_catalog(str(day.parents[2]))
 
@@ -227,9 +225,7 @@ def test_last_events_cache_reads_appends_incrementally(tmp_path, monkeypatch):
     with rollout.open("a") as stream:
         stream.write(json.dumps(_ev("task_complete")) + "\n")
     second = cs._read_last_events(rollout)
-    assert [event["payload"]["type"] for event in second] == [
-        "task_started", "task_complete"
-    ]
+    assert [event["payload"]["type"] for event in second] == ["task_started", "task_complete"]
     assert cs.classify_codex_state(first, now=time.time()) == cs.STATE_RUNNING
     assert cs.classify_codex_state(second, now=time.time()) == cs.STATE_IDLE
 

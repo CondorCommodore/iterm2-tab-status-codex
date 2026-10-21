@@ -68,9 +68,7 @@ _ROLLOUT_RE = re.compile(
 # path O(processes * rollout files) metadata syscalls.
 _PROCESS_ROLLOUTS: dict[tuple[str, int, float], Path] = {}
 _PROCESS_MATCH_GENERATIONS: dict[tuple[str, int, float], int] = {}
-_EVENT_CACHE: dict[
-    tuple[Path, int], tuple[int, int, bytes, list[bytes], list[dict]]
-] = {}
+_EVENT_CACHE: dict[tuple[Path, int], tuple[int, int, bytes, list[bytes], list[dict]]] = {}
 _HEAD_EVENT_CACHE: dict[Path, list[dict]] = {}
 
 
@@ -179,9 +177,12 @@ class _RolloutCatalog:
 
     def newest_first(self) -> list[Path]:
         if self._ordered_cache is None:
-            self._ordered_cache = [path for _, path in sorted(
-                ((mtime, path) for path, mtime in self.mtimes.items()), reverse=True
-            )]
+            self._ordered_cache = [
+                path
+                for _, path in sorted(
+                    ((mtime, path) for path, mtime in self.mtimes.items()), reverse=True
+                )
+            ]
         return self._ordered_cache
 
 
@@ -197,6 +198,7 @@ def _rollout_catalog(sessions_dir: str) -> _RolloutCatalog:
         _ROLLOUT_CATALOGS[key] = catalog
     catalog.refresh()
     return catalog
+
 
 # --- Codex-process discovery -------------------------------------------------
 
@@ -641,8 +643,7 @@ def sweep_once(signal_dir: str = SIGNAL_DIR, sessions_dir: Optional[str] = None)
 
     process_keys = [(root_key, proc.pid, proc.started) for proc in procs]
     needs_association = any(
-        key not in _PROCESS_ROLLOUTS
-        or _PROCESS_MATCH_GENERATIONS.get(key) != catalog.generation
+        key not in _PROCESS_ROLLOUTS or _PROCESS_MATCH_GENERATIONS.get(key) != catalog.generation
         for key in process_keys
     )
     if needs_association:

@@ -323,14 +323,12 @@ scripts/cos-bootstrap-supervisor stale-session-check
 
 ## Bootstrap C2 lifecycle retirement
 
-The lifecycle instructions below are historical reference only. Do not install
-or arm the retired supervisor. The operator should unload its watchdog agent
-using the installed plist at
-`~/Library/LaunchAgents/com.local.cos-bootstrap-watchdog.plist` with:
-
-```bash
-launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.local.cos-bootstrap-watchdog.plist"
-```
+The bootstrap watchdog and its LaunchAgent installer were retired by R1 slice
+1. Do not install or launch the watchdog. This change leaves the supervisor and
+the iTerm edge daemon in place; the manifest and `ARMED` marker remain an
+operator-only archive step for a later slice. The remaining lifecycle
+instructions below are historical reference only. Do not install or arm the
+retired supervisor.
 
 Copy and fill the example manifest without storing credentials in it:
 
@@ -348,7 +346,6 @@ python3 scripts/cos_iterm_api_install.py
 bash launchd/install-cos-iterm-edge-launchd.sh \
   --manifest ~/.config/cos-c2/run-manifest.json \
   --state-dir ~/.local/state/cos-c2
-bash launchd/install-cos-bootstrap-watchdog-launchd.sh
 scripts/cos-bootstrap-supervisor status
 scripts/cos-bootstrap-supervisor arm
 scripts/cos-bootstrap-supervisor run

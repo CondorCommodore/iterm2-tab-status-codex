@@ -453,24 +453,20 @@ def launchctl_runner(*loaded_labels):
     return run
 
 
-def readiness(*, watchdog: bool, edge: bool):
+def readiness(*, edge: bool):
     labels = []
-    if watchdog:
-        labels.append("com.local.cos-bootstrap-watchdog")
     if edge:
         labels.append("com.local.cos-iterm-edge")
     return supervisor.service_readiness(run=launchctl_runner(*labels), system="Darwin", uid=501)
 
 
-def test_service_readiness_requires_both_loaded_services():
-    absent = readiness(watchdog=False, edge=False)
-    partial = readiness(watchdog=True, edge=False)
-    ready = readiness(watchdog=True, edge=True)
+def test_service_readiness_requires_the_edge_service():
+    absent = readiness(edge=False)
+    ready = readiness(edge=True)
 
     assert absent["ready"] is False
-    assert partial["ready"] is False
-    assert partial["services"]["watchdog"]["loaded"] is True
-    assert partial["services"]["terminal_edge"]["loaded"] is False
+    assert set(absent["services"]) == {"terminal_edge"}
+    assert absent["services"]["terminal_edge"]["loaded"] is False
     assert ready["ready"] is True
 
 
@@ -490,7 +486,7 @@ def test_cli_arm_refuses_without_services_and_does_not_write_marker(tmp_path):
         supervisor.arm_from_cli(
             manifest=manifest(),
             state_dir=tmp_path,
-            readiness=readiness(watchdog=False, edge=False),
+            readiness=readiness(edge=False),
         )
 
     assert not (tmp_path / "ARMED").exists()
@@ -498,7 +494,7 @@ def test_cli_arm_refuses_without_services_and_does_not_write_marker(tmp_path):
 
 
 def test_cli_arm_succeeds_only_with_ready_services(tmp_path):
-    observed = readiness(watchdog=True, edge=True)
+    observed = readiness(edge=True)
     plan = tmp_path / "plan.md"
     plan.write_text("# plan\n", encoding="utf-8")
     result = supervisor.arm_from_cli(
@@ -519,7 +515,7 @@ def test_status_reports_armed_but_unserviced_without_mutating_state(tmp_path):
     result = supervisor.status(
         client=FakeClient(),
         state_dir=tmp_path,
-        readiness=readiness(watchdog=True, edge=False),
+        readiness=readiness(edge=False),
     )
 
     assert result["armed"] is True
@@ -534,7 +530,7 @@ def test_status_distinguishes_valid_arm_from_stale_marker(tmp_path):
         client=FakeClient(),
         state_dir=tmp_path,
         manifest=manifest(),
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
     )
 
     assert valid["armed"] is True
@@ -547,7 +543,7 @@ def test_status_distinguishes_valid_arm_from_stale_marker(tmp_path):
         client=FakeClient(),
         state_dir=tmp_path,
         manifest=manifest(),
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
     )
 
     assert stale["armed"] is True  # physical marker remains observable
@@ -563,7 +559,7 @@ def test_status_does_not_claim_effective_arm_without_manifest(tmp_path):
     result = supervisor.status(
         client=FakeClient(),
         state_dir=tmp_path,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
     )
 
     assert result["armed"] is True
@@ -598,7 +594,7 @@ def test_status_includes_read_only_fleet_snapshot(tmp_path):
         client=FakeClient(),
         state_dir=tmp_path,
         manifest=manifest(),
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         live_state_path=live_state,
     )
 
@@ -622,7 +618,7 @@ def test_preflight_fails_closed_when_terminal_actions_are_disabled(tmp_path):
         manifest=m,
         manifest_path=manifest_path,
         live_state_path=live_state,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         edge_probe=lambda *_args, **_kwargs: {"ok": True},
     )
 
@@ -667,7 +663,7 @@ def test_preflight_accepts_matching_manifest_and_healthy_edge(tmp_path):
         manifest=m,
         manifest_path=manifest_path,
         live_state_path=live_state_path,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         edge_probe=lambda *_args, **_kwargs: {
             "ok": True,
             "manifest_sha256": digest,
@@ -749,7 +745,7 @@ def test_preflight_rejects_identity_drift_even_with_another_idle_worker(tmp_path
         manifest=m,
         manifest_path=manifest_path,
         live_state_path=live_state_path,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         edge_probe=lambda *_args, **_kwargs: {
             "ok": True,
             "manifest_sha256": digest,
@@ -797,7 +793,7 @@ def test_preflight_reports_same_tty_session_replacement_without_rebinding(tmp_pa
         manifest=m,
         manifest_path=manifest_path,
         live_state_path=live_state_path,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
     )
 
     assert result["ready"] is False
@@ -1215,7 +1211,7 @@ def test_status_includes_validated_program_and_current_focus_projections(tmp_pat
         client=client,
         state_dir=tmp_path,
         manifest=m,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         live_state_path=live,
     )
 
@@ -1249,7 +1245,7 @@ def test_status_rejects_tampered_program_projection_summary(tmp_path):
         client=client,
         state_dir=tmp_path,
         manifest=m,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         live_state_path=live,
     )
 
@@ -1277,7 +1273,7 @@ def test_status_rejects_program_projection_for_other_manifest(tmp_path):
         client=client,
         state_dir=tmp_path,
         manifest=mismatched,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         live_state_path=live,
     )
 
@@ -1380,7 +1376,7 @@ def test_status_reports_persisted_and_live_external_state_sweep(tmp_path, monkey
         client=client,
         state_dir=tmp_path,
         manifest=m,
-        readiness=readiness(watchdog=True, edge=True),
+        readiness=readiness(edge=True),
         live_state_path=live,
     )
 

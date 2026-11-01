@@ -75,7 +75,6 @@ RETIRED_BANNER = (
     "roster-truth-check (#209). This tool will be deleted in S3.4b."
 )
 REQUIRED_LAUNCHD_SERVICES = {
-    "watchdog": "com.local.cos-bootstrap-watchdog",
     "terminal_edge": "com.local.cos-iterm-edge",
 }
 COS_DIRECTION_SCHEMA = "cos.direction.v1"

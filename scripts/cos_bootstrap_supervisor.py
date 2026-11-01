@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Bootstrap COS supervisor lifecycle and deterministic reconciliation loop.
 
+RETIRED by R1 option B (slice S3.1: announce only, behaviour unchanged).
+Use session_registry.py ``roster-drift-check`` (#203) and ``roster-truth-check``
+(#209) instead.  This module will be deleted in slice S3.4b; every ``main``
+invocation (including ``run`` and ``--once``) prints a one-line banner on stderr.
+
 The supervisor is inert until ``arm`` writes its machine-local marker.  Its
 only authority comes from the coord-api C2 resource lease; local state never
 grants dispatch permission.
@@ -64,6 +69,11 @@ DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "cos-c2"
 DEFAULT_MANIFEST = Path.home() / ".config" / "cos-c2" / "run-manifest.json"
 DEFAULT_LIVE_STATE = Path.home() / ".claude" / "plans" / "fleet-reports" / "iterm-live-state.json"
 DORMANT_NOTICE = "DORMANT since July; not a blocker; do not route to the operator."
+RETIRED_BANNER = (
+    "RETIRED: cos_bootstrap_supervisor is retired by R1 option B (slice S3.1, announce only). "
+    "Replacement checks: session_registry.py roster-drift-check (#203) and "
+    "roster-truth-check (#209). This tool will be deleted in S3.4b."
+)
 REQUIRED_LAUNCHD_SERVICES = {
     "watchdog": "com.local.cos-bootstrap-watchdog",
     "terminal_edge": "com.local.cos-iterm-edge",
@@ -1925,6 +1935,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    print(RETIRED_BANNER, file=sys.stderr)
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "stale-session-check":

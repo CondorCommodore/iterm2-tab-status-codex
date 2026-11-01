@@ -1711,7 +1711,7 @@ def test_roster_proposal_cli_output_is_characterized(tmp_path, monkeypatch, caps
         ],
     }
     assert result == 0
-    assert captured.err == ""
+    assert captured.err == supervisor.RETIRED_BANNER + "\n"
     assert captured.out == json.dumps(expected, indent=2, sort_keys=True) + "\n"
 
 
@@ -1758,8 +1758,26 @@ def test_preflight_refusal_cli_output_and_exit_are_characterized(tmp_path, monke
         ],
     }
     assert result == 1
-    assert captured.err == ("DORMANT since July; not a blocker; do not route to the operator.\n")
+    assert captured.err == (
+        supervisor.RETIRED_BANNER
+        + "\nDORMANT since July; not a blocker; do not route to the operator.\n"
+    )
     assert captured.out == json.dumps(expected, indent=2, sort_keys=True) + "\n"
+
+
+def test_retired_banner_on_stderr_and_behaviour_unchanged(monkeypatch, capsys):
+    monkeypatch.setattr(supervisor, "load_registry_rows", lambda: [])
+    monkeypatch.setattr(supervisor, "live_ttys_from_ps", lambda: set())
+
+    result = supervisor.main(["stale-session-check"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.out == '{"stale_count":0}\n'
+    assert "RETIRED" in captured.err
+    assert "roster-drift-check (#203)" in captured.err
+    assert "roster-truth-check (#209)" in captured.err
+    assert "S3.4b" in captured.err
 
 
 def test_help_description_is_characterized():

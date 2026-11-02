@@ -1,14 +1,33 @@
 from __future__ import annotations
 
+import ast
 import os
 import plistlib
+import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def installer_fixture(tmp_path, *, include_dispatcher: bool) -> Path:
+    repo = tmp_path / "installer-repo"
+    launchd = repo / "launchd"
+    scripts = repo / "scripts"
+    launchd.mkdir(parents=True)
+    scripts.mkdir()
+    shutil.copy2(ROOT / "launchd/install-cos-iterm-edge-launchd.sh", launchd)
+    shutil.copy2(ROOT / "launchd/com.local.cos-iterm-edge.plist", launchd)
+    shutil.copy2(ROOT / "scripts/cos_iterm_edge_daemon.py", scripts)
+    if include_dispatcher:
+        (scripts / "cos_tab_dispatch.py").write_text(
+            "# installer dependency fixture\n", encoding="utf-8"
+        )
+    return repo
+
+
 def test_installer_pins_runtime_manifest_state_socket_and_keepalive(tmp_path):
+    repo = installer_fixture(tmp_path, include_dispatcher=True)
     home = tmp_path / "home"
     manifest = tmp_path / "selected & manifest.json"
     state_dir = tmp_path / "selected & state"
@@ -27,7 +46,7 @@ def test_installer_pins_runtime_manifest_state_socket_and_keepalive(tmp_path):
     result = subprocess.run(
         [
             "/bin/bash",
-            str(ROOT / "launchd/install-cos-iterm-edge-launchd.sh"),
+            str(repo / "launchd/install-cos-iterm-edge-launchd.sh"),
             "--manifest",
             str(manifest),
             "--state-dir",
@@ -49,7 +68,7 @@ def test_installer_pins_runtime_manifest_state_socket_and_keepalive(tmp_path):
         plist = plistlib.load(handle)
     assert plist["ProgramArguments"] == [
         str(fake_python),
-        str(ROOT / "scripts/cos_iterm_edge_daemon.py"),
+        str(repo / "scripts/cos_iterm_edge_daemon.py"),
         "--manifest",
         str(manifest),
         "--state-dir",
@@ -63,7 +82,69 @@ def test_installer_pins_runtime_manifest_state_socket_and_keepalive(tmp_path):
     assert plist["StandardErrorPath"] == str(state_dir / "iterm-edge.log")
 
 
+def test_installer_refuses_daemon_with_retired_dispatcher_before_launchctl(tmp_path):
+    repo = installer_fixture(tmp_path, include_dispatcher=False)
+    daemon_source = (repo / "scripts/cos_iterm_edge_daemon.py").read_text(encoding="utf-8")
+    daemon_ast = ast.parse(daemon_source)
+    assert any(
+        isinstance(node, ast.ImportFrom) and node.module == "cos_tab_dispatch"
+        for node in ast.walk(daemon_ast)
+    ), "fixture no longer captures the daemon's retired dispatcher dependency"
+    home = tmp_path / "home"
+    manifest = tmp_path / "manifest.json"
+    state_dir = tmp_path / "state"
+    socket_path = tmp_path / "socket" / "edge.sock"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    manifest.write_text("{}\n", encoding="utf-8")
+    launchctl_calls = tmp_path / "launchctl-calls.txt"
+    launchctl = fake_bin / "launchctl"
+    launchctl.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$LAUNCHCTL_CALLS\"\nexit 0\n",
+        encoding="utf-8",
+    )
+    launchctl.chmod(0o755)
+    fake_python = fake_bin / "python3"
+    fake_python.symlink_to("/usr/bin/python3")
+    env = os.environ.copy()
+    env.update({
+        "HOME": str(home),
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "LAUNCHCTL_CALLS": str(launchctl_calls),
+    })
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(repo / "launchd/install-cos-iterm-edge-launchd.sh"),
+            "--manifest",
+            str(manifest),
+            "--state-dir",
+            str(state_dir),
+            "--socket",
+            str(socket_path),
+            "--python",
+            str(fake_python),
+        ],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "cos_tab_dispatch.py" in result.stderr
+    assert "daemon cannot start" in result.stderr
+    assert not launchctl_calls.exists(), (
+        "installer reached launchctl despite missing daemon dependency"
+    )
+    assert not (home / "Library/LaunchAgents/com.local.cos-iterm-edge.plist").exists()
+    assert not state_dir.exists()
+    assert not socket_path.parent.exists()
+
+
 def test_installer_discovers_highest_semantic_iterm_runtime(tmp_path):
+    repo = installer_fixture(tmp_path, include_dispatcher=True)
     home = tmp_path / "home"
     manifest = tmp_path / "manifest.json"
     state_dir = tmp_path / "state"
@@ -93,7 +174,7 @@ def test_installer_discovers_highest_semantic_iterm_runtime(tmp_path):
     result = subprocess.run(
         [
             "/bin/bash",
-            str(ROOT / "launchd/install-cos-iterm-edge-launchd.sh"),
+            str(repo / "launchd/install-cos-iterm-edge-launchd.sh"),
             "--manifest",
             str(manifest),
             "--state-dir",

@@ -42,6 +42,10 @@ if [[ ! -f "${MANIFEST}" ]]; then
   echo "[install] manifest not found: ${MANIFEST}" >&2
   exit 1
 fi
+if [[ ! -f "${REPO_ROOT}/scripts/cos_tab_dispatch.py" ]]; then
+  echo "[install] daemon cannot start: missing scripts/cos_tab_dispatch.py; refusing launchd installation" >&2
+  exit 1
+fi
 if [[ -z "${ITERM_PYTHON}" ]]; then
   ITERM_PYTHON="$("${DISCOVERY_PYTHON}" -c '
 import pathlib

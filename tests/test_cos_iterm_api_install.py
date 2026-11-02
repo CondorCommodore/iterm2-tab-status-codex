@@ -21,9 +21,7 @@ def test_install_scripts_copies_and_verifies(tmp_path):
         (scripts_dir / name).write_text(f"#!/usr/bin/env python3\n# {name}\n", encoding="utf-8")
     (scripts_dir / "cos_iterm_edge_client.py").write_text("retired edge client\n", encoding="utf-8")
     daemon_source = scripts_dir / "cos_iterm_edge_daemon.py"
-    daemon_source.write_text(
-        "#!/usr/bin/env python3\n# legacy source fixture\n", encoding="utf-8"
-    )
+    daemon_source.write_text("#!/usr/bin/env python3\n# legacy source fixture\n", encoding="utf-8")
 
     result = installer.install_scripts(
         repo_root=repo_root,
@@ -91,9 +89,7 @@ def test_install_scripts_does_not_copy_legacy_daemon(tmp_path):
 
 
 @pytest.mark.parametrize("legacy_kind", ["file", "symlink"])
-def test_install_scripts_retires_and_unlinks_legacy_daemon(
-    tmp_path, fake_launchctl, legacy_kind
-):
+def test_install_scripts_retires_and_unlinks_legacy_daemon(tmp_path, fake_launchctl, legacy_kind):
     repo_root = _make_installer_repo(tmp_path)
     support = tmp_path / "iterm"
     legacy = support / "Scripts" / "AutoLaunch" / "cos_iterm_edge_daemon.py"

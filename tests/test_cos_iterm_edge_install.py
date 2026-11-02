@@ -101,7 +101,7 @@ def test_installer_refuses_daemon_with_retired_dispatcher_before_launchctl(tmp_p
     launchctl_calls = tmp_path / "launchctl-calls.txt"
     launchctl = fake_bin / "launchctl"
     launchctl.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$LAUNCHCTL_CALLS\"\nexit 0\n",
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$LAUNCHCTL_CALLS"\nexit 0\n',
         encoding="utf-8",
     )
     launchctl.chmod(0o755)

@@ -87,3 +87,6 @@ jobs:
 
       - name: Run plugin structure tests
         run: bash tests/test_plugin_structure.sh
+
+      - name: Run bootstrap LaunchAgent retirement tests
+        run: bash tests/test_bootstrap_launchagent.sh

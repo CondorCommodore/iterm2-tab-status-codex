@@ -259,16 +259,14 @@ PR #80 then removes the dispatcher and coordination tools:
 - Tests: `tests/test_cos_assignment_coordinator.py`,
   `tests/test_cos_dispatch_orchestrator.py`,
   `tests/test_cos_dry_run_harness.py`, and `tests/test_cos_tab_dispatch.py`.
-- It also updates `.github/workflows/ci.yml`,
-  `launchd/install-cos-iterm-edge-launchd.sh`, and
-  `tests/test_cos_iterm_edge_install.py`.
+- It also updates `.github/workflows/ci.yml`.
 
-This documentation slice and BA02's daemon retirement must land before #80 is
-promoted. Until each PR lands, its paths may still exist on `main`; after each
-merge, verify the current tree before relying on any transition component. This
-list reflects the currently staged #80 diff: #82 also removes the edge launchd
-installer and edge-install test that #80 currently modifies. Refresh #80 and
-recheck this inventory after #82 lands.
+#82 removes `launchd/install-cos-iterm-edge-launchd.sh` and
+`tests/test_cos_iterm_edge_install.py`; those paths are excluded from the #80
+inventory and #80 must be refreshed against main after #82 lands. Until each PR
+lands, its paths may still exist on `main`; after each merge, verify the current
+tree before relying on any transition component. Do not promote #80 with stale
+references to files retired by #82.
 
 Run the non-mutating COS control-plane daemon once:
 

@@ -186,10 +186,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install COS iTerm API scripts.")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     parser.add_argument("--iterm-support", type=Path, default=DEFAULT_ITERM_SUPPORT)
+    parser.add_argument(
+        "--retire-legacy-launch-agent",
+        action="store_true",
+        help="unload the retired edge LaunchAgent and remove its fixed plist",
+    )
     args = parser.parse_args(argv)
-    result = install_scripts(repo_root=args.repo_root, iterm_support=args.iterm_support)
+    if args.retire_legacy_launch_agent:
+        result = retire_legacy_launch_agent()
+        ok = result["stopped"]
+    else:
+        result = install_scripts(repo_root=args.repo_root, iterm_support=args.iterm_support)
+        ok = result["ok"]
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["ok"] else 1
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

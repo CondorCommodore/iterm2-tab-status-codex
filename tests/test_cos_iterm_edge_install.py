@@ -84,7 +84,8 @@ def test_installer_pins_runtime_manifest_state_socket_and_keepalive(tmp_path):
 
 def test_installer_refuses_daemon_with_retired_dispatcher_before_launchctl(tmp_path):
     repo = installer_fixture(tmp_path, include_dispatcher=False)
-    daemon_source = (repo / "scripts/cos_iterm_edge_daemon.py").read_text(encoding="utf-8")
+    daemon_path = repo / "scripts/cos_iterm_edge_daemon.py"
+    daemon_source = daemon_path.read_text(encoding="utf-8")
     daemon_ast = ast.parse(daemon_source)
     assert any(
         isinstance(node, ast.ImportFrom) and node.module == "cos_tab_dispatch"
@@ -107,13 +108,9 @@ def test_installer_refuses_daemon_with_retired_dispatcher_before_launchctl(tmp_p
     fake_python = fake_bin / "python3"
     fake_python.symlink_to("/usr/bin/python3")
     env = os.environ.copy()
-    env.update(
-        {
-            "HOME": str(home),
-            "PATH": f"{fake_bin}:/usr/bin:/bin",
-            "LAUNCHCTL_CALLS": str(launchctl_calls),
-        }
-    )
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+    env["LAUNCHCTL_CALLS"] = str(launchctl_calls)
 
     result = subprocess.run(
         [

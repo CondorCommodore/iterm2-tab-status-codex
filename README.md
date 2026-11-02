@@ -217,13 +217,6 @@ directory:
   Use it to inspect values exposed by live sessions; it does not report daemon
   process or installer status.
 
-R1 retirement is in progress: the bootstrap supervisor has been removed from
-`main`. The edge daemon and launchd packaging are assigned to BA02's daemon
-retirement (#82); the dispatcher scripts are scheduled for deletion by #80.
-This README no longer documents operational use of those transition components.
-The daemon retirement and this documentation slice must land before #80 is
-promoted. Check current `main` before relying on a transition path.
-
 Install and verify the iTerm API scripts directly:
 
 ```bash
@@ -254,13 +247,28 @@ The bootstrap supervisor has been removed from `main`; its historical status,
 preflight, roster, checkpoint, and recovery commands are unavailable and are
 not supported operating instructions.
 
-The current R1 sequence retires the remaining transition components in separate
-changes: BA02's daemon-retirement PR #82 removes the iTerm edge daemon and its
-launchd packaging, and PR #80 removes the legacy dispatcher scripts. This
-documentation cleanup is required before #80 is promoted, and #82 is the
-daemon-retirement dependency. Until those changes land, repository presence is
-not a claim that these components are supported for new use. Check current
-`main` and the PRs before relying on their paths.
+The remaining R1 retirement is staged in two dependent PRs. BA02's #82 removes
+`scripts/cos_iterm_edge_daemon.py`, its daemon and install tests, and the edge
+launchd plist/installer. Until #82 lands, those daemon files remain on `main`.
+
+PR #80 then removes the dispatcher and coordination tools:
+
+- Scripts: `scripts/cos_assignment_coordinator.py`,
+  `scripts/cos_dispatch_orchestrator.py`, `scripts/cos_dry_run_harness.py`,
+  `scripts/cos_tab_dispatch.py`, and `scripts/cosdispatch`.
+- Tests: `tests/test_cos_assignment_coordinator.py`,
+  `tests/test_cos_dispatch_orchestrator.py`,
+  `tests/test_cos_dry_run_harness.py`, and `tests/test_cos_tab_dispatch.py`.
+- It also updates `.github/workflows/ci.yml`,
+  `launchd/install-cos-iterm-edge-launchd.sh`, and
+  `tests/test_cos_iterm_edge_install.py`.
+
+This documentation slice and BA02's daemon retirement must land before #80 is
+promoted. Until each PR lands, its paths may still exist on `main`; after each
+merge, verify the current tree before relying on any transition component. This
+list reflects the currently staged #80 diff: #82 also removes the edge launchd
+installer and edge-install test that #80 currently modifies. Refresh #80 and
+recheck this inventory after #82 lands.
 
 Run the non-mutating COS control-plane daemon once:
 

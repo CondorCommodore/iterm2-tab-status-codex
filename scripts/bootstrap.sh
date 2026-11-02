@@ -112,7 +112,7 @@ READBACK_SRC="$PLUGIN_ROOT/scripts/cos_iterm_readback.py"
 if [[ -f "$READBACK_SRC" ]]; then
   cp "$READBACK_SRC" "$ITERM2_SUPPORT/Scripts/cos_iterm_readback.py"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py; do
   SUPPORT_SRC="$PLUGIN_ROOT/scripts/$SUPPORT_NAME"
   if [[ -f "$SUPPORT_SRC" ]]; then
     cp "$SUPPORT_SRC" "$ITERM2_SUPPORT/Scripts/$SUPPORT_NAME"

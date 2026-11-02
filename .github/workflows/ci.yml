@@ -58,9 +58,9 @@ jobs:
           tests/test_c2_runtime_observer.py
           tests/test_c2_runtime_sensing_trial.py
           tests/test_cos_message_language_trial.py
+          tests/test_cos_iterm_api_install.py::test_install_scripts_copies_and_verifies
           tests/test_cos_iterm_api_install.py::test_install_scripts_does_not_copy_legacy_daemon
           tests/test_cos_iterm_api_install.py::test_install_scripts_retires_and_unlinks_legacy_daemon
-          tests/test_cos_iterm_api_install.py::test_install_scripts_without_legacy_copy_skips_retirement
           tests/test_cos_iterm_api_install.py::test_install_scripts_skips_retired_dispatcher_sources
           tests/test_cos_iterm_api_install.py::test_legacy_autolaunch_cleanup_list_keeps_daemon_name
           tests/test_cos_iterm_api_install.py::test_bootstrap_removes_preexisting_legacy_autolaunch

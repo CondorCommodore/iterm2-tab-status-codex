@@ -62,6 +62,13 @@ jobs:
           tests/test_cos_iterm_api_install.py::test_install_scripts_retires_and_unlinks_legacy_daemon
           tests/test_cos_iterm_api_install.py::test_install_scripts_without_legacy_copy_skips_retirement
           tests/test_cos_iterm_api_install.py::test_install_scripts_skips_retired_dispatcher_sources
+          tests/test_cos_iterm_api_install.py::test_legacy_autolaunch_cleanup_list_keeps_daemon_name
+          tests/test_cos_iterm_api_install.py::test_bootstrap_removes_preexisting_legacy_autolaunch
+          tests/test_cos_iterm_api_install.py::test_install_scripts_retires_loaded_legacy_launchagent_without_autolaunch_copy
+          tests/test_cos_iterm_api_install.py::test_install_scripts_removes_unloaded_legacy_launchagent_and_plist
+          tests/test_cos_iterm_api_install.py::test_install_scripts_retires_loaded_launchagent_when_plist_absent
+          tests/test_cos_iterm_api_install.py::test_install_scripts_fails_closed_on_launchctl_inspection_error
+          tests/test_cos_iterm_api_install.py::test_install_scripts_keeps_plist_when_launchctl_bootout_fails
           tests/test_cos_message_delivery_policy.py::test_shadow_module_has_no_authority_or_transport_dependencies
           -v
 
@@ -80,3 +87,6 @@ jobs:
 
       - name: Run plugin structure tests
         run: bash tests/test_plugin_structure.sh
+
+      - name: Run bootstrap LaunchAgent retirement tests
+        run: bash tests/test_bootstrap_launchagent.sh

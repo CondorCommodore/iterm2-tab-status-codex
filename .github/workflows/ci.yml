@@ -21,6 +21,9 @@ jobs:
       - name: Lint Python
         run: uv run ruff check .
 
+      - name: Show Python format diff (temporary repair diagnostic)
+        run: uv run ruff format --diff tests/test_cos_iterm_edge_install.py
+
       - name: Check Python formatting
         run: uv run ruff format --check .
 

@@ -213,38 +213,14 @@ directory:
   sending input, writes `~/.claude/plans/fleet-reports/iterm-live-state.json`,
   appends `iterm-live-events.jsonl`, classifies readiness from prompt/screen
   state, and sets the `user.*` variables above for status bars/subtitles.
-- `scripts/cos_iterm_edge_daemon.py` is the authoritative C2 tab edge. It runs
-  inside iTerm2's Python API runtime and exposes a same-user mode-0600 Unix
-  socket at `~/.cache/cos-c2/iterm-edge.sock`. The daemon resolves the exact
-  registered iTerm session UUID, verifies the expected live coord-api lease
-  epoch immediately before injection, submits prompt + CR + LF through the
-  iTerm API, and returns an acknowledgment/receipt. Control Room and MCP
-  wrappers use this same adapter contract; AppleScript is fallback only.
 - `scripts/cos_iterm_readback.py` prints live iTerm2 session variables as JSON.
-  Use it to prove the AutoLaunch daemon/overlay is loaded and setting variables.
-- `scripts/cos_tab_dispatch.py` validates complete registered-worker C2
-  envelopes. Authoritative dispatch uses the iTerm API edge, exact session UUID,
-  controller epoch fencing, idempotency, and append-only receipts. Legacy
-  TTY-only `/goal` dispatch remains available for compatibility but is not a C2
-  authority path.
-- `scripts/cos_dispatch_orchestrator.py` selects an eligible worker for a
-  dry-run plan. Legacy `/goal ...` dispatch is intentionally dry-run only;
-  live V1 dispatch must provide a complete envelope and manifest so the edge
-  can reserve the worker, fence the controller epoch, and write a receipt.
+  Use it to inspect values exposed by live sessions; it does not report daemon
+  process or installer status.
 
 Install and verify the iTerm API scripts directly:
 
 ```bash
 python3 scripts/cos_iterm_api_install.py
-```
-
-Dry-run a dispatch before sending:
-
-```bash
-python3 scripts/cos_tab_dispatch.py --dry-run --tty /dev/ttys003 --text '/goal inspect current task and report'
-python3 scripts/cos_dispatch_orchestrator.py --dry-run --goal 'inspect current task and report' --cos-tty /dev/ttys006
-# live dispatch (requires a validated envelope and the armed C2 edge)
-python3 scripts/cos_dispatch_orchestrator.py --envelope /path/assignment.json --manifest /path/run-manifest.json
 ```
 
 Build a COS dashboard from current tab signals and fleet reports:
@@ -253,46 +229,6 @@ Build a COS dashboard from current tab signals and fleet reports:
 python3 scripts/cos_tab_state_monitor.py --print
 python3 scripts/cos_dashboard.py
 ```
-
-> **DORMANT since July; not a blocker; do not route to the operator.**
-> The bootstrap supervisor is retained for historical diagnostics. Do not use
-> its preflight or roster proposal as a dispatch gate.
-
-`scripts/cos-bootstrap-supervisor status` is the read-only view for the dormant
-bootstrap supervisor.
-It includes the live lease, arm/readiness state, registered worker
-classification, actionable coord feed, wake reasons, and a deterministic
-decision digest. It does not reserve workers, dispatch prompts, or change
-coord-api state.
-
-The historical status fields distinguish a physical `ARMED` file from an effective arm:
-`armed` reports that the marker exists, while `arm_marker_valid` and
-`effective_armed` are only positive after the marker is validated against the
-supplied manifest digest. A stale or malformed marker therefore remains visible
-for diagnosis but cannot appear operationally armed; `armed_but_invalid` and
-`requires_explicit_rearm` are diagnostic fields only and do not request an
-operator action. If no manifest is provided, the effective value is `null`
-rather than an unverified claim. These fields do not make this dormant
-supervisor a dispatch gate.
-
-For historical diagnostics only, run
-`bash scripts/cos-bootstrap-supervisor preflight --manifest
-<path>`. This historical diagnostic checks the manifest digest, plan paths,
-launchd registrations, and iTerm edge health without enabling services or
-sending input. A refusal is not a dispatch blocker and must not be routed to the
-operator. The JSON response includes ordered diagnostic codes
-(`terminal_actions_disabled`,
-`identity_drift`, `no_idle_registered_worker`, `edge_not_ready`, and related
-service/plan failures) plus historical remediation text. Do not treat these
-diagnostics as permission to edit a manifest, adopt a replacement identity, or
-block dispatch.
-
-When preflight reports identity drift, the historical non-mutating proposal is
-available with
-`bash scripts/cos-bootstrap-supervisor roster-proposal --manifest <path>`.
-It compares expected
-worker UUID/TTY/runtime bindings with live sessions and lists unregistered
-sessions. It never edits the manifest and is not a dispatch gate.
 
 When `iterm-live-state.json` exists, `cos_dashboard.py` prefers it over the
 older signal-file snapshot so COS sees API-derived readiness (`ready`,
@@ -305,189 +241,32 @@ Watch fleet-report file drops/changes:
 python3 scripts/cos_report_watcher.py --once --print
 ```
 
-Run the fast dry-run harness before touching live tabs:
+## R1 retirement boundary
 
-```bash
-python3 scripts/cos_dry_run_harness.py
-```
+The bootstrap supervisor has been removed from `main`; its historical status,
+preflight, roster, checkpoint, and recovery commands are unavailable and are
+not supported operating instructions.
 
-## Session registry diagnostic
+The remaining R1 retirement is staged in two dependent PRs. BA02's #82 removes
+`scripts/cos_iterm_edge_daemon.py`, its daemon and install tests, and the edge
+launchd plist/installer. Until #82 lands, those daemon files remain on `main`.
 
-The retired bootstrap supervisor's remaining read-only check reports stale
-active sessions from the shared session registry. It does not edit or end
-sessions and always exits successfully:
+PR #80 then removes the dispatcher and coordination tools:
 
-```bash
-scripts/cos-bootstrap-supervisor stale-session-check
-```
+- Scripts: `scripts/cos_assignment_coordinator.py`,
+  `scripts/cos_dispatch_orchestrator.py`, `scripts/cos_dry_run_harness.py`,
+  `scripts/cos_tab_dispatch.py`, and `scripts/cosdispatch`.
+- Tests: `tests/test_cos_assignment_coordinator.py`,
+  `tests/test_cos_dispatch_orchestrator.py`,
+  `tests/test_cos_dry_run_harness.py`, and `tests/test_cos_tab_dispatch.py`.
+- It also updates `.github/workflows/ci.yml`.
 
-## Bootstrap C2 lifecycle retirement
-
-The bootstrap watchdog and its LaunchAgent installer were retired by R1 slice
-1. Do not install or launch the watchdog. This change leaves the supervisor and
-the iTerm edge daemon in place; the manifest and `ARMED` marker remain an
-operator-only archive step for a later slice. The remaining lifecycle
-instructions below are historical reference only. Do not install or arm the
-retired supervisor.
-
-Copy and fill the example manifest without storing credentials in it:
-
-```bash
-mkdir -p ~/.config/cos-c2
-cp config/run-manifest.example.json ~/.config/cos-c2/run-manifest.json
-```
-
-The historical watchdog and iTerm API installation steps remain inert until
-the supervisor is explicitly armed. Do not arm this dormant supervisor as a
-response to preflight or roster-proposal output:
-
-```bash
-python3 scripts/cos_iterm_api_install.py
-bash launchd/install-cos-iterm-edge-launchd.sh \
-  --manifest ~/.config/cos-c2/run-manifest.json \
-  --state-dir ~/.local/state/cos-c2
-scripts/cos-bootstrap-supervisor status
-scripts/cos-bootstrap-supervisor arm
-scripts/cos-bootstrap-supervisor run
-scripts/cos-bootstrap-supervisor poke
-scripts/cos-bootstrap-supervisor standby
-scripts/cos-bootstrap-supervisor stop
-```
-
-The API installer removes the legacy edge daemon from iTerm AutoLaunch; only
-the observation daemon and overlay remain automatic iTerm scripts. The edge
-LaunchAgent pins the selected manifest, state directory, socket, and
-iTerm Python runtime. `KeepAlive` restarts the API transport after a crash with
-launchd throttling. An advisory lock tied to the socket rejects any second edge
-process before it can unlink or replace the live endpoint. The service does not
-dispatch or interpret terminal state by itself.
-The shared actuation lease and per-worker reservation still fence every input action.
-
-`arm` is a deliberate unattended-work boundary; installation alone does not
-arm anything. The actuation lease is
-`workspace:mikebook:c2-supervisor` (180-second TTL, 60-second renewal), and a
-30-second tick reconciles the registered fleet and writes a deterministic
-decision. The launchd watchdog is the sole automatic wake actuator, preventing
-the supervisor and watchdog from racing to inject the same decision.
-
-The model publishes digest-bound `program.md` and `current-focus.md` recovery
-projections in the state directory. `<state-dir>/current-actions.txt` remains a
-compatibility name for the current-focus payload during migration. These are
-UTF-8 Markdown with a versioned JSON header binding
-the manifest, exact controller sessions, epoch, generation, decision digest,
-previous action digest, status, durable references, and next-check deadline.
-They contain bounded intent and coord-api identifiers, never a second task
-database, authority grant, or raw untrusted message bodies. Publish a staged
-current-focus update with:
-
-```bash
-scripts/cos-bootstrap-supervisor checkpoint --from-file /path/to/staged-current-actions.txt
-```
-
-On wake, the edge injects only a fixed `/goal C2_CONTINUE` line naming the
-absolute path and SHA-256. The model's first action is an exact progress ACK:
-
-```bash
-scripts/cos-bootstrap-supervisor ack --digest <sha256> --generation <n> --epoch <n> \
-  --ownership visible
-```
-
-The default next check is five minutes and every checkpoint must choose 60 to
-1800 seconds. A changed deterministic decision wakes immediately even when the
-declared deadline is later. Rewrite and checkpoint after every material worker,
-message, PR, evidence, or blocker transition. Malformed or future-dated files
-fail closed; `complete` additionally requires durable completion references and
-a current deterministic decision with no pending wake.
-
-The run manifest supports `tab`, `headless`, and `ab` for dispatch and recovery.
-`tab` uses the iTerm2 Python API edge. `headless` resumes the same Codex/Claude
-session UUID for one bounded turn and exits. `ab` selects deterministically and
-records comparable latency, completion, duplicate, recovery, provider-failure,
-and visible-reattachment metrics; neither transport is presumed superior.
-
-The launchd watchdog is a 60-second health/recovery tick. Its installed plist
-pins the selected manifest and state directory in `ProgramArguments` and writes
-both output streams to `<state-dir>/watchdog.log`. It remains inert without the
-state-local `ARMED` file, and it refuses all work when that marker is stale or
-does not match the pinned manifest digest. A fresh process heartbeat is not sufficient health
-when the current action generation is due or unacknowledged. The watchdog
-distinguishes terminal injection, model acknowledgment, and a rewritten
-checkpoint. It waits 90 seconds for the exact digest/generation/epoch ACK and
-retries at most once. Even `observed_ack=false` enters this wait when terminal
-bytes were attempted, so a false edge signal cannot cause an immediate
-duplicate prompt.
-
-After two expired ACK windows the watchdog writes a recovery hold. The visible
-supervisor releases its epoch and cannot reacquire while held. Only after
-coord-api proves that epoch absent may the watchdog run a bounded headless
-resume of the same CLI UUID. A successful turn must acquire the successor
-epoch, publish a new headless checkpoint with a fresh exact-digest receipt,
-obtain and verify coord-api readback for that receipt, release it with
-`scripts/cos-bootstrap-supervisor finish-turn --digest <sha256> --ownership headless`, and exit.
-Automatic epoch rebind is transport bookkeeping and never counts as model
-progress. Repeated delivery of the same ACK also cannot refresh progress time.
-Later deadlines may launch further bounded turns without waiting for the stale
-visible TUI to mirror them. Explicit visible recovery uses
-`scripts/cos-bootstrap-supervisor reattach --digest <sha256>` after the headless epoch is absent.
-Provider failures retain bounded backoff while lease and health checks continue.
-
-While armed, the same tick also probes the edge socket with a two-second bound.
-Health includes the SHA-256 of the exact manifest bytes loaded by the edge; the
-watchdog compares it with the current on-disk manifest, so changing worker
-registration or authority bounds forces a fenced edge reload even when the
-human-readable `manifest_id` is unchanged. The edge performs the same comparison
-before every dispatch, poke, or visual action and rejects input immediately on
-drift; it never waits for the watchdog reload to fail closed.
-One failed probe records degraded health without restarting anything; two
-consecutive failures issue one scoped `launchctl kickstart -k` for
-`com.local.cos-iterm-edge` and append an edge-recovery receipt. A successful
-probe clears the failure counter, so a transient API hiccup cannot cause a
-restart. If the edge remains unhealthy after recovery, additional restarts use
-60/120/240/480/900-second exponential backoff while every 60-second probe still
-runs; the first healthy probe clears the backoff immediately.
-
-Do not run a live failure/A-B trial merely because the watchdog is armed. Safe
-preconditions are: an operator-approved failure injection, a preserved current
-manifest/state snapshot, confirmed coord lease/readback health, a verified
-tab-2-only target, no unrelated queued prompt, and an explicit rollback/visible
-reattachment plan. Installation or a healthy tick is not that authorization.
-
-Interactive runtime state is a model decision, not a prompt-specific rule.
-When terminal telemetry is blank, contradictory, or reports `needs_input`, C2
-captures the registered tab and binds its screenshot digest, target identity,
-timestamp, controller epoch, and existing worker-reservation epoch into a
-`VisualObservation`. The supervising LLM
-interprets that evidence and emits a bounded `VisualDecision` with its rationale.
-Only then may the edge adapter reverify both leases and execute the requested
-keypress or text through the `visual_action` operation. The adapter never
-infers what a dialog means and never maps a
-vendor string to an action. If visual capture or the supervising model is
-unavailable, the worker remains fenced at `needs_input` unless the run manifest
-contains a separately authorized fallback.
-
-The bounded key surface includes Enter, Escape, Tab, and clear-line (Ctrl-U),
-plus printable text. Tab and clear-line are experimental recovery primitives:
-live Codex trials showed that a running session may require Tab to queue staged
-text, while a goal-blocked session may require clear-line before an exact
-resume command. These observations do not become adapter rules. Claude, Codex,
-and future runtimes use the same primitives, but the supervising LLM selects an
-action only from fresh visual evidence and the edge requires post-action visual
-verification. A successful key write alone is not message presentation,
-receipt, or execution evidence.
-
-Visual decisions reserve their idempotency key durably before terminal input.
-The append-only write result uses a child key and records only
-`key_write_succeeded`; it keeps `observed_ack` and `observed_presentation`
-false. A crash after injection therefore leaves a non-replayable reservation,
-and concurrent executors serialize duplicate detection with the append. The
-decision remains `pending` until a separately recorded fresh screenshot and
-LLM verdict confirms the intended visual outcome.
-
-After any visual action, capture again and require the LLM to confirm the
-intended transition. A process title, blank screen API, successful write call,
-or static `isProcessing` value is not acknowledgment. Headless completion also
-marks the visible tab stale until a screenshot proves reattachment or a fresh
-visible worker identity is registered.
+#82 removes `launchd/install-cos-iterm-edge-launchd.sh` and
+`tests/test_cos_iterm_edge_install.py`; those paths are excluded from the #80
+inventory and #80 must be refreshed against main after #82 lands. Until each PR
+lands, its paths may still exist on `main`; after each merge, verify the current
+tree before relying on any transition component. Do not promote #80 with stale
+references to files retired by #82.
 
 Run the non-mutating COS control-plane daemon once:
 

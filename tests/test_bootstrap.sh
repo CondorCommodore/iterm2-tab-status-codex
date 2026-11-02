@@ -48,6 +48,7 @@ fi
 echo "Test 2: Creates venv when no runtime exists"
 DIR2="$TMPDIR_BASE/t2"
 mkdir -p "$DIR2/iterm2_support/iterm2env/versions" "$DIR2/iterm2_support/Scripts/AutoLaunch" "$DIR2/marker_dir"
+echo 'pre-existing legacy daemon' > "$DIR2/iterm2_support/Scripts/AutoLaunch/cos_iterm_edge_daemon.py"
 
 # Create a fake adapter script so cp succeeds
 FAKE_PLUGIN="$DIR2/plugin_root"
@@ -117,9 +118,9 @@ else
   fail "Overlay copy" "cos_iterm_overlay.py not found in $AUTOLAUNCH2"
 fi
 if [[ ! -e "$AUTOLAUNCH2/cos_iterm_edge_daemon.py" ]]; then
-  pass "edge daemon not copied to AutoLaunch"
+  pass "legacy AutoLaunch daemon removed and no new copy installed"
 else
-  fail "Edge daemon packaging" "daemon was copied to $AUTOLAUNCH2"
+  fail "Edge daemon cleanup" "legacy daemon remains in $AUTOLAUNCH2"
 fi
 if [[ -f "$DIR2/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
   pass "cos_iterm_readback.py present in Scripts"

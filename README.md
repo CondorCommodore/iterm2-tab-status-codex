@@ -247,11 +247,11 @@ The bootstrap supervisor has been removed from `main`; its historical status,
 preflight, roster, checkpoint, and recovery commands are unavailable and are
 not supported operating instructions.
 
-The remaining R1 retirement is staged in two dependent PRs. BA02's #82 removes
+The #82 daemon and LaunchAgent retirement has merged to `main`, removing
 `scripts/cos_iterm_edge_daemon.py`, its daemon and install tests, and the edge
-launchd plist/installer. Until #82 lands, those daemon files remain on `main`.
+LaunchAgent plist/installer. Those paths are no longer present on `main`.
 
-PR #80 then removes the dispatcher and coordination tools:
+The remaining dispatcher retirement is proposed in draft PR #81:
 
 - Scripts: `scripts/cos_assignment_coordinator.py`,
   `scripts/cos_dispatch_orchestrator.py`, `scripts/cos_dry_run_harness.py`,
@@ -259,14 +259,11 @@ PR #80 then removes the dispatcher and coordination tools:
 - Tests: `tests/test_cos_assignment_coordinator.py`,
   `tests/test_cos_dispatch_orchestrator.py`,
   `tests/test_cos_dry_run_harness.py`, and `tests/test_cos_tab_dispatch.py`.
-- It also updates `.github/workflows/ci.yml`.
 
-#82 removes `launchd/install-cos-iterm-edge-launchd.sh` and
-`tests/test_cos_iterm_edge_install.py`; those paths are excluded from the #80
-inventory and #80 must be refreshed against main after #82 lands. Until each PR
-lands, its paths may still exist on `main`; after each merge, verify the current
-tree before relying on any transition component. Do not promote #80 with stale
-references to files retired by #82.
+The current #81 candidate removes these nine files and leaves the main CI
+workflow unchanged; the deleted direct tests were not selected by CI. Until #81
+merges, the dispatcher files remain on `main`; after it merges, verify the
+current tree before relying on any transition component.
 
 Run the non-mutating COS control-plane daemon once:
 

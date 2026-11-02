@@ -74,9 +74,7 @@ RETIRED_BANNER = (
     "Replacement checks: session_registry.py roster-drift-check (#203) and "
     "roster-truth-check (#209). This tool will be deleted in S3.4b."
 )
-REQUIRED_LAUNCHD_SERVICES = {
-    "terminal_edge": "com.local.cos-iterm-edge",
-}
+REQUIRED_LAUNCHD_SERVICES: dict[str, str] = {}
 COS_DIRECTION_SCHEMA = "cos.direction.v1"
 COS_WORK_KINDS = {"task", "pr"}
 STALE_SESSION_SECONDS = 30 * 60

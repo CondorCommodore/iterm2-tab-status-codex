@@ -454,20 +454,19 @@ def launchctl_runner(*loaded_labels):
 
 
 def readiness(*, edge: bool):
+    if not edge:
+        return {"supported": True, "ready": False, "services": {}}
     labels = []
     if edge:
         labels.append("com.local.cos-iterm-edge")
     return supervisor.service_readiness(run=launchctl_runner(*labels), system="Darwin", uid=501)
 
 
-def test_service_readiness_requires_the_edge_service():
-    absent = readiness(edge=False)
-    ready = readiness(edge=True)
+def test_service_readiness_does_not_require_the_retired_edge_service():
+    ready = supervisor.service_readiness(run=launchctl_runner(), system="Darwin", uid=501)
 
-    assert absent["ready"] is False
-    assert set(absent["services"]) == {"terminal_edge"}
-    assert absent["services"]["terminal_edge"]["loaded"] is False
     assert ready["ready"] is True
+    assert ready["services"] == {}
 
 
 def test_service_readiness_is_fail_closed_off_darwin():

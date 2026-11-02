@@ -75,10 +75,10 @@ BOOTSTRAP_LOCK="$DIR2/lock" \
 CLAUDE_PLUGIN_ROOT="$FAKE_PLUGIN" \
   bash "$BOOTSTRAP" 2>/dev/null
 
-if [[ -f "$SCRIPT_DIR/scripts/cos_iterm_edge_daemon.py" ]]; then
-  pass "edge daemon source remains during packaging slice"
+if [[ ! -f "$SCRIPT_DIR/scripts/cos_iterm_edge_daemon.py" ]]; then
+  pass "edge daemon source retired in slice 2a-ii"
 else
-  fail "Packaging order" "edge daemon source disappeared before slice 2a-ii"
+  fail "Packaging order" "edge daemon source remains after slice 2a-ii"
 fi
 
 VENV2="$DIR2/iterm2_support/iterm2env/versions/$PY_VER"

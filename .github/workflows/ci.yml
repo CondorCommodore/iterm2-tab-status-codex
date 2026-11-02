@@ -61,6 +61,8 @@ jobs:
           tests/test_cos_iterm_api_install.py::test_install_scripts_does_not_copy_legacy_daemon
           tests/test_cos_iterm_api_install.py::test_install_scripts_retires_and_unlinks_legacy_daemon
           tests/test_cos_iterm_api_install.py::test_install_scripts_without_legacy_copy_skips_retirement
+          tests/test_cos_iterm_api_install.py::test_legacy_autolaunch_cleanup_list_keeps_daemon_name
+          tests/test_cos_iterm_api_install.py::test_bootstrap_removes_preexisting_legacy_autolaunch
           -v
 
   test-shell:

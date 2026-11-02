@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -135,6 +137,34 @@ def test_install_scripts_retires_and_unlinks_legacy_daemon(tmp_path, monkeypatch
     assert result["removed_legacy_autolaunch"] == [str(legacy)]
     assert result["legacy_edge_retirement"] == {"running": True, "stopped": True, "pid": 43210}
     assert kill_calls[0] == (43210, installer.signal.SIGTERM)
+
+
+def test_legacy_autolaunch_cleanup_list_keeps_daemon_name():
+    assert installer.LEGACY_AUTOLAUNCH_SCRIPTS == ("cos_iterm_edge_daemon.py",)
+
+
+@pytest.mark.parametrize("legacy_kind", ["file", "symlink"])
+def test_bootstrap_removes_preexisting_legacy_autolaunch(tmp_path, legacy_kind):
+    bootstrap_script = SCRIPTS / "bootstrap.sh"
+    cleanup_command = 'rm -f "$AUTOLAUNCH/cos_iterm_edge_daemon.py"'
+    assert cleanup_command in bootstrap_script.read_text(encoding="utf-8")
+    bootstrap_home = tmp_path / "bootstrap-home"
+    bootstrap_autolaunch = (
+        bootstrap_home / "Library" / "Application Support" / "iTerm2" / "Scripts" / "AutoLaunch"
+    )
+    bootstrap_autolaunch.mkdir(parents=True)
+    bootstrap_legacy = bootstrap_autolaunch / "cos_iterm_edge_daemon.py"
+    if legacy_kind == "symlink":
+        target = bootstrap_home / "old-edge-daemon.py"
+        target.write_text("legacy daemon\n", encoding="utf-8")
+        bootstrap_legacy.symlink_to(target)
+    else:
+        bootstrap_legacy.write_text("legacy daemon\n", encoding="utf-8")
+    bootstrap_env = os.environ.copy()
+    bootstrap_env.update(HOME=str(bootstrap_home), AUTOLAUNCH=str(bootstrap_autolaunch))
+    subprocess.run(["bash", "-c", cleanup_command], env=bootstrap_env, check=True)
+    assert not bootstrap_legacy.exists()
+    assert not bootstrap_legacy.is_symlink()
 
 
 def test_install_scripts_without_legacy_copy_skips_retirement(tmp_path):

@@ -74,6 +74,12 @@ BOOTSTRAP_LOCK="$DIR2/lock" \
 CLAUDE_PLUGIN_ROOT="$FAKE_PLUGIN" \
   bash "$BOOTSTRAP" 2>/dev/null
 
+if [[ -f "$SCRIPT_DIR/scripts/cos_iterm_edge_daemon.py" ]]; then
+  pass "edge daemon source remains during packaging slice"
+else
+  fail "Packaging order" "edge daemon source disappeared before slice 2a-ii"
+fi
+
 VENV2="$DIR2/iterm2_support/iterm2env/versions/$PY_VER"
 if [[ -x "$VENV2/bin/python3" ]]; then
   pass "Venv created at versions/$PY_VER"
@@ -111,9 +117,9 @@ else
   fail "Overlay copy" "cos_iterm_overlay.py not found in $AUTOLAUNCH2"
 fi
 if [[ ! -e "$AUTOLAUNCH2/cos_iterm_edge_daemon.py" ]]; then
-  pass "cos_iterm_edge_daemon.py absent from AutoLaunch"
+  pass "edge daemon not copied to AutoLaunch"
 else
-  fail "Edge daemon ownership" "legacy AutoLaunch edge remains in $AUTOLAUNCH2"
+  fail "Edge daemon packaging" "daemon was copied to $AUTOLAUNCH2"
 fi
 if [[ -f "$DIR2/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
   pass "cos_iterm_readback.py present in Scripts"
@@ -130,13 +136,18 @@ if [[ -f "$DIR2/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
 else
   fail "Orchestrator copy" "cos_dispatch_orchestrator.py not found in Scripts"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py cos_iterm_edge_daemon.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
   if [[ -f "$DIR2/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
     pass "$SUPPORT_NAME present in Scripts"
   else
     fail "Support copy" "$SUPPORT_NAME not found in Scripts"
   fi
 done
+if [[ ! -e "$DIR2/iterm2_support/Scripts/cos_iterm_edge_daemon.py" ]]; then
+  pass "edge daemon not copied to support Scripts"
+else
+  fail "Edge daemon packaging" "daemon was copied to support Scripts"
+fi
 
 # ---------------------------------------------------------------------------
 # Test 5: Writes marker file
@@ -196,7 +207,7 @@ if [[ -f "$DIR5B/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
 else
   fail "Version mismatch" "orchestrator not re-deployed"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py cos_iterm_edge_daemon.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
   if [[ -f "$DIR5B/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
     pass "$SUPPORT_NAME re-deployed on version mismatch"
   else

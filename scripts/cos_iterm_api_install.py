@@ -22,7 +22,7 @@ AUTOLAUNCH_SCRIPTS = (
     "cos_iterm_overlay.py",
     "cos_iterm_daemon.py",
 )
-LEGACY_AUTOLAUNCH_SCRIPTS = ("cos_iterm_edge_daemon.py",)
+LEGACY_AUTOLAUNCH_SCRIPTS: tuple[str, ...] = ()
 DEFAULT_EDGE_SOCKET = Path.home() / ".cache" / "cos-c2" / "iterm-edge.sock"
 MENU_SCRIPTS = (
     "cos_iterm_readback.py",
@@ -38,7 +38,6 @@ MENU_SCRIPTS = (
     "c2_runtime_hook.py",
     "c2_visual_decision.py",
     "cos_iterm_edge_client.py",
-    "cos_iterm_edge_daemon.py",
 )
 
 

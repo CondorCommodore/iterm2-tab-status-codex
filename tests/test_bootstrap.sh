@@ -127,15 +127,15 @@ if [[ -f "$DIR2/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
 else
   fail "Readback copy" "cos_iterm_readback.py not found in Scripts"
 fi
-if [[ -f "$DIR2/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
-  pass "cos_tab_dispatch.py present in Scripts"
+if [[ ! -e "$DIR2/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
+  pass "cos_tab_dispatch.py not copied to Scripts"
 else
-  fail "Dispatch copy" "cos_tab_dispatch.py not found in Scripts"
+  fail "Dispatch copy" "retired cos_tab_dispatch.py was copied to Scripts"
 fi
-if [[ -f "$DIR2/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
-  pass "cos_dispatch_orchestrator.py present in Scripts"
+if [[ ! -e "$DIR2/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
+  pass "cos_dispatch_orchestrator.py not copied to Scripts"
 else
-  fail "Orchestrator copy" "cos_dispatch_orchestrator.py not found in Scripts"
+  fail "Orchestrator copy" "retired cos_dispatch_orchestrator.py was copied to Scripts"
 fi
 for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
   if [[ -f "$DIR2/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
@@ -198,15 +198,15 @@ if [[ -f "$DIR5B/iterm2_support/Scripts/cos_iterm_readback.py" ]]; then
 else
   fail "Version mismatch" "readback not re-deployed"
 fi
-if [[ -f "$DIR5B/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
-  pass "Dispatch re-deployed on version mismatch"
+if [[ ! -e "$DIR5B/iterm2_support/Scripts/cos_tab_dispatch.py" ]]; then
+  pass "Dispatch remains uninstalled on version mismatch"
 else
-  fail "Version mismatch" "dispatch not re-deployed"
+  fail "Version mismatch" "retired dispatch was re-deployed"
 fi
-if [[ -f "$DIR5B/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
-  pass "Orchestrator re-deployed on version mismatch"
+if [[ ! -e "$DIR5B/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
+  pass "Orchestrator remains uninstalled on version mismatch"
 else
-  fail "Version mismatch" "orchestrator not re-deployed"
+  fail "Version mismatch" "retired orchestrator was re-deployed"
 fi
 for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
   if [[ -f "$DIR5B/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then

@@ -854,6 +854,7 @@ def test_shadow_module_has_no_authority_or_transport_dependencies():
 
     forbidden = {
         "c2_coord_client",
+        "cos_bootstrap_supervisor",
         "cos_iterm_edge_client",
         "cos_tab_dispatch",
         "iterm2",
@@ -864,6 +865,7 @@ def test_shadow_module_has_no_authority_or_transport_dependencies():
         "requests",
         "urllib",
     }
+    assert {"cos_bootstrap_supervisor", "cos_iterm_edge_client", "cos_tab_dispatch"} <= forbidden
     assert imported.isdisjoint(forbidden)
     assert "open(" not in source
     assert "write_text" not in source

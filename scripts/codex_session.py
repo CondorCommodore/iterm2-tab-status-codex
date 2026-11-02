@@ -63,6 +63,143 @@ _ROLLOUT_RE = re.compile(
     r"rollout-(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(?P<uuid>[0-9a-f-]{36})\.jsonl$"
 )
 
+# A Codex process keeps using the same rollout for its lifetime. Re-resolving
+# every process against every historical rollout on every poll made the hot
+# path O(processes * rollout files) metadata syscalls.
+_PROCESS_ROLLOUTS: dict[tuple[str, int, float], Path] = {}
+_PROCESS_MATCH_GENERATIONS: dict[tuple[str, int, float], int] = {}
+_EVENT_CACHE: dict[tuple[Path, int], tuple[int, int, bytes, list[bytes], list[dict]]] = {}
+_HEAD_EVENT_CACHE: dict[Path, list[dict]] = {}
+
+
+@dataclass
+class _RolloutCatalog:
+    """Incremental path/mtime catalog; directory mtimes reveal new rollouts."""
+
+    root: Path
+    mtimes: dict[Path, float]
+    dir_mtimes: dict[Path, int]
+    dirs_by_parent: dict[Path, set[Path]]
+    files_by_parent: dict[Path, set[Path]]
+    generation: int = 0
+    _ordered_cache: list[Path] | None = None
+    matched_generation: int = -1
+
+    @classmethod
+    def create(cls, root: Path) -> "_RolloutCatalog":
+        return cls(root, {}, {}, {}, {})
+
+    def _remove_dir(self, path: Path) -> None:
+        for child in self.dirs_by_parent.pop(path, set()):
+            self._remove_dir(child)
+        for file_path in self.files_by_parent.pop(path, set()):
+            self.mtimes.pop(file_path, None)
+        self.dir_mtimes.pop(path, None)
+
+    def refresh(self) -> None:
+        """Inspect directory metadata each sweep, but stat files only on add."""
+        try:
+            self.root.stat()
+        except OSError:
+            if self.mtimes or self.dir_mtimes:
+                self.mtimes.clear()
+                self.dir_mtimes.clear()
+                self.dirs_by_parent.clear()
+                self.files_by_parent.clear()
+                self.generation += 1
+                self._ordered_cache = None
+            return
+
+        pending = [self.root]
+        seen_dirs: set[Path] = set()
+        while pending:
+            directory = pending.pop()
+            if directory in seen_dirs:
+                continue
+            seen_dirs.add(directory)
+            try:
+                directory_mtime = directory.stat().st_mtime_ns
+            except OSError:
+                self._remove_dir(directory)
+                continue
+
+            previous_mtime = self.dir_mtimes.get(directory)
+            if previous_mtime == directory_mtime:
+                pending.extend(self.dirs_by_parent.get(directory, ()))
+                continue
+
+            old_dirs = self.dirs_by_parent.get(directory, set())
+            old_files = self.files_by_parent.get(directory, set())
+            current_dirs: set[Path] = set()
+            current_files: set[Path] = set()
+            try:
+                entries = list(os.scandir(directory))
+            except OSError:
+                self._remove_dir(directory)
+                continue
+
+            for entry in entries:
+                child = Path(entry.path)
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        current_dirs.add(child)
+                        pending.append(child)
+                    elif entry.name.startswith("rollout-") and entry.name.endswith(".jsonl"):
+                        current_files.add(child)
+                        if child not in self.mtimes:
+                            self.mtimes[child] = entry.stat(follow_symlinks=False).st_mtime
+                            self.generation += 1
+                            self._ordered_cache = None
+                except OSError:
+                    continue
+
+            for stale_file in old_files - current_files:
+                self.mtimes.pop(stale_file, None)
+                self.generation += 1
+                self._ordered_cache = None
+            for stale_dir in old_dirs - current_dirs:
+                self._remove_dir(stale_dir)
+                self.generation += 1
+                self._ordered_cache = None
+            self.dirs_by_parent[directory] = current_dirs
+            self.files_by_parent[directory] = current_files
+            self.dir_mtimes[directory] = directory_mtime
+            pending.extend(current_dirs)
+
+    def refresh_file_mtimes(self) -> None:
+        """Refresh file times once when a process needs a new association."""
+        for path in tuple(self.mtimes):
+            try:
+                self.mtimes[path] = path.stat().st_mtime
+            except OSError:
+                self.mtimes.pop(path, None)
+        self._ordered_cache = None
+
+    def newest_first(self) -> list[Path]:
+        if self._ordered_cache is None:
+            self._ordered_cache = [
+                path
+                for _, path in sorted(
+                    ((mtime, path) for path, mtime in self.mtimes.items()), reverse=True
+                )
+            ]
+        return self._ordered_cache
+
+
+_ROLLOUT_CATALOGS: dict[str, _RolloutCatalog] = {}
+
+
+def _rollout_catalog(sessions_dir: str) -> _RolloutCatalog:
+    root = Path(os.path.abspath(sessions_dir))
+    key = str(root)
+    catalog = _ROLLOUT_CATALOGS.get(key)
+    if catalog is None:
+        catalog = _RolloutCatalog.create(root)
+        _ROLLOUT_CATALOGS[key] = catalog
+    catalog.refresh()
+    return catalog
+
+
 # --- Codex-process discovery -------------------------------------------------
 
 
@@ -200,7 +337,11 @@ def find_rollouts(sessions_dir: str) -> list[Path]:
     return [p for _, p in out]
 
 
-def match_rollout_for_proc(proc: CodexProc, rollouts: Iterable[Path]) -> Optional[Path]:
+def match_rollout_for_proc(
+    proc: CodexProc,
+    rollouts: Iterable[Path],
+    mtime_by_path: dict[Path, float] | None = None,
+) -> Optional[Path]:
     """Pick the rollout that most likely belongs to this codex process.
 
     Strategy: newest rollout whose mtime >= proc.started (with a small grace).
@@ -210,10 +351,15 @@ def match_rollout_for_proc(proc: CodexProc, rollouts: Iterable[Path]) -> Optiona
     grace = 5.0
     candidates = []
     for r in rollouts:
-        try:
-            mt = r.stat().st_mtime
-        except OSError:
-            continue
+        if mtime_by_path is not None:
+            mt = mtime_by_path.get(r)
+            if mt is None:
+                continue
+        else:
+            try:
+                mt = r.stat().st_mtime
+            except OSError:
+                continue
         if proc.started <= 0 or mt + grace >= proc.started:
             candidates.append((mt, r))
     if not candidates:
@@ -231,28 +377,59 @@ STATE_ATTENTION = "attention"
 
 
 def _read_last_events(path: Path, max_events: int = 50) -> list[dict]:
-    """Return the last `max_events` parsed JSONL events from path."""
+    """Return the last events, reading only appended bytes when possible."""
+    key = (path.absolute(), max_events)
     try:
-        # Read whole file — rollouts can be large; tail by line count.
-        with open(path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            chunk = min(size, 256 * 1024)  # 256KB tail is plenty for 50 events
-            f.seek(size - chunk, os.SEEK_SET)
-            data = f.read().decode("utf-8", errors="ignore")
+        stat = path.stat()
     except OSError:
         return []
-    lines = data.splitlines()[-max_events:]
-    out: list[dict] = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
+    cached = _EVENT_CACHE.get(key)
+    if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+        _EVENT_CACHE.pop(key, None)
+        _EVENT_CACHE[key] = cached
+        return list(cached[4])
+
+    def parse_lines(lines: Iterable[bytes]) -> list[dict]:
+        parsed = []
+        for raw in lines:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                parsed.append(json.loads(line.decode("utf-8", errors="ignore")))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+        return parsed
+
+    try:
+        if cached and stat.st_size >= cached[1] and stat.st_size > cached[1]:
+            with open(path, "rb") as f:
+                f.seek(cached[1])
+                appended = f.read(stat.st_size - cached[1])
+            pending = cached[2]
+            combined = pending + appended
+            lines = combined.split(b"\n")
+            pending = lines.pop() if lines and not combined.endswith(b"\n") else b""
+            if combined.endswith(b"\n") and lines == [b""]:
+                lines = []
+            raw_lines = (cached[3] + lines)[-max_events:]
+            events = parse_lines(raw_lines)
+        else:
+            with open(path, "rb") as f:
+                offset = max(0, stat.st_size - 256 * 1024)
+                f.seek(offset, os.SEEK_SET)
+                tail = f.read(stat.st_size - offset)
+            pieces = tail.split(b"\n")
+            pending = pieces.pop() if pieces and not tail.endswith(b"\n") else b""
+            raw_lines = pieces[-max_events:]
+            events = parse_lines(raw_lines)
+    except OSError:
+        return []
+
+    _EVENT_CACHE[key] = (stat.st_mtime_ns, stat.st_size, pending, raw_lines, events)
+    if len(_EVENT_CACHE) > 256:
+        _EVENT_CACHE.pop(next(iter(_EVENT_CACHE)))
+    return list(events)
 
 
 def _event_ts(event: dict) -> float:
@@ -415,6 +592,11 @@ def write_signal(signal_dir: str, signal: dict) -> Path:
 
 def _read_head_events(path: Path, n: int = 3) -> list[dict]:
     """Read first n JSONL events for session_meta extraction."""
+    key = path.absolute()
+    if key in _HEAD_EVENT_CACHE:
+        cached = _HEAD_EVENT_CACHE.pop(key)
+        _HEAD_EVENT_CACHE[key] = cached
+        return list(cached)
     out: list[dict] = []
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -430,6 +612,10 @@ def _read_head_events(path: Path, n: int = 3) -> list[dict]:
                     continue
     except OSError:
         pass
+    if out:
+        _HEAD_EVENT_CACHE[key] = out
+        if len(_HEAD_EVENT_CACHE) > 512:
+            _HEAD_EVENT_CACHE.pop(next(iter(_HEAD_EVENT_CACHE)))
     return out
 
 
@@ -441,12 +627,51 @@ def sweep_once(signal_dir: str = SIGNAL_DIR, sessions_dir: Optional[str] = None)
     sessions_dir = sessions_dir or _default_sessions_dir()
     procs = _ps_codex_procs()
     if not procs:
+        root_key = str(Path(sessions_dir or _default_sessions_dir()).resolve())
+        for key in tuple(_PROCESS_ROLLOUTS):
+            if key[0] == root_key:
+                _PROCESS_ROLLOUTS.pop(key, None)
+                _PROCESS_MATCH_GENERATIONS.pop(key, None)
         return []
-    rollouts = find_rollouts(sessions_dir)
+    catalog = _rollout_catalog(sessions_dir)
+    root_key = str(catalog.root)
+    live_keys = {(root_key, proc.pid, proc.started) for proc in procs}
+    for key in tuple(_PROCESS_ROLLOUTS):
+        if key[0] == root_key and key not in live_keys:
+            _PROCESS_ROLLOUTS.pop(key, None)
+            _PROCESS_MATCH_GENERATIONS.pop(key, None)
+
+    process_keys = [(root_key, proc.pid, proc.started) for proc in procs]
+    needs_association = any(
+        key not in _PROCESS_ROLLOUTS or _PROCESS_MATCH_GENERATIONS.get(key) != catalog.generation
+        for key in process_keys
+    )
+    if needs_association:
+        # A restarted/resumed CLI may reuse an existing rollout. Refresh its
+        # mtime once for this new process, rather than on every poll.
+        catalog.refresh_file_mtimes()
+    rollouts = catalog.newest_first()
+    generation = catalog.generation
     written: list[Path] = []
     used_rollouts: set[Path] = set()
-    for proc in procs:
-        rollout = match_rollout_for_proc(proc, [r for r in rollouts if r not in used_rollouts])
+    for proc, process_key in zip(procs, process_keys):
+        rollout = _PROCESS_ROLLOUTS.get(process_key)
+        if rollout is not None and rollout not in catalog.mtimes:
+            _PROCESS_ROLLOUTS.pop(process_key, None)
+            rollout = None
+        if generation != catalog.matched_generation:
+            rollout = None
+        if rollout in used_rollouts:
+            rollout = None
+        if rollout is None:
+            rollout = match_rollout_for_proc(
+                proc,
+                (r for r in rollouts if r not in used_rollouts),
+                catalog.mtimes,
+            )
+            if rollout is not None:
+                _PROCESS_ROLLOUTS[process_key] = rollout
+        _PROCESS_MATCH_GENERATIONS[process_key] = generation
         if not rollout:
             continue
         used_rollouts.add(rollout)
@@ -458,17 +683,19 @@ def sweep_once(signal_dir: str = SIGNAL_DIR, sessions_dir: Optional[str] = None)
             written.append(write_signal(signal_dir, signal))
         except OSError as e:
             print(f"codex_session: write failed for {signal['session_id']}: {e}", file=sys.stderr)
+    catalog.matched_generation = generation
     return written
 
 
 def daemon(signal_dir: str = SIGNAL_DIR, interval: float = POLL_INTERVAL) -> None:
     """Run sweep_once in a loop until interrupted."""
+    sleep_interval = max(0.1, interval)
     while True:
         try:
             sweep_once(signal_dir)
         except Exception as e:  # noqa: BLE001
             print(f"codex_session: sweep error: {e}", file=sys.stderr)
-        time.sleep(interval)
+        time.sleep(sleep_interval)
 
 
 # --- CLI ---------------------------------------------------------------------

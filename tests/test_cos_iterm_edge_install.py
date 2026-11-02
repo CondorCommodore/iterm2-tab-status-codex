@@ -107,11 +107,13 @@ def test_installer_refuses_daemon_with_retired_dispatcher_before_launchctl(tmp_p
     fake_python = fake_bin / "python3"
     fake_python.symlink_to("/usr/bin/python3")
     env = os.environ.copy()
-    env.update({
-        "HOME": str(home),
-        "PATH": f"{fake_bin}:/usr/bin:/bin",
-        "LAUNCHCTL_CALLS": str(launchctl_calls),
-    })
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "LAUNCHCTL_CALLS": str(launchctl_calls),
+        }
+    )
 
     result = subprocess.run(
         [

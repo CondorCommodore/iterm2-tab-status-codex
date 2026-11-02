@@ -66,6 +66,10 @@ echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/c2_contract.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/c2_coord_client.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/c2_visual_decision.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN/scripts/cos_iterm_edge_client.py"
+cat > "$FAKE_PLUGIN/scripts/cos_iterm_api_install.py" <<'PY'
+#!/usr/bin/env python3
+# The focused LaunchAgent behavior is covered by test_bootstrap_launchagent.sh.
+PY
 mkdir -p "$FAKE_PLUGIN/.claude-plugin"
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN/.claude-plugin/plugin.json"
 
@@ -137,13 +141,18 @@ if [[ ! -e "$DIR2/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
 else
   fail "Orchestrator copy" "retired cos_dispatch_orchestrator.py was copied to Scripts"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py; do
   if [[ -f "$DIR2/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
     pass "$SUPPORT_NAME present in Scripts"
   else
     fail "Support copy" "$SUPPORT_NAME not found in Scripts"
   fi
 done
+if [[ ! -e "$DIR2/iterm2_support/Scripts/cos_iterm_edge_client.py" ]]; then
+  pass "retired edge client not copied to support Scripts"
+else
+  fail "Edge client packaging" "retired edge client was copied to support Scripts"
+fi
 if [[ ! -e "$DIR2/iterm2_support/Scripts/cos_iterm_edge_daemon.py" ]]; then
   pass "edge daemon not copied to support Scripts"
 else
@@ -208,13 +217,18 @@ if [[ ! -e "$DIR5B/iterm2_support/Scripts/cos_dispatch_orchestrator.py" ]]; then
 else
   fail "Version mismatch" "retired orchestrator was re-deployed"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py; do
   if [[ -f "$DIR5B/iterm2_support/Scripts/$SUPPORT_NAME" ]]; then
     pass "$SUPPORT_NAME re-deployed on version mismatch"
   else
     fail "Version mismatch" "$SUPPORT_NAME not re-deployed"
   fi
 done
+if [[ ! -e "$DIR5B/iterm2_support/Scripts/cos_iterm_edge_client.py" ]]; then
+  pass "retired edge client stays uninstalled on version mismatch"
+else
+  fail "Version mismatch" "retired edge client was re-deployed"
+fi
 NEW_MARKER="$(cat "$MARKER5B")"
 if [[ "$NEW_MARKER" == "$CURRENT_VERSION" ]]; then
   pass "Marker updated to current version"
@@ -263,6 +277,10 @@ echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/c2_contract.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/c2_coord_client.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/c2_visual_decision.py"
 echo '#!/usr/bin/env python3' > "$FAKE_PLUGIN7/scripts/cos_iterm_edge_client.py"
+cat > "$FAKE_PLUGIN7/scripts/cos_iterm_api_install.py" <<'PY'
+#!/usr/bin/env python3
+# The focused LaunchAgent behavior is covered by test_bootstrap_launchagent.sh.
+PY
 echo "{\"version\": \"$CURRENT_VERSION\"}" > "$FAKE_PLUGIN7/.claude-plugin/plugin.json"
 
 ITERM2_SUPPORT="$DIR7/iterm2_support" \

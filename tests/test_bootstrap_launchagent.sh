@@ -69,6 +69,7 @@ RUNTIME_PYTHON
       [[ "$(sed -n '2p' "$log")" == "bootout gui/$(id -u)/$LABEL" ]] || fail "$name did not bootout expected target"
       [[ ! -e "$state" && ! -e "$home/Library/LaunchAgents/$LABEL.plist" ]] || fail "$name left loaded job/plist"
       [[ ! -e "$support/Scripts/AutoLaunch/cos_iterm_edge_daemon.py" ]] || fail "$name left AutoLaunch daemon"
+      [[ ! -e "$support/Scripts/cos_iterm_edge_client.py" ]] || fail "$name copied retired edge client"
       ;;
     unloaded)
       [[ "$(cat "$log")" == "print gui/$(id -u)/$LABEL" ]] || fail "$name should only inspect expected launchd target"

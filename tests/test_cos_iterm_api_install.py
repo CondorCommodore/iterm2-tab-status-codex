@@ -13,69 +13,39 @@ sys.path.insert(0, str(SCRIPTS))
 import cos_iterm_api_install as installer  # noqa: E402
 
 
-def test_retire_legacy_edge_requires_verified_protocol(monkeypatch, tmp_path):
-    monkeypatch.setattr(installer, "request_edge", lambda *_args, **_kwargs: {"pid": 123})
-    try:
-        installer.retire_legacy_edge(tmp_path / "edge.sock")
-    except RuntimeError as exc:
-        assert "unverified process" in str(exc)
-    else:
-        raise AssertionError("unverified legacy process was accepted")
-
-
-def test_retire_legacy_edge_terminates_verified_pid(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        installer,
-        "request_edge",
-        lambda *_args, **_kwargs: {
-            "protocol": "cos-c2-iterm-edge-v1",
-            "pid": 43210,
-        },
-    )
-    calls = []
-
-    def fake_kill(pid, sig):
-        calls.append((pid, sig))
-        if sig == 0:
-            raise ProcessLookupError
-
-    monkeypatch.setattr(installer.os, "kill", fake_kill)
-    result = installer.retire_legacy_edge(tmp_path / "edge.sock")
-    assert result == {"running": True, "stopped": True, "pid": 43210}
-    assert calls[0] == (43210, installer.signal.SIGTERM)
-
-
 def test_install_scripts_copies_and_verifies(tmp_path):
     repo_root = tmp_path / "repo"
     scripts_dir = repo_root / "scripts"
     scripts_dir.mkdir(parents=True)
     for name in installer.AUTOLAUNCH_SCRIPTS + installer.MENU_SCRIPTS:
         (scripts_dir / name).write_text(f"#!/usr/bin/env python3\n# {name}\n", encoding="utf-8")
+    (scripts_dir / "cos_iterm_edge_client.py").write_text("retired edge client\n", encoding="utf-8")
     daemon_source = scripts_dir / "cos_iterm_edge_daemon.py"
     daemon_source.write_text(
-        "#!/usr/bin/env python3\n# source remains for slice 2a-ii\n", encoding="utf-8"
+        "#!/usr/bin/env python3\n# legacy source fixture\n", encoding="utf-8"
     )
-
-    def unexpected_retirement():
-        raise AssertionError("packaging-only slice must not stop a daemon")
 
     result = installer.install_scripts(
         repo_root=repo_root,
         iterm_support=tmp_path / "iterm",
-        retire_legacy=unexpected_retirement,
     )
 
     assert result["ok"] is True
-    assert len(result["installed"]) == 13
+    assert len(result["installed"]) == 12
     assert daemon_source.exists()
     assert not (tmp_path / "iterm" / "Scripts" / "cos_iterm_edge_daemon.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_overlay.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_daemon.py").exists()
     assert result["removed_legacy_autolaunch"] == []
-    assert result["legacy_edge_retirement"] == {"running": False, "stopped": True}
+    assert result["legacy_launch_agent_retirement"] == {
+        "loaded": False,
+        "stopped": True,
+        "plist_removed": False,
+    }
     assert (tmp_path / "iterm" / "Scripts" / "cos_iterm_daemon.py").exists()
     assert not (tmp_path / "iterm" / "Scripts" / "cos_tab_dispatch.py").exists()
     assert not (tmp_path / "iterm" / "Scripts" / "cos_dispatch_orchestrator.py").exists()
+    assert not (tmp_path / "iterm" / "Scripts" / "cos_iterm_edge_client.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_dashboard.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_contract.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_runtime_observation.py").exists()
@@ -121,7 +91,9 @@ def test_install_scripts_does_not_copy_legacy_daemon(tmp_path):
 
 
 @pytest.mark.parametrize("legacy_kind", ["file", "symlink"])
-def test_install_scripts_retires_and_unlinks_legacy_daemon(tmp_path, monkeypatch, legacy_kind):
+def test_install_scripts_retires_and_unlinks_legacy_daemon(
+    tmp_path, fake_launchctl, legacy_kind
+):
     repo_root = _make_installer_repo(tmp_path)
     support = tmp_path / "iterm"
     legacy = support / "Scripts" / "AutoLaunch" / "cos_iterm_edge_daemon.py"
@@ -133,27 +105,30 @@ def test_install_scripts_retires_and_unlinks_legacy_daemon(tmp_path, monkeypatch
     else:
         legacy.write_text("legacy daemon\n", encoding="utf-8")
 
-    monkeypatch.setattr(
-        installer,
-        "request_edge",
-        lambda *_args, **_kwargs: {"protocol": "cos-c2-iterm-edge-v1", "pid": 43210},
+    fake_launchctl["loaded"].write_text("loaded\n", encoding="utf-8")
+    launch_agents = tmp_path / "Library" / "LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    plist = launch_agents / f"{installer.LEGACY_LAUNCH_AGENT_LABEL}.plist"
+    plist.write_text("old KeepAlive job\n", encoding="utf-8")
+    result = installer.install_scripts(
+        repo_root=repo_root,
+        iterm_support=support,
+        launch_agents_dir=launch_agents,
     )
-    kill_calls = []
-
-    def fake_kill(pid, sig):
-        kill_calls.append((pid, sig))
-        if sig == 0:
-            raise ProcessLookupError
-
-    monkeypatch.setattr(installer.os, "kill", fake_kill)
-    result = installer.install_scripts(repo_root=repo_root, iterm_support=support)
 
     assert result["ok"] is True
     assert not legacy.exists()
     assert not legacy.is_symlink()
     assert result["removed_legacy_autolaunch"] == [str(legacy)]
-    assert result["legacy_edge_retirement"] == {"running": True, "stopped": True, "pid": 43210}
-    assert kill_calls[0] == (43210, installer.signal.SIGTERM)
+    assert result["legacy_launch_agent_retirement"] == {
+        "loaded": True,
+        "stopped": True,
+        "plist_removed": True,
+    }
+    assert fake_launchctl["calls"].read_text().splitlines() == [
+        f"print gui/{os.getuid()}/{installer.LEGACY_LAUNCH_AGENT_LABEL}",
+        f"bootout gui/{os.getuid()}/{installer.LEGACY_LAUNCH_AGENT_LABEL}",
+    ]
 
 
 @pytest.fixture
@@ -232,7 +207,6 @@ def test_install_scripts_retires_loaded_legacy_launchagent_without_autolaunch_co
         "stopped": True,
         "plist_removed": True,
     }
-    assert result["legacy_edge_retirement"] == {"running": False, "stopped": True}
 
 
 def test_install_scripts_removes_unloaded_legacy_launchagent_and_plist(tmp_path, fake_launchctl):
@@ -345,20 +319,3 @@ def test_bootstrap_removes_preexisting_legacy_autolaunch(tmp_path, legacy_kind):
     subprocess.run(["bash", "-c", cleanup_command], env=bootstrap_env, check=True)
     assert not bootstrap_legacy.exists()
     assert not bootstrap_legacy.is_symlink()
-
-
-def test_install_scripts_without_legacy_copy_skips_retirement(tmp_path):
-    repo_root = _make_installer_repo(tmp_path)
-
-    def unexpected_retirement():
-        raise AssertionError("retirement must be skipped when no legacy copy exists")
-
-    result = installer.install_scripts(
-        repo_root=repo_root,
-        iterm_support=tmp_path / "iterm",
-        retire_legacy=unexpected_retirement,
-    )
-
-    assert result["ok"] is True
-    assert result["removed_legacy_autolaunch"] == []
-    assert result["legacy_edge_retirement"] == {"running": False, "stopped": True}

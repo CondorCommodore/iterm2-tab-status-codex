@@ -27,8 +27,6 @@ DEFAULT_EDGE_SOCKET = Path.home() / ".cache" / "cos-c2" / "iterm-edge.sock"
 MENU_SCRIPTS = (
     "cos_iterm_readback.py",
     "cos_iterm_daemon.py",
-    "cos_tab_dispatch.py",
-    "cos_dispatch_orchestrator.py",
     "cos_assignment_policy.py",
     "cos_dashboard.py",
     "cos_report_parser.py",

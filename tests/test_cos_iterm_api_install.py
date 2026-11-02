@@ -64,7 +64,7 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     )
 
     assert result["ok"] is True
-    assert len(result["installed"]) == 15
+    assert len(result["installed"]) == 13
     assert daemon_source.exists()
     assert not (tmp_path / "iterm" / "Scripts" / "cos_iterm_edge_daemon.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "AutoLaunch" / "cos_iterm_overlay.py").exists()
@@ -72,12 +72,29 @@ def test_install_scripts_copies_and_verifies(tmp_path):
     assert result["removed_legacy_autolaunch"] == []
     assert result["legacy_edge_retirement"] == {"running": False, "stopped": True}
     assert (tmp_path / "iterm" / "Scripts" / "cos_iterm_daemon.py").exists()
-    assert (tmp_path / "iterm" / "Scripts" / "cos_tab_dispatch.py").exists()
+    assert not (tmp_path / "iterm" / "Scripts" / "cos_tab_dispatch.py").exists()
+    assert not (tmp_path / "iterm" / "Scripts" / "cos_dispatch_orchestrator.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "cos_dashboard.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_contract.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_runtime_observation.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_runtime_hook.py").exists()
     assert (tmp_path / "iterm" / "Scripts" / "c2_visual_decision.py").exists()
+
+
+def test_install_scripts_skips_retired_dispatcher_sources(tmp_path):
+    repo_root = _make_installer_repo(tmp_path)
+    scripts_dir = repo_root / "scripts"
+    for name in ("cos_tab_dispatch.py", "cos_dispatch_orchestrator.py"):
+        (scripts_dir / name).write_text("dispatcher source\n", encoding="utf-8")
+
+    support = tmp_path / "iterm"
+    result = installer.install_scripts(repo_root=repo_root, iterm_support=support)
+
+    installed_names = {item["name"] for item in result["installed"]}
+    assert result["ok"] is True
+    assert not {"cos_tab_dispatch.py", "cos_dispatch_orchestrator.py"} & installed_names
+    assert not (support / "Scripts" / "cos_tab_dispatch.py").exists()
+    assert not (support / "Scripts" / "cos_dispatch_orchestrator.py").exists()
 
 
 def _make_installer_repo(tmp_path):

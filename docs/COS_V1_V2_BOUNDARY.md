@@ -1,14 +1,17 @@
-# COS capability boundary: V1 core and later experiments
+# COS capability boundary: historical V1 target and later experiments
 
 This document scopes the Mac-local terminal-edge implementation of one principal-neutral COS control
 contract. Codex and Claude are the mandatory initial adapters. That supported-runtime set grants no
 authority: authority still derives from authenticated direction, capability, and the live lease epoch.
 The normative cross-repository authority model is Workspace
 [`C2_SUPERVISOR_CONTRACT.md`](https://github.com/CondorCommodore/workspace/blob/main/docs/fleet-plans/C2_SUPERVISOR_CONTRACT.md).
-This repository supplies a bootstrap actuator, watcher, recovery projections, and terminal edge; it
-does not define a second strategist, scheduler, work-item database, or durable authority.
+This file records a historical target contract, not the current shipped runtime. The bootstrap
+supervisor has been removed from `main`. The remaining edge-daemon/launchd retirement is BA02's #82;
+dispatcher removal is #80. Keep the contract's acceptance requirements distinct from current feature
+claims, and check current `main` before relying on any transition component. This repository does
+not define a second strategist, scheduler, work-item database, or durable authority.
 
-## V1: usable and recoverable bootstrap path
+## V1: target acceptance contract (not current runtime behavior)
 
 V1 applies one runtime-neutral control contract on this Mac, with Codex and Claude as the mandatory
 initial conformance set. Its acceptance target is to keep one bounded lane moving with every Control
@@ -31,11 +34,9 @@ land; it does not weaken, waive, or make the requirement optional.
 ### V1 must do
 
 1. Join coord-api as the exact registered principal/runtime and show a read-only fleet snapshot before action.
-   `scripts/cos-bootstrap-supervisor status` reports registered worker states,
-   actionable coord items, wake reasons, active plan generation, and a decision
-   digest without mutating state. `scripts/cos-bootstrap-supervisor preflight`
-   separately proves the manifest, landed plan paths, service registration,
-   and edge health.
+   The former `cos-bootstrap-supervisor status` and `preflight` commands described
+   this target behavior; that supervisor is absent from current `main`, so these
+   commands are not available runtime interfaces.
 2. Consume durable BCA direction and the controlling COS plan generation. Publish digest-bound local
    `program.md` and `current-focus.md` projections containing only durable references, bounded current
    actions, known gates, budget/capability policy, and the next reconciliation deadline. They restore

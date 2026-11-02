@@ -108,7 +108,7 @@ ORCH_SRC="$PLUGIN_ROOT/scripts/cos_dispatch_orchestrator.py"
 if [[ -f "$ORCH_SRC" ]]; then
   cp "$ORCH_SRC" "$ITERM2_SUPPORT/Scripts/cos_dispatch_orchestrator.py"
 fi
-for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py cos_iterm_edge_daemon.py; do
+for SUPPORT_NAME in cos_assignment_policy.py cos_dashboard.py cos_report_parser.py c2_contract.py c2_coord_client.py c2_visual_decision.py cos_iterm_edge_client.py; do
   SUPPORT_SRC="$PLUGIN_ROOT/scripts/$SUPPORT_NAME"
   if [[ -f "$SUPPORT_SRC" ]]; then
     cp "$SUPPORT_SRC" "$ITERM2_SUPPORT/Scripts/$SUPPORT_NAME"

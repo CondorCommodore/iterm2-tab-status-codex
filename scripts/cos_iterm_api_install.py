@@ -38,7 +38,6 @@ MENU_SCRIPTS = (
     "c2_runtime_hook.py",
     "c2_visual_decision.py",
     "cos_iterm_edge_client.py",
-    "cos_iterm_edge_daemon.py",
 )
 
 

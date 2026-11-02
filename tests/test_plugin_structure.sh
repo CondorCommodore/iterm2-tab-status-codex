@@ -197,6 +197,12 @@ if [[ -f "$BOOTSTRAP_SH" ]]; then
 else
   fail "scripts/bootstrap.sh" "file not found"
 fi
+echo "Test: bootstrap removes an already-installed legacy edge daemon"
+if grep -Fq "rm -f \"\$AUTOLAUNCH/cos_iterm_edge_daemon.py\"" "$BOOTSTRAP_SH"; then
+  pass "bootstrap retires the legacy AutoLaunch daemon"
+else
+  fail "bootstrap legacy cleanup" "unconditional legacy AutoLaunch removal is missing"
+fi
 
 echo "Test: scripts/claude_tab_status.py exists"
 PY_SCRIPT="$PROJECT_ROOT/scripts/claude_tab_status.py"

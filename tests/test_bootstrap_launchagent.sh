@@ -18,7 +18,8 @@ run_case() {
   mkdir -p "$fakebin" "$home" "$support/Scripts/AutoLaunch" "$support/iterm2env/versions/fake/bin" \
     "$home/Library/LaunchAgents"
   mkdir -p "$(dirname "$marker")"
-  printf '%s\n' old > "$marker"
+  current_version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/.claude-plugin/plugin.json" | head -1)"
+  printf '%s\n' "$current_version" > "$marker"
   printf '%s\n' legacy > "$support/Scripts/AutoLaunch/cos_iterm_edge_daemon.py"
   printf '%s\n' old-agent > "$home/Library/LaunchAgents/$LABEL.plist"
   : > "$log"

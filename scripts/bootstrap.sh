@@ -20,6 +20,14 @@ fi
 if [[ -f "$BOOTSTRAP_MARKER" ]]; then
   INSTALLED_VERSION="$(cat "$BOOTSTRAP_MARKER" 2>/dev/null || true)"
   if [[ "$INSTALLED_VERSION" == "$PLUGIN_VERSION" ]]; then
+    # The plugin version did not change when this retirement migration was added,
+    # so matching-version installs must still retire the old KeepAlive job.
+    if [[ "$(uname)" == "Darwin" ]] && command -v python3 >/dev/null 2>&1; then
+      python3 "$PLUGIN_ROOT/scripts/cos_iterm_api_install.py" --retire-legacy-launch-agent
+      if [[ -d "$ITERM2_SUPPORT/Scripts/AutoLaunch" ]]; then
+        rm -f "$ITERM2_SUPPORT/Scripts/AutoLaunch/cos_iterm_edge_daemon.py"
+      fi
+    fi
     exit 0
   fi
   # Version mismatch — continue to re-deploy adapter
